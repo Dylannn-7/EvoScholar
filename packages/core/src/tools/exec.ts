@@ -29,7 +29,9 @@ export function childEnv(env: ToolEnv): NodeJS.ProcessEnv {
 export async function runLitHelper(env: ToolEnv, args: string[], signal: AbortSignal): Promise<string> {
   const r = await run(pythonBin(env), [join(env.ws.root, 'python', 'evoscholar_lit.py'), ...args], env, 120, signal)
   if (r.code !== 0) throw new Error(r.out.trim().split('\n').slice(-3).join(' ') || `helper exit ${r.code}`)
-  return r.out
+  // JSON goes to stdout; library warnings (stderr or stray stdout lines) are dropped.
+  const i = r.stdout.search(/^[[{]/m)
+  return i >= 0 ? r.stdout.slice(i) : r.stdout
 }
 
 async function approve(env: ToolEnv, tool: string, summary: string): Promise<boolean> {
@@ -58,18 +60,19 @@ function changedFiles(before: Map<string, number>, after: Map<string, number>, c
 }
 
 function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal: AbortSignal) {
-  return new Promise<{ code: number | null; signal: string | null; out: string; timedOut: boolean }>((resolveP) => {
+  return new Promise<{ code: number | null; signal: string | null; out: string; stdout: string; timedOut: boolean }>((resolveP) => {
     const child = spawn(cmd, args, { cwd: env.cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'] })
     let out = ''
+    let stdout = ''
     let timedOut = false
     const add = (b: Buffer) => { out += b.toString('utf8'); if (out.length > 4 * OUT_LIMIT) out = out.slice(-2 * OUT_LIMIT) }
-    child.stdout.on('data', add)
+    child.stdout.on('data', (b: Buffer) => { add(b); stdout += b.toString('utf8') })
     child.stderr.on('data', add)
     const kill = () => { if (child.exitCode === null) child.kill('SIGTERM'); setTimeout(() => child.exitCode === null && child.kill('SIGKILL'), 2000) }
     const timer = setTimeout(() => { timedOut = true; kill() }, timeoutS * 1000)
     signal.addEventListener('abort', kill, { once: true })
     child.on('error', (e) => { out += `\n[spawn error] ${e.message}` })
-    child.on('close', (code, sig) => { clearTimeout(timer); signal.removeEventListener('abort', kill); resolveP({ code, signal: sig, out, timedOut }) })
+    child.on('close', (code, sig) => { clearTimeout(timer); signal.removeEventListener('abort', kill); resolveP({ code, signal: sig, out, stdout, timedOut }) })
   })
 }
 

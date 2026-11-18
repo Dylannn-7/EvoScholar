@@ -1,0 +1,51 @@
+id: g-0003
+parent: g-0000
+createdBy: evolution/evo-202611180629
+createdAt: 2026-11-18T06:30:11.156Z
+status: rejected
+note: tool:read_skill：五个任务都没有读取随项目提供的技能/规范说明，交付产物的字段名、表头与结构全靠临时自创，最终与验收结构不符。（自动淘汰：通过数没有实质提高（16.5
+  → 16.5））
+instructions:
+  system: prompts/system@v1.md
+  compaction: prompts/compaction@v1.md
+skills:
+  - name: literature-review
+    version: 1
+routing:
+  roles:
+    main: deepseek/deepseek-flash
+    fast: deepseek/deepseek-flash
+    vision: deepseek/deepseek-flash
+    reflector: deepseek/deepseek-flash
+    judge: deepseek/deepseek-flash
+  rules: []
+tools:
+  enabled:
+    - web_search
+    - web_fetch
+    - list_files
+    - read_file
+    - write_file
+    - edit_file
+    - run_python
+    - run_command
+    - start_process
+    - read_process
+    - stop_process
+    - http_get
+    - lit_search
+    - lit_lookup
+    - lit_verify
+    - lit_import
+    - pdf_text
+    - pdf_page_image
+    - read_skill
+  overrides:
+    read_skill:
+      description: prompts/tools/read_skill@v1.md
+workflows: {}
+budgets:
+  maxSteps: 24
+  maxOutputTokens: 8192
+  timeoutMs: 600000
+  contextBudgetTokens: 120000

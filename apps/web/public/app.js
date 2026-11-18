@@ -310,11 +310,14 @@ $('#composer').onsubmit = async (e) => {
 let panelKind = null
 document.querySelectorAll('[data-panel]').forEach((b) => (b.onclick = () => (panelKind === b.dataset.panel && !$('#panel').hidden ? closePanel() : showPanel(b.dataset.panel))))
 $('#closePanel').onclick = closePanel
-function closePanel() { $('#panel').hidden = true; panelKind = null }
+function closePanel() { $('#panel').hidden = true; panelKind = null; $('#panel').classList.remove('wide-panel'); clearTimeout(evoTimer) }
 async function showPanel(kind) {
   panelKind = kind
   $('#panel').hidden = false
+  $('#panel').classList.toggle('wide-panel', kind === 'evolution')
+  clearTimeout(evoTimer)
   const body = $('#panelBody')
+  if (kind === 'evolution') return renderEvolution(body)
   if (kind === 'files') {
     $('#panelTitle').textContent = '会话文件'
     if (!current) return (body.innerHTML = '<p class="muted">先打开一个会话。</p>')
@@ -368,4 +371,88 @@ async function showPanel(kind) {
   }
 }
 
+// ---------- evolution panel ----------
+let evoTimer = null
+let evoOpen = null // expanded candidate id
+const STATUS = { evaluating: '评测中', pending: '待审批', approved: '已上线', rejected: '已拒绝', discarded: '自动淘汰' }
+const mark = (v) => (v === undefined || v === null ? '<span class="muted">—</span>' : v ? '<span class="ok">✓</span>' : '<span class="no">✗</span>')
+const diffHtml = (lines) => `<pre class="diff">${lines.map((l) => `<span class="${l.op === '+' ? 'add' : l.op === '-' ? 'del' : 'ctx'}">${esc(l.op)} ${esc(l.text)}</span>`).join('\n')}</pre>`
+
+async function renderEvolution(body) {
+  $('#panelTitle').textContent = '进化'
+  const r = await api('/api/evolution')
+  if (panelKind !== 'evolution') return
+  const pending = r.candidates.filter((c) => c.status === 'pending')
+  $('#evoBtn').classList.toggle('attn', pending.length > 0)
+  const byParent = {}
+  for (const g of r.lineage) (byParent[g.parent ?? ''] ||= []).push(g)
+  const tree = (pid, depth) => (byParent[pid] || []).map((g) => `<div class="lin" style="padding-left:${depth * 14}px"><code>${esc(g.id)}</code> <span class="chip ${esc(g.status)}">${esc(g.status)}</span> <span class="muted">${esc(g.createdBy)}</span><div class="muted note">${esc(g.note)}</div></div>${tree(g.id, depth + 1)}`).join('')
+  body.innerHTML = `
+    <div class="evo-head">
+      <div>当前上线 <code>${esc(r.active.id)}</code>${r.active.parent ? ` <span class="muted">← ${esc(r.active.parent)}</span>` : ''}</div>
+      <div class="evo-actions">
+        ${r.active.parent ? '<button class="ghost small" id="evoRollback">回滚到父版本</button>' : ''}
+        <button class="primary small" id="evoRun" ${r.running.active ? 'disabled' : ''}>${r.running.active ? '运行中…' : '跑一轮进化'}</button>
+      </div>
+    </div>
+    <p class="muted">流程：基线评测 → 反思归因 → 生成候选（每个只改一处）→ 开发集比较 → 验收集关卡 → <b>由你审批</b>上线。每轮 ≤ ¥2。</p>
+    ${r.running.log.length ? `<h3>本轮日志</h3><pre class="evo-log">${esc(r.running.log.join('\n'))}</pre>` : ''}
+    <h3>候选版本</h3>
+    ${r.candidates.length ? r.candidates.map((c) => `<div class="cand ${c.status === 'pending' ? 'pending' : ''}" data-id="${esc(c.genome_id)}">
+        <div class="cand-h"><code>${esc(c.genome_id)}</code> <span class="chip ${esc(c.status)}">${STATUS[c.status] || esc(c.status)}</span> <span class="muted">${esc(c.target)}</span>
+          <span class="nums">开发 ${c.base_dev_pass ?? '?'}→${c.dev_pass ?? '?'}/${c.dev_total ?? '?'}${c.acc_total ? ` · 验收 ${c.base_acc_pass}→${c.acc_pass}/${c.acc_total}` : ''} · ${yuan(c.cost_cny)}</span></div>
+        <div class="muted">${esc(c.diagnosis || '')}</div>
+        <div class="cand-body" ${evoOpen === c.genome_id ? '' : 'hidden'}></div>
+      </div>`).join('') : '<p class="muted">还没有候选。点「跑一轮进化」开始。</p>'}
+    <h3>谱系</h3><div class="lineage">${tree('', 0)}</div>
+    <h3>最近几轮</h3><table class="ledger">${r.runs.map((x) => `<tr><td>${esc(x.id)}</td><td>${esc(x.base_genome)}</td><td>${esc(x.status)}</td><td>${yuan(x.cost_cny)}</td></tr>`).join('')}</table>`
+  $('#evoRun').onclick = async () => {
+    const force = confirm('现在可能是 DeepSeek 高峰时段（价格 ×2）。\n确定：忽略高峰与每日轮数限制直接跑\n取消：按规则检查（高峰时会拒绝）')
+    try { await post('/api/evolution/run', { force }) } catch (e) { alert(e.message) }
+    renderEvolution(body)
+  }
+  const rb = $('#evoRollback')
+  if (rb) rb.onclick = async () => {
+    if (!confirm(`把上线版本从 ${r.active.id} 回滚到 ${r.active.parent}？`)) return
+    try { await post('/api/genome/rollback'); await loadState(); renderEvolution(body) } catch (e) { alert(e.message) }
+  }
+  body.querySelectorAll('.cand').forEach((el) => {
+    $('.cand-h', el).onclick = () => { evoOpen = evoOpen === el.dataset.id ? null : el.dataset.id; renderEvolution(body) }
+  })
+  if (evoOpen) {
+    const el = body.querySelector(`.cand[data-id="${evoOpen}"] .cand-body`)
+    if (el) await renderCandidate(el, evoOpen, body)
+  }
+  if (r.running.active) evoTimer = setTimeout(() => panelKind === 'evolution' && renderEvolution(body), 3000)
+}
+
+async function renderCandidate(el, id, body) {
+  const d = await api(`/api/evolution/${id}`)
+  const c = d.candidate || {}
+  const changes = d.cases.filter((x) => x.base !== x.cand)
+  el.innerHTML = `
+    ${c.reason ? `<p><b>结论：</b>${esc(c.reason)}</p>` : ''}
+    ${d.promptDiffs.map((p) => `<h4>${esc(p.key)} <span class="muted">${esc(p.from || '（默认描述）')} → ${esc(p.to)}</span></h4>${diffHtml(p.diff)}`).join('')}
+    <h4>逐题变化 <span class="muted">${changes.length ? `${changes.length} 题有变化` : '无变化'}</span></h4>
+    <table class="cases"><tr><th>任务</th><th>集</th><th>父版本</th><th>候选</th><th>花费</th></tr>
+      ${d.cases.map((x) => `<tr class="${x.base !== x.cand ? (x.cand ? 'fix' : 'reg') : ''}" title="${esc((x.failures || []).join('\n'))}"><td>${esc(x.caseId)}</td><td class="muted">${x.split === 'acceptance' ? '验收' : '开发'}</td><td>${mark(x.base)}</td><td>${mark(x.cand)}</td><td class="muted">${x.candCost !== undefined ? yuan(x.candCost) : ''}</td></tr>`).join('')}</table>
+    <details><summary class="muted">genome YAML diff</summary>${diffHtml(d.genomeDiff)}</details>
+    ${c.status === 'pending' ? `<div class="evo-actions end"><button class="ghost small" data-act="reject">拒绝</button><button class="primary small" data-act="promote">批准上线</button></div>` : ''}`
+  el.querySelectorAll('button[data-act]').forEach((b) => (b.onclick = async () => {
+    try {
+      if (b.dataset.act === 'promote') {
+        if (!confirm(`上线 ${id}？之后新会话会使用它；可以随时回滚。`)) return
+        await post(`/api/evolution/${id}/promote`)
+      } else {
+        const reason = prompt('拒绝原因（可选，会记录在谱系里）', '')
+        if (reason === null) return
+        await post(`/api/evolution/${id}/reject`, { reason })
+      }
+      await loadState()
+      renderEvolution(body)
+    } catch (e) { alert(e.message) }
+  }))
+}
+
 loadState().catch((e) => banner(e.message))
+api('/api/evolution').then((r) => $('#evoBtn').classList.toggle('attn', r.candidates.some((c) => c.status === 'pending'))).catch(() => {})

@@ -70,7 +70,7 @@ test('tool-using turn is metered, recorded and searchable', async () => {
   assert.ok(s.byCategory.dev > 0, 'model + search cost recorded under dev')
   assert.equal(s.webCallsToday, 1)
   const turn = rt.db.prepare('SELECT * FROM turns').get() as Record<string, unknown>
-  assert.equal(turn.genome_id, 'g-0000')
+  assert.equal(turn.genome_id, rt.genomes.activeId())
   assert.equal(turn.steps, 2)
   assert.equal(turn.tool_calls, 1)
   const events = rt.db.prepare(`SELECT type FROM events`).all().map((r) => (r as { type: string }).type)

@@ -1,0 +1,47 @@
+id: g-0001
+parent: g-0000
+createdBy: evolution/evo-202611180621
+createdAt: 2026-11-18T06:22:19.332Z
+status: rejected
+note: instructions：结构化产物的键名/表头/取值自创，与任务原文用词不一致，导致整份交付被判定不符。（自动淘汰：通过数没有提高（16 → 16））
+instructions:
+  system: prompts/system@v2.md
+  compaction: prompts/compaction@v1.md
+skills:
+  - name: literature-review
+    version: 1
+routing:
+  roles:
+    main: deepseek/deepseek-flash
+    fast: deepseek/deepseek-flash
+    vision: deepseek/deepseek-flash
+    reflector: deepseek/deepseek-flash
+    judge: deepseek/deepseek-flash
+  rules: []
+tools:
+  enabled:
+    - web_search
+    - web_fetch
+    - list_files
+    - read_file
+    - write_file
+    - edit_file
+    - run_python
+    - run_command
+    - start_process
+    - read_process
+    - stop_process
+    - http_get
+    - lit_search
+    - lit_lookup
+    - lit_verify
+    - lit_import
+    - pdf_text
+    - pdf_page_image
+    - read_skill
+workflows: {}
+budgets:
+  maxSteps: 24
+  maxOutputTokens: 8192
+  timeoutMs: 600000
+  contextBudgetTokens: 120000

@@ -5,7 +5,14 @@ import { extname, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
   BudgetError,
+  candidateDetail,
+  evolveRound,
   inside,
+  lineage,
+  listCandidates,
+  promote,
+  reject,
+  rollback,
   listProviders,
   openResearchSession,
   openRuntime,
@@ -30,6 +37,12 @@ type Live = {
   seenTool: Set<string>
 }
 const live = new Map<string, Live>()
+
+/** At most one evolution round at a time, driven from the web panel. */
+const evo = { running: false, log: [] as string[], runId: '' as string, ctrl: undefined as AbortController | undefined }
+async function resetIdleSessions() {
+  for (const l of live.values()) if (!l.busy) { await l.rs.dispose(); live.delete(l.rs.id) }
+}
 
 function send(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -305,8 +318,54 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     for (const v of Object.values(roles ?? {})) if (!known.has(String(v))) return send(res, 400, { error: `未知模型 ${v}` })
     const changed = Object.entries(roles).map(([k, v]) => `${k}=${v}`).join(', ')
     const g = rt.genomes.deriveManual((x) => Object.assign(x.routing.roles, roles), `手动切换模型：${changed}`)
-    for (const l of live.values()) if (!l.busy) { await l.rs.dispose(); live.delete(l.rs.id) }
+    await resetIdleSessions()
     return send(res, 200, { genome: g.id })
+  }
+
+  if (p === '/api/evolution' && req.method === 'GET') {
+    const g = rt.genomes.load()
+    return send(res, 200, {
+      active: { id: g.id, parent: g.parent ?? null, note: g.note ?? '' },
+      candidates: listCandidates(rt),
+      lineage: lineage(rt),
+      runs: rt.db.prepare('SELECT id, ts_start, ts_end, base_genome, status, cost_cny FROM evolution_runs ORDER BY ts_start DESC LIMIT 20').all(),
+      running: { active: evo.running, runId: evo.runId, log: evo.log.slice(-200) }
+    })
+  }
+  if (p === '/api/evolution/run' && req.method === 'POST') {
+    if (evo.running) return send(res, 409, { error: '已经有一轮进化在运行' })
+    const b = await body(req)
+    evo.running = true
+    evo.log = []
+    evo.runId = ''
+    evo.ctrl = new AbortController()
+    const stamp = () => new Date().toTimeString().slice(0, 8)
+    evolveRound(rt, { dryRun: !!b.dryRun, force: !!b.force, signal: evo.ctrl.signal, onProgress: (m) => evo.log.push(`${stamp()} ${m}`) })
+      .then((rep) => { evo.runId = rep.runId; evo.log.push(`${stamp()} 本轮 ${rep.runId} 结束：${rep.status}，花费 ¥${rep.costCny.toFixed(3)}`) })
+      .catch((e) => evo.log.push(`${stamp()} 未能启动：${(e as Error).message}`))
+      .finally(() => { evo.running = false; evo.ctrl = undefined })
+    return send(res, 202, { ok: true })
+  }
+  mm = m(/^\/api\/evolution\/(g-[\w-]+)$/)
+  if (mm && req.method === 'GET') {
+    const d = candidateDetail(rt, mm[1])
+    const brief = (g?: { id: string; status: string; parent?: string | null; note?: string; createdBy: string }) =>
+      g && { id: g.id, status: g.status, parent: g.parent ?? null, note: g.note ?? '', createdBy: g.createdBy }
+    return send(res, 200, { ...d, genome: brief(d.genome), parent: brief(d.parent) })
+  }
+  mm = m(/^\/api\/evolution\/(g-[\w-]+)\/(promote|reject)$/)
+  if (mm && req.method === 'POST') {
+    const b = await body(req)
+    if (mm[2] === 'promote') promote(rt, mm[1])
+    else reject(rt, mm[1], b.reason ? String(b.reason).slice(0, 300) : undefined)
+    await resetIdleSessions()
+    return send(res, 200, { ok: true, active: rt.genomes.activeId() })
+  }
+  if (p === '/api/genome/rollback' && req.method === 'POST') {
+    const b = await body(req)
+    const g = rollback(rt, b.to ? String(b.to) : undefined)
+    await resetIdleSessions()
+    return send(res, 200, { ok: true, active: g.id })
   }
 
   // static frontend

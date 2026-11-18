@@ -1,10 +1,15 @@
 import { existsSync, realpathSync } from 'node:fs'
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 /** Resolve a model-supplied path inside `root`; throws if it escapes (including via symlinks). */
 export function inside(root: string, p: string): string {
   const base = realpathSync(root)
-  const target = isAbsolute(p) ? resolve(p) : resolve(base, p)
+  // Absolute paths may be spelled via the symlinked form of root (macOS: /var → /private/var).
+  const logical = resolve(root)
+  const abs = isAbsolute(p) ? resolve(p) : undefined
+  const target = abs === undefined ? resolve(base, p)
+    : logical !== base && (abs === logical || abs.startsWith(logical + sep)) ? join(base, relative(logical, abs))
+    : abs
   const within = (x: string) => x === base || x.startsWith(base + sep)
   if (!within(target)) throw new Error(`路径不在工作目录内：${p}`)
   let probe = target

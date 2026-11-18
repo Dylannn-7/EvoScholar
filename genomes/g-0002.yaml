@@ -1,0 +1,47 @@
+id: g-0002
+parent: g-0000
+createdBy: evolution/evo-202611180621
+createdAt: 2026-11-18T06:24:46.509Z
+status: rejected
+note: instructions：“来源/实际使用的文件”类字段被填成路径或叙述性文字，与要求的文件标识不符。（自动淘汰：通过数没有提高（16 → 16））
+instructions:
+  system: prompts/system@v3.md
+  compaction: prompts/compaction@v1.md
+skills:
+  - name: literature-review
+    version: 1
+routing:
+  roles:
+    main: deepseek/deepseek-flash
+    fast: deepseek/deepseek-flash
+    vision: deepseek/deepseek-flash
+    reflector: deepseek/deepseek-flash
+    judge: deepseek/deepseek-flash
+  rules: []
+tools:
+  enabled:
+    - web_search
+    - web_fetch
+    - list_files
+    - read_file
+    - write_file
+    - edit_file
+    - run_python
+    - run_command
+    - start_process
+    - read_process
+    - stop_process
+    - http_get
+    - lit_search
+    - lit_lookup
+    - lit_verify
+    - lit_import
+    - pdf_text
+    - pdf_page_image
+    - read_skill
+workflows: {}
+budgets:
+  maxSteps: 24
+  maxOutputTokens: 8192
+  timeoutMs: 600000
+  contextBudgetTokens: 120000

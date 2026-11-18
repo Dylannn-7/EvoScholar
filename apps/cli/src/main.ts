@@ -3,7 +3,15 @@ import { createInterface } from 'node:readline/promises'
 import { stdin, stdout } from 'node:process'
 import {
   BudgetError,
+  candidateDetail,
+  evaluate,
+  evolveRound,
+  listCandidates,
   listProviders,
+  promote,
+  reject,
+  renderDiff,
+  rollback,
   openResearchSession,
   openRuntime,
   openWorkspace,
@@ -92,6 +100,31 @@ async function chat(rt: Runtime, args: string[], oneShot?: string) {
   await rs.dispose()
 }
 
+const green = (s: string) => `\x1b[32m${s}\x1b[0m`
+const red = (s: string) => `\x1b[31m${s}\x1b[0m`
+
+function showCandidate(rt: Runtime, id: string) {
+  const d = candidateDetail(rt, id)
+  const c = d.candidate
+  console.log(`${d.genome.id}  parent=${d.genome.parent ?? '-'}  status=${d.genome.status}${c ? `  候选状态=${c.status}` : ''}`)
+  if (c) {
+    console.log(`修改：${c.target}\n诊断：${c.diagnosis ?? ''}`)
+    console.log(`开发集 ${c.base_dev_pass} → ${c.dev_pass} / ${c.dev_total}${c.acc_total ? `   验收集 ${c.base_acc_pass} → ${c.acc_pass} / ${c.acc_total}` : ''}   评测花费 ¥${(c.cost_cny ?? 0).toFixed(3)}`)
+    console.log(`结论：${c.reason ?? ''}`)
+  }
+  for (const p of d.promptDiffs) {
+    console.log(cyan(`\n── ${p.key}: ${p.from ?? '(默认)'} → ${p.to}`))
+    for (const l of p.diff) console.log(l.op === '+' ? green(`+ ${l.text}`) : l.op === '-' ? red(`- ${l.text}`) : dim(`  ${l.text}`))
+  }
+  console.log(cyan('\n── genome diff'))
+  console.log(renderDiff(d.genomeDiff))
+  const changed = d.cases.filter((x) => x.base !== x.cand)
+  if (changed.length) {
+    console.log(cyan('\n── 通过情况变化'))
+    for (const x of changed) console.log(`  ${x.caseId} ${x.base === undefined ? '?' : x.base ? '✓' : '✗'} → ${x.cand === undefined ? '?' : x.cand ? green('✓') : red('✗')}`)
+  }
+}
+
 async function main() {
   const [cmd = 'help', ...args] = process.argv.slice(2)
   const ws = openWorkspace()
@@ -116,13 +149,64 @@ async function main() {
       console.log(JSON.stringify({ roles: g.routing.roles, tools: g.tools.enabled, budgets: g.budgets }, null, 2))
       return
     }
+    case 'eval': {
+      const sel = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--'))) ?? 'development'
+      const g = rt.genomes.load(flag(args, 'genome'))
+      console.log(dim(`评测 ${g.id}（hash ${rt.genomes.hash(g)}）：${sel}`))
+      const rs = await evaluate(rt, g, sel, {
+        concurrency: Number(flag(args, 'concurrency') ?? 2),
+        useCache: !args.includes('--no-cache'),
+        onCase: (r) => console.log(`${r.caseId} ${r.pass ? green('✓') : red('✗')} ${r.cached ? dim('（缓存）') : dim(`${r.steps} 步 ¥${r.costCny.toFixed(3)}`)}${r.error ? yellow(` ${r.error}`) : ''}${!r.pass && r.failures.length ? dim(`  ${r.failures[0].slice(0, 100)}`) : ''}`)
+      })
+      console.log(`通过 ${rs.filter((r) => r.pass).length}/${rs.length}`)
+      return printBudget(rt)
+    }
+    case 'evolve': {
+      const rep = await evolveRound(rt, {
+        dryRun: args.includes('--dry-run'),
+        force: args.includes('--force'),
+        concurrency: Number(flag(args, 'concurrency') ?? 2),
+        maxCandidates: flag(args, 'candidates') ? Number(flag(args, 'candidates')) : undefined,
+        onProgress: (m) => console.log(`${dim(new Date().toTimeString().slice(0, 8))} ${m}`)
+      })
+      console.log(`\n本轮 ${rep.runId}：${rep.status}，花费 ¥${rep.costCny.toFixed(3)}\n报告：${rep.reportPath}`)
+      const pending = rep.candidates.find((c) => c.status === 'pending')
+      if (pending) console.log(yellow(`候选 ${pending.genome} 待审批：es candidates ${pending.genome} 查看，es promote ${pending.genome} 上线`))
+      return
+    }
+    case 'candidates': {
+      if (args[0]) return showCandidate(rt, args[0])
+      const rows = listCandidates(rt)
+      if (!rows.length) return console.log('还没有候选版本')
+      for (const c of rows)
+        console.log(`${c.genome_id}  ${c.status.padEnd(9)} ${c.target.padEnd(22)} 开发 ${c.base_dev_pass}→${c.dev_pass ?? '?'}/${c.dev_total}  ${c.acc_total ? `验收 ${c.base_acc_pass}→${c.acc_pass}/${c.acc_total}  ` : ''}${dim(c.reason ?? '')}`)
+      return
+    }
+    case 'promote': {
+      if (!args[0]) throw new Error('用法：es promote <genome-id>')
+      const g = promote(rt, args[0])
+      return console.log(green(`已上线 ${g.id}（父版本 ${g.parent} 已归档；es rollback 可回滚）`))
+    }
+    case 'reject': {
+      if (!args[0]) throw new Error('用法：es reject <genome-id> [原因]')
+      reject(rt, args[0], args.slice(1).join(' ') || undefined)
+      return console.log(`已拒绝 ${args[0]}`)
+    }
+    case 'rollback': {
+      const g = rollback(rt, args[0])
+      return console.log(green(`已回滚，当前上线 ${g.id}`))
+    }
     default:
       console.log(`用法：evoscholar <命令>
   chat [--category usage|dev] [--session ID] [--cwd DIR] [--yes]   交互式对话
   ask  <问题> [--category dev] [--cwd DIR] [--yes]                  单轮提问（--yes 自动允许执行代码）
   budget                                                        查看 API 花费与预算
   providers                                                     查看模型厂商与 Key 状态
-  genome [ID]                                                   查看当前 harness genome`)
+  genome [ID]                                                   查看当前 harness genome
+  eval [development|acceptance|all|L01,D02] [--genome ID] [--no-cache]   跑评测集（计入 evolution 预算）
+  evolve [--dry-run] [--force] [--candidates N] [--concurrency N]       跑一轮进化（--force 忽略高峰与每日轮数）
+  candidates [ID]                                               候选列表 / 某个候选的 diff 和逐题变化
+  promote <ID> · reject <ID> [原因] · rollback [ID]             上线 / 拒绝 / 回滚`)
   }
 }
 

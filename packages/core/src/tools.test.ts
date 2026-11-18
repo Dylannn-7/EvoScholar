@@ -1,10 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentTool, Json, ToolContext } from '@evoscholar/harness'
-import { TOOL_FACTORIES, checkCommand, inside, stopAllProcesses, type ToolEnv } from './tools'
+import { TOOL_FACTORIES, checkCommand, guarded, inside, stopAllProcesses, type ToolEnv } from './tools'
+import { BudgetError } from './budget'
 
 const ctx = (): ToolContext => ({ sessionId: 's', runId: 'r', invocationId: 'i', signal: new AbortController().signal, update() {} })
 function setup() {
@@ -30,7 +31,8 @@ test('paths cannot escape the working directory', () => {
   mkdirSync(join(cwd, 'a'))
   symlinkSync('/etc', join(cwd, 'a', 'link'))
   assert.throws(() => inside(cwd, 'a/link/passwd'))
-  assert.ok(inside(cwd, 'a/new/file.txt').startsWith(cwd))
+  assert.ok(inside(cwd, 'a/new/file.txt').startsWith(realpathSync(cwd)))
+  assert.equal(inside(cwd, join(cwd, 'a', 'x.txt')), join(realpathSync(cwd), 'a', 'x.txt'))
 })
 
 test('dangerous commands are refused', () => {
@@ -90,4 +92,13 @@ with socketserver.TCPServer(('127.0.0.1', 0), H) as s:
   assert.deepEqual(events.filter((e) => e.kind === 'http').map((e) => e.status), [429, 200])
   await assert.rejects(async () => TOOL_FACTORIES.http_get({} as ToolEnv).validate({ url: 'https://example.com' }))
   await stopAllProcesses('tool-test')
+})
+
+test('tool exceptions become error results; budget errors still propagate', async () => {
+  const boom = (err: Error) => guarded({ name: 't', version: '1', description: '', parameters: { type: 'object' }, execute: async () => { throw err } } as any)
+  const ctx = { signal: new AbortController().signal } as any
+  const r = await boom(new Error('bad json')).execute({}, ctx) as any
+  assert.equal(r.isError, true)
+  assert.match(r.content[0].text, /t 出错：bad json/)
+  await assert.rejects(boom(new BudgetError('cap', 'round')).execute({}, ctx), BudgetError)
 })

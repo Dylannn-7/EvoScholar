@@ -82,9 +82,21 @@ export class GenomeRepo {
     if (!file.startsWith(resolve(this.root))) throw new Error('Prompt path escapes workspace')
     return readFileSync(file, 'utf8')
   }
+  /**
+   * Behavioural fingerprint: everything that changes what the agent does (prompts, tool
+   * descriptions, skills, routing, budgets), excluding metadata such as id/status/note.
+   */
   hash(g: HarnessGenome): string {
-    const material = JSON.stringify(g) + this.text(g.instructions.system)
-    return createHash('sha256').update(material).digest('hex').slice(0, 12)
+    const h = createHash('sha256')
+    const { instructions, skills, routing, tools, workflows, budgets } = g
+    h.update(JSON.stringify({ instructions, skills, routing, tools, workflows, budgets }))
+    for (const ref of [instructions.system, instructions.compaction, ...Object.values(instructions.stages ?? {}), ...Object.values(tools.overrides ?? {}).map((o) => o.description)])
+      if (ref) h.update(this.text(ref))
+    for (const s of skills ?? []) {
+      const f = join(this.root, 'skills', s.name, 'SKILL.md')
+      if (existsSync(f)) h.update(readFileSync(f))
+    }
+    return h.digest('hex').slice(0, 12)
   }
 }
 
