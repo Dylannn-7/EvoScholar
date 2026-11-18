@@ -123,6 +123,9 @@ See Tables~\ref{tab:x-1}-\ref{tab:x-3}.
         self.assertFalse([g for g in got if g[0].startswith('common.floats')], got)              # range reference
         self.assertFalse([g for g in got if g[0].startswith('common.abbreviations')], got)       # braces, ';', compounds, preamble
         self.assertTrue(Wr._initials_match('the preference-based RL', 'PbRL'))
+        (d / 'b.tex').write_text('\\documentclass{article}\\begin{document}\nKL and KL, MLE and MLE, LLM and LLM.\n\\end{document}\n', encoding='utf-8')
+        undefined = [f['evidence'] for f in by_rule(Wr.run(d / 'b.tex', ['common']), 'common.abbreviations.undefined')]
+        self.assertEqual(undefined, ['LLM'])                     # well-known KL / MLE are skipped, LLM is not
         self.assertFalse(Wr._initials_match('using the lowest temperature', 'DPO'))
         shutil.rmtree(d, ignore_errors=True)
 
@@ -305,7 +308,7 @@ class TextAndPdf(unittest.TestCase):
             pack = Wr.load_pack(name)
             ids = {s['id'] for s in pack.get('sources') or []}
             for s in pack.get('sources') or []:
-                self.assertTrue(s.get('url') or s.get('file') or s['id'] == 'internal', (name, s))
+                self.assertTrue(s.get('url') or s.get('file') or s['id'] == 'internal' or s.get('kind') == 'user-decision', (name, s))
                 self.assertTrue(str(s.get('checked', '')).startswith('2026'), (name, s))
             for r in pack.get('rules') or []:
                 self.assertIn(r['check'], Wr.CHECKS, (name, r['id']))

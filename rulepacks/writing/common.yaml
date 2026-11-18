@@ -11,6 +11,10 @@ sources:
     title: NIST Special Publication 811, §7.2 Space between numerical value and unit symbol
     url: https://www.nist.gov/pml/special-publication-811/nist-guide-si-chapter-7-rules-and-style-conventions-expressing-values
     checked: 2026-11-18
+  - id: user-fp-2026-11-18
+    kind: user-decision
+    title: 用户决定（2026-11-18，依据 DPO 稿件上的误报标记）：公知缩写不报「未定义」；列表可在本文件中增删
+    checked: 2026-11-18
   - id: hust-template-notes
     title: 华中科技大学学位论文参考模板（理工科硕士）注释体例：「中文使用中文状态下标点符号，英文使用英文状态下标点符号，切忌混用」
     file: 理工科-硕士-华中科技大学学位论文参考模板.docx
@@ -30,7 +34,11 @@ rules:
   - id: common.abbreviations
     check: abbreviations
     source: internal
-    note: 以稿件里第一次出现的「全称 (缩写)」为准，检查定义前就使用、同一缩写两种全称；未定义的只作提示
+    params:
+      # 公知缩写：不报「未定义」（定义前使用、前后定义冲突仍然检查）。来源 user-fp-2026-11-18。
+      # 只放数学 / 统计 / 信号处理的标准记号和模型、数据集名；领域术语（如 LLM）不放，按用户标记应当给全称。
+      well_known: [KL, MLE, MAP, SGD, SVD, PCA, FFT, DFT, ODE, PDE, SNR, RMS, RMSE, MSE, MAE, PDF, CDF, IID, RGB, GPT, BERT, LLaMA, ResNet, ImageNet, CIFAR, MNIST, COCO, IMDb, IMDB]
+    note: 以稿件里第一次出现的「全称 (缩写)」为准，检查定义前就使用、同一缩写两种全称；未定义的只作提示，公知缩写（params.well_known）不报
   - id: common.units
     check: number_unit_space
     source: nist-sp811
