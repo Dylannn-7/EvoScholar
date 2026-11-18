@@ -365,3 +365,34 @@ class TextAndPdf(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class UserRulePackTest(unittest.TestCase):
+    def test_pattern_rule_and_trial_user_pack(self):
+        import os
+        import tempfile
+        import evoscholar_write as W
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, 'rulepacks'))
+            with open(os.path.join(d, 'rulepacks', 'user.yaml'), 'w', encoding='utf-8') as f:
+                f.write('id: user\nrules:\n'
+                        '  - id: user.no-very\n    check: pattern\n    status: trial\n    params: { phrases: ["非常重要"], message: "避免空泛的强调" }\n'
+                        '  - id: user.off\n    check: pattern\n    status: disabled\n    params: { phrases: ["实验"], message: "x" }\n')
+            md = os.path.join(d, 'a.md')
+            with open(md, 'w', encoding='utf-8') as f:
+                f.write('# 引言\n\n本实验非常重要。不可写成「非常重要」。\n')
+            old = os.environ.get('EVOSCHOLAR_DATA')
+            os.environ['EVOSCHOLAR_DATA'] = d
+            try:
+                rep = W.run(md, packs=['common'])
+            finally:
+                if old is None:
+                    del os.environ['EVOSCHOLAR_DATA']
+                else:
+                    os.environ['EVOSCHOLAR_DATA'] = old
+            hits = [f for f in rep['findings'] if f['rule'] == 'user.no-very']
+            self.assertEqual(len(hits), 1, 'counter-example quotes are skipped')
+            self.assertEqual(hits[0]['severity'], 'info', 'trial rules surface as hints')
+            self.assertIn('[试用规则]', hits[0]['message'])
+            self.assertFalse([f for f in rep['findings'] if f['rule'] == 'user.off'], 'disabled rules do not run')
+            self.assertIn('user', rep['summary']['packs'])

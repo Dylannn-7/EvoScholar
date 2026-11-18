@@ -7,6 +7,15 @@ import {
   PERMISSION_MODES,
   PROTOCOLS,
   addProject,
+  consolidate,
+  deleteUserRule,
+  importSkill,
+  listStyles,
+  listUserRules,
+  removeImportedSkill,
+  setSkillEnabled,
+  setUserRule,
+  stylePreview,
   fetchProviderModels,
   forgetLibraryEntry,
   getProject,
@@ -149,6 +158,10 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
         else delete d[k]
       }
       if (b.effort !== undefined) d.effort = String(b.effort) || undefined
+      if (b.figureStyle !== undefined) {
+        if (b.figureStyle && !/^[a-z0-9-]+$/.test(String(b.figureStyle))) throw httpError(400, '风格名无效')
+        d.figureStyle = String(b.figureStyle) || undefined
+      }
       if (b.permission !== undefined) {
         if (!PERMISSION_MODES.includes(b.permission)) throw httpError(400, '未知权限模式')
         d.permission = b.permission as PermissionMode
@@ -229,6 +242,49 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
         rows: usageBy(rt.db, group, { days, sessionId: url.searchParams.get('session') ?? undefined, projectId: url.searchParams.get('project') ?? undefined })
       }), true
     }
+    // ---------- plugins: figure styles, skills, user rules ----------
+    if (p === '/api/styles' && method === 'GET') return send(res, 200, { styles: await listStyles(rt), current: settings().defaults.figureStyle ?? null }), true
+    if ((mm = /^\/api\/styles\/([a-z0-9-]+)\/preview$/.exec(p)) && method === 'GET') {
+      try { return serveFile(res, await stylePreview(rt, mm[1])), true } catch (e) { throw httpError(500, (e as Error).message) }
+    }
+    if (p === '/api/plugins/skills/import' && method === 'POST') {
+      const b = await body(req, 20 * 1024 * 1024)
+      try {
+        const r = await importSkill(rt, { folder: b.folder ? String(b.folder) : undefined, zip: b.zip ? String(b.zip) : undefined, github: b.github ? String(b.github) : undefined, replace: !!b.replace })
+        if (b.enable !== false) setSkillEnabled(rt, r.name, true)
+        await hooks.resetIdleSessions()
+        return send(res, 200, r), true
+      } catch (e) { throw httpError(400, (e as Error).message) }
+    }
+    if ((mm = /^\/api\/plugins\/skills\/([a-z0-9][a-z0-9-]{0,63})$/.exec(p))) {
+      if (method === 'PATCH') {
+        const b = await body(req)
+        try { setSkillEnabled(rt, mm[1], !!b.enabled) } catch (e) { throw httpError(400, (e as Error).message) }
+        await hooks.resetIdleSessions()
+        return send(res, 200, { ok: true, genome: rt.genomes.activeId() }), true
+      }
+      if (method === 'DELETE') {
+        try { removeImportedSkill(rt, mm[1]) } catch (e) { throw httpError(400, (e as Error).message) }
+        await hooks.resetIdleSessions()
+        return send(res, 200, { ok: true }), true
+      }
+    }
+    if (p === '/api/plugins/rules' && method === 'GET') return send(res, 200, { rules: listUserRules(rt) }), true
+    if ((mm = /^\/api\/plugins\/rules\/(user\.[a-z0-9-]+)$/.exec(p))) {
+      if (method === 'PATCH') {
+        const b = await body(req)
+        if (b.status && !['trial', 'active', 'disabled'].includes(b.status)) throw httpError(400, '未知状态')
+        try { return send(res, 200, { rule: setUserRule(rt, mm[1], { status: b.status, message: b.message }) }), true } catch (e) { throw httpError(404, (e as Error).message) }
+      }
+      if (method === 'DELETE') { deleteUserRule(rt, mm[1]); return send(res, 200, { ok: true }), true }
+    }
+    if (p === '/api/evolve/consolidate' && method === 'POST') {
+      const b = await body(req)
+      try {
+        return send(res, 200, consolidate(rt, { overlayIds: (b.overlayIds ?? []).map(String), memoryIds: (b.memoryIds ?? []).map(String), note: b.note ? String(b.note).slice(0, 300) : undefined })), true
+      } catch (e) { throw httpError(400, (e as Error).message) }
+    }
+
     // ---------- in-loop evolution: memory, overlays, log ----------
     if (p === '/api/evolve' && method === 'GET') {
       const session = url.searchParams.get('session') ?? undefined

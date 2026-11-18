@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 const root = process.cwd()
 const venv = join(root, 'data', `pyenv-${process.platform}-${process.arch}`)
-const pkgs = 'numpy pandas scipy matplotlib scienceplots python-docx bibtexparser pymupdf openpyxl pyyaml pillow'
+const pkgs = 'numpy pandas scipy matplotlib seaborn scienceplots tueplots cmcrameri aquarel python-docx bibtexparser pymupdf openpyxl pyyaml pillow'
 const has = (cmd) => { try { execSync(`${cmd} --version`, { stdio: 'ignore' }); return true } catch { return false } }
 const sh = (cmd) => { console.log('$ ' + cmd); execSync(cmd, { stdio: 'inherit' }) }
 if (has('uv')) {

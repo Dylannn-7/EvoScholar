@@ -3,10 +3,16 @@ import { join } from 'node:path'
 import YAML from 'yaml'
 import { checkFeedbackStats, type RuleStats } from './checkfeedback'
 import type { Runtime } from './session'
-import { listSkills } from './skills'
+import { listSkills, skillSource } from './skills'
 import { TOOL_FACTORIES } from './tools'
 
 export type SkillSummary = {
+  source: 'builtin' | 'evolved' | 'imported'
+  status?: 'trial' | 'active'
+  origin?: string
+  license?: string
+  kernel?: boolean
+  reuses?: number
   name: string
   version: number
   description: string
@@ -68,6 +74,7 @@ export function getCapabilities(rt: Runtime): CapabilitiesSummary {
   const enabledSkills = new Map((g.skills ?? []).map((s) => [s.name, s.version]))
   const skills: SkillSummary[] = listSkills(rt.ws.root, g.skills)
     .map((s) => ({
+      ...provenance(rt.ws.root, s.name),
       name: s.name,
       version: s.version,
       description: s.description,
@@ -116,4 +123,10 @@ export function getCapabilities(rt: Runtime): CapabilitiesSummary {
     writingRulepacks,
     feedbackStats: checkFeedbackStats(rt)
   }
+}
+
+function provenance(root: string, name: string) {
+  const src = skillSource(root, name)
+  const source = src.type === 'builtin' ? 'builtin' as const : src.type === 'forged' ? 'evolved' as const : 'imported' as const
+  return { source, status: src.status, origin: src.origin, license: src.license, kernel: src.kernel, reuses: src.reuses?.length }
 }

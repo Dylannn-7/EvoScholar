@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import type { AgentEvent, AgentMessage, AgentTool, Json, ToolGuard } from '@evoscholar/harness'
-import { objectArgs, textResult } from '../tools/types'
+import { objectArgs, textResult, type ToolEnv } from '../tools/types'
+import { kernelTools } from './kernels'
 import { inside } from '../tools/sandbox'
 import { EVOLVE_DEFAULTS, betaScore, relevance, validateMemoryText, type EvolveEvent, type EvolveStore, type MemoryItem } from './store'
 
@@ -24,6 +25,8 @@ export type EvolveHooks = {
   /** Names that tune_harness may target. */
   toolNames: string[]
   skillNames: string[]
+  /** Tool environment; enables forge_skill / run_skill / patch_skill / propose_rule. */
+  env?: ToolEnv
 }
 
 const EXTERNAL_TOOLS = new Set(['web_search', 'web_fetch', 'pdf_text', 'pdf_page_image', 'lit_import', 'lit_search', 'lit_lookup'])
@@ -58,6 +61,8 @@ export const EVOLVE_INSTRUCTIONS = `
 - 出现 <反思要求> 时，先调用 reflect 说明原因和换什么做法，再继续；同一个失败的调用不要原样重试第三次（会被宿主拦截）。没有明确失败、但觉得方向不对时，也可以主动调用 reflect。
 - 值得以后复用的做法（某类数据怎么解析、某个源不可用时换什么、某种检查的坑）用 note_lesson 记下：写成「什么情况 → 怎么做」，一条一个要点，不写本次任务的具体数值。
 - 遇到口味类决定（配色、图版式、引用格式、表述风格、检索范围）且用户没有说明时，用 offer_choices 给出 2–3 个方案让用户选，用户的选择会成为偏好。
+- 同类处理（解析某种仪器导出格式、某个固定的统计流程）跑通后，用 forge_skill 封装成带测试的函数，以后用 run_skill 直接调用；技能文档漏掉的要点用 patch_skill 补充。
+- 写作检查漏掉的问题、用户反复纠正的写法，用 propose_rule 提成规则（先试用，用户确认后生效）。
 - 觉得本会话的工作方式本身需要调整（给某阶段加一条规则、给某个工具的说明补一句、启用或停用某个技能）时，用 tune_harness；它只在本会话试用，持久化需要用户批准。
 - 任何时候都不要试图关闭检查、跳过审批、放宽权限或上限。`
 
@@ -113,8 +118,8 @@ export function installEvolveLoop(h: EvolveHooks) {
   function beginTurn(userText: string) {
     Object.assign(st, { signals: [], unresolved: new Map(), failures: new Map(), cited: new Set(), toolsUsed: new Set(), wrote: new Set(), learned: [], selfChecked: false, pendingReflect: undefined, reflectedSinceFailure: true })
     // Explicit "from now on" requests become pinned preferences right away (doc §6).
-    const m = /(以后|今后|之后|每次)(都|就|一律|请)?([^。！？\n]{4,120})/.exec(userText)
-    if (m && /(用|要|别|不要|改成|写成|按|保持)/.test(m[3])) {
+    const m = /((以后|今后|之后)(都|一律|统一|就都)|每次都|一律)([^。！？\n]{3,120})/.exec(userText)
+    if (m && /(用|要|别|不要|改成|写成|按|保持|放|加|去掉)/.test(m[4])) {
       try {
         const { item } = h.store.upsert({ kind: 'preference', trigger: '用户明确要求', content: m[0].slice(0, 200), source: 'user', projectId: h.projectId, scope: h.projectId ? 'project' : 'global', evidence: h.sessionId, pinned: true })
         emit({ kind: 'preference', text: `记住了：${item.content}`, refs: [item.id] })
@@ -173,7 +178,7 @@ export function installEvolveLoop(h: EvolveHooks) {
         st.seenTool.add(m.id)
         const callId = String(m.invocationId ?? '').split('/').pop() ?? ''
         const call = st.calls.get(callId)
-        if (!call || ['reflect', 'note_lesson', 'recall', 'tune_harness', 'offer_choices'].includes(call.name)) continue
+        if (!call || ['reflect', 'note_lesson', 'recall', 'tune_harness', 'offer_choices', 'patch_skill', 'propose_rule'].includes(call.name)) continue
         const text = textOf(m.content)
         const sig = failureSignal(call.name, text, !!m.isError)
         if (sig) {
@@ -234,6 +239,7 @@ export function installEvolveLoop(h: EvolveHooks) {
       }, ['situation', 'cause', 'next_action'], (a) => {
         st.pendingReflect = undefined
         st.reflectedSinceFailure = true
+        st.unresolved.clear() // failures the model has reflected on count as handled for the self-check
         for (const k of st.failures.keys()) st.failures.set(k, 0)
         const refs = markRefs(a.refs)
         emit({ kind: 'reflect', text: `${String(a.cause).slice(0, 120)} → ${String(a.next_action).slice(0, 160)}`, refs, data: { situation: a.situation, cause: a.cause, next: a.next_action, adjust: a.adjust ?? 'none' } })
@@ -306,6 +312,11 @@ export function installEvolveLoop(h: EvolveHooks) {
       })
   ]
 
+  if (h.env) tools.push(...kernelTools({
+    store: h.store, sessionId: h.sessionId, env: h.env, emit,
+    addOverlay: (op, target, value, reason) => h.store.addOverlay({ sessionId: h.sessionId, op, target, value, reason, turnId: h.turnId(), beforeScore: h.store.lastScore(h.sessionId) })
+  }))
+
   // ---------------------------------------------------------------- self-check & scoring (doc §3.4, §7)
   function noteFiles(paths: string[]) { for (const p of paths) st.wrote.add(p.split('\\').join('/')) }
 
@@ -375,6 +386,7 @@ export function installEvolveLoop(h: EvolveHooks) {
       instructions: notes.length ? `\n\n## 本会话试用的调整\n${notes.join('\n')}` : '',
       toolNotes,
       enable: rows.filter((o) => o.op === 'skill.enable').map((o) => o.target!),
+      versions: Object.fromEntries(rows.filter((o) => o.op === 'skill.version' && o.target).map((o) => [o.target!, Number(o.value)])) as Record<string, number>,
       disable: rows.filter((o) => o.op === 'skill.disable').map((o) => o.target!)
     }
   }

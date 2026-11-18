@@ -6,7 +6,7 @@ import { litImport, litLookup, litSearch, litVerify, pdfPageImage, pdfText } fro
 import { httpGet, readProcess, runCommand, runPython, startProcess, stopProcess } from './exec'
 import { figureCheck } from './figures'
 import { checkFeedback, manuscriptCheck } from './writing'
-export { stopAllProcesses, pythonBin, pyenvDir } from './exec'
+export { stopAllProcesses, pythonBin, pyenvDir, runProcess, childEnv } from './exec'
 export { inside, checkCommand } from './sandbox'
 export { mergeWorks, titleSim, normDoi, searchAll, type Work } from './literature'
 import { BudgetError } from '../budget'

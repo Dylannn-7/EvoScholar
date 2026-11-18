@@ -391,3 +391,14 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
   .row2, .proto-grid, .perm-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+.style-cards { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.pcard.style { padding: 10px 12px 12px; }
+.pcard.style.cur { box-shadow: 0 0 0 1px rgba(185, 162, 255, .7) inset; }
+.pcard .sprev { border-radius: 10px; overflow: hidden; background: #fff; aspect-ratio: 2.35; display: grid; place-items: center; }
+.pcard .sprev img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.pcard .ft a { text-decoration: none; } .pcard .ft a:hover { color: #fff; }
+.tl-item .c .h input[type=checkbox], .pcard .top input[type=checkbox] { accent-color: #b9a2ff; width: 14px; height: 14px; margin: 0; }
+.sfacts { display: flex; flex-direction: column; gap: 6px; }
+.sfacts .sw { display: flex; gap: 3px; }
+.sfacts .sw i { width: 18px; height: 10px; border-radius: 3px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .12) inset; }
+.sfacts .sf { font-size: 11.5px; color: var(--text-2); line-height: 1.5; }

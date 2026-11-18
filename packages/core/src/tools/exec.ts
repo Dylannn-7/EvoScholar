@@ -22,7 +22,7 @@ export function childEnv(env: ToolEnv): NodeJS.ProcessEnv {
   const pyPath = [join(env.ws.root, 'python'), process.env.PYTHONPATH].filter(Boolean).join(process.platform === 'win32' ? ';' : ':')
   // Model-facing code never sees provider keys.
   const scrubbed = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/_API_KEY$/.test(k)))
-  return { ...scrubbed, MPLBACKEND: 'Agg', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONPATH: pyPath, EVOSCHOLAR_CWD: env.cwd }
+  return { ...scrubbed, MPLBACKEND: 'Agg', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONPATH: pyPath, EVOSCHOLAR_CWD: env.cwd, EVOSCHOLAR_DATA: env.ws.dataDir }
 }
 
 /** Run the bundled literature helper (python/evoscholar_lit.py) and parse its JSON/stdout. */
@@ -62,6 +62,11 @@ function snapshot(dir: string, depth = 3): Map<string, number> {
 
 function changedFiles(before: Map<string, number>, after: Map<string, number>, cwd: string): string[] {
   return [...after].filter(([f, t]) => before.get(f) !== t).map(([f]) => relative(cwd, f)).slice(0, 50)
+}
+
+/** Spawn a process in env.cwd with the scrubbed child environment (no provider keys). */
+export function runProcess(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal: AbortSignal) {
+  return run(cmd, args, env, timeoutS, signal)
 }
 
 function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal: AbortSignal) {

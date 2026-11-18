@@ -1,0 +1,79 @@
+id: g-0009
+parent: g-0007
+createdBy: manual
+createdAt: 2026-11-18 17:07:45.782000+00:00
+status: active
+note: 启用导入技能 scientific-visualization、matplotlib、seaborn（来自 K-Dense-AI/scientific-agent-skills，用户选择）；figure-style
+  更新到 v2（接入出图风格库 SciencePlots / tueplots / aquarel / cmcrameri）
+instructions:
+  system: prompts/system@v5.md
+  compaction: prompts/compaction@v1.md
+skills:
+- name: literature-review
+  version: 1
+- name: data-tables
+  version: 1
+- name: figure-style
+  version: 2
+- name: figure-composer
+  version: 1
+- name: tikz-diagram
+  version: 1
+- name: ml-results
+  version: 1
+- name: ml-curves
+  version: 1
+- name: optics-spectra
+  version: 1
+- name: optics-fields
+  version: 1
+- name: device-curves
+  version: 1
+- name: writing-check
+  version: 1
+- name: research-integrity
+  version: 1
+- name: scientific-visualization
+  version: 1
+- name: matplotlib
+  version: 1
+- name: seaborn
+  version: 1
+routing:
+  roles:
+    main: deepseek/deepseek-flash
+    fast: deepseek/deepseek-flash
+    vision: deepseek/deepseek-flash
+    reflector: deepseek/deepseek-flash
+    judge: deepseek/deepseek-flash
+  rules: []
+tools:
+  enabled:
+  - web_search
+  - web_fetch
+  - list_files
+  - read_file
+  - write_file
+  - edit_file
+  - run_python
+  - run_command
+  - start_process
+  - read_process
+  - stop_process
+  - http_get
+  - lit_search
+  - lit_lookup
+  - lit_verify
+  - lit_import
+  - pdf_text
+  - pdf_page_image
+  - read_skill
+  - figure_check
+  - manuscript_check
+  - check_feedback
+workflows: {}
+budgets:
+  maxSteps: 24
+  maxOutputTokens: 8192
+  timeoutMs: 600000
+  contextBudgetTokens: 120000
