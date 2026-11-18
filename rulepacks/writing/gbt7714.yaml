@@ -1,0 +1,37 @@
+id: gbt7714
+name: GB/T 7714—2025 信息与文献 参考文献著录规则（顺序编码制）
+description: >-
+  GB/T 7714—2025 于 2025-12-02 发布、2026-07-01 实施，全部代替 GB/T 7714—2015。本包按 2025 版顺序编码制检查；
+  著者-出版年制、各类文献的完整著录项目（出版地、出版者、页码等必备性）只做提示，不逐项判定。
+sources:
+  - id: std
+    title: GB/T 7714—2025 信息与文献 参考文献著录规则（用户提供的标准文本）
+    file: rulepacks/gbt7714/source/GB-T 7714-2025 信息与文献 参考文献著录规则.pdf
+    checked: 2026-11-18
+  - id: samr
+    title: 全国标准信息公共服务平台 — GB/T 7714-2025 标准状态（现行，代替 2015 版）
+    url: https://std.samr.gov.cn/gb/search/gbDetailed?id=4507EFE13D37CB6AE06397BE0A0A601F
+    checked: 2026-11-18
+rules:
+  - id: gbt7714.citation.order
+    check: citation_order
+    params: { latex_styles: [gbt7714-numerical, gbt7714-2005-numerical, unsrt, unsrtnat] }
+    source: std
+    note: 顺序编码制按正文中引用的文献出现的先后顺序连续编码，序号置于方括号中（9.2.1.1）；参考文献表按序号依次列出（9.2.2）
+  - id: gbt7714.citation.grouping
+    check: citation_grouping
+    params: { style: gbt7714 }
+    source: std
+    note: 同一处引用多篇文献时，各序号全部列在一个方括号内，用「,」隔开；连续序号的起讫序号用短横线连接（9.2.1.2；计算机自动编码的序号不适用）
+  - id: gbt7714.references.format
+    check: reference_format
+    params: { style: gbt7714, max_authors: 3, bst: gbt7714-numerical（gbt7714 宏包，请确认其版本已支持 2025 版） }
+    source: std
+    note: >-
+      文献类型标识必备，代码见附录 A 表 A.1（含新增的预印本 PP）；电子资源还应著录载体标识（表 A.2，含新增的缩微资料 MM）（7.3）；
+      责任者不超过 3 个全部照录，超过 3 个著录前 3 个后加「，等」或 et al.（7.1.2）；西文责任者姓在前，名用首字母且省略缩写点（7.1.1）。
+      2025 版规定条目结尾「可用」. 号标识（6.2），因此不检查结尾标点。
+verify:
+  - 2025 版相对 2015 版的主要变化：新增预印本 [PP]、缩微资料 [MM]；[EB] 改为「网站、网页」；增加会议录、学位论文、报告、标准、网站、档案、地图、数据集、预印本的著录格式；电子资源按各文献类型分别著录。学校或期刊仍指定 2015 版时，请按其要求核对。
+  - 各类文献的必备著录项目（出版地、出版者、年卷期、页码、引用日期、获取和访问路径等，见第 8 章各表）未逐项检查，请对照标准第 8 章与附录 B 示例核对。
+  - 著者-出版年制（9.3）的正文标注与文献表排序未检查。

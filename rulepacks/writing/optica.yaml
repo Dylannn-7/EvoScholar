@@ -1,0 +1,47 @@
+id: optica
+name: Optica Publishing Group 期刊（Optica、Optics Express、Optics Letters、Photonics Research）
+extends: [common]
+sources:
+  - id: style
+    title: Optica Publishing Group Journal Style Guide
+    url: https://opg.optica.org/content/author/portal/item/style-optica-styleguide/
+    checked: 2026-11-18
+rules:
+  - id: optica.abstract.length
+    check: abstract_length
+    params: { lang: en, max: 100 }
+    severity: info
+    source: style
+    note: The abstract should be limited to approximately 100 words（「约」100 词，故只作提示）
+  - id: optica.abstract.claims
+    check: abstract_content
+    params: { qualify_words: [first, new, novel] }
+    source: style
+    note: 摘要中的 first / new / novel 需限定为 “believed to be first” 或 “new to our knowledge”
+  - id: optica.title
+    check: title_terms
+    params: { avoid_start: [a, an, the, on, of, in, for, to, with, by, at, from, first, new, novel] }
+    source: style
+    note: 题名避免以冠词、介词或 first / new / novel 开头
+  - id: optica.citation.order
+    check: citation_order
+    params: { latex_styles: [opticajnl, osajnl, unsrt, unsrtnat] }
+    source: style
+    note: References and Notes should be numbered consecutively in the order in which they are first referenced
+  - id: optica.citation.grouping
+    check: citation_grouping
+    params: { style: optica }
+    source: style
+    note: 两条写 [2,3]，三条及以上连续写 [1–4]
+  - id: optica.references.format
+    check: reference_format
+    params: { style: optica, bst: Optica 官方 LaTeX 模板自带的 bst }
+    source: style
+    note: Always list the first three authors and use et al. if there are additional authors；年份放在括号里
+  - id: optica.xref
+    check: xref_style
+    source: style
+    note: Authors must identify equations and figures in the text by inserting Eq. or Fig. before the number；公式编号写作 Eq. (1)
+verify:
+  - 各刊篇幅与字数上限（Optics Letters、Optica、Photonics Research 等）各不相同，作者指南页未统一给出，请查目标期刊页面。
+  - 图的版面要求见出图规则包 rulepacks/figures/optica.yaml。

@@ -69,6 +69,8 @@ python/evoscholar_lit.py  确定性文献工具函数（run_python 里 import ev
 python/evoscholar_data.py 数据分析函数：实验统计 / booktabs、训练曲线、光谱（FWHM、Q、拟合）、场分布、器件曲线（import evoscholar_data as D）
 python/evoscholar_fig.py  出图：规则包、apply_style / figsize / save、check_figure / check_file、预览、TikZ 编译（import evoscholar_fig as F）
 rulepacks/figures/*.yaml  期刊 / 会议出图规则（数值只来自作者指南，带出处）
+python/evoscholar_write.py 稿件检查引擎：LaTeX（沿 \input）/ Word / Markdown / PDF → 统一结构；24 个检查函数；按规则包运行；Word 批注 / LaTeX 行尾注释写回
+rulepacks/writing/*.yaml  写作规则包（每条规则带出处与核对日期；未核实的只写 verify 提示）
 ```
 
 ### 关键文件
@@ -138,6 +140,7 @@ budgets: { maxSteps: 24, maxOutputTokens: 8192, timeoutMs: 600000, contextBudget
 | `lit_import`                                         | RIS、BibTeX、EndNote、NoteExpress、GB/T 7714 自动识别（知网 / 万方导出）                                                   |
 | `pdf_text`、`pdf_page_image`                         | 带页码文字；扫描页渲染成图片看图                                                                                           |
 | `read_skill`                                         | 读取 SKILL.md；读取事件会进轨迹（用于归因）                                                                                |
+| `manuscript_check`（第 6 天，g-0007 起）             | 按规则包检查稿件，返回带定位和依据的问题清单，报告写入 `.evoscholar/checks/<文件名>/`，可生成批注副本                      |
 | `figure_check`（第 5 天，g-0006 起）                 | 已保存的图按规则包检查尺寸、可编辑字体、位图 dpi，并返回渲染预览图供模型看图；字号、单位、配色等在 `F.check_figure` 里查   |
 
 新增工具：在 `tools/` 写 `ToolFactory`，注册到 `TOOL_FACTORIES`，在 genome 的 `tools.enabled` 中启用，并用 mock `fetch` 写测试（参考 `literature.test.ts`）。
@@ -236,6 +239,23 @@ python3 evals/bench.py advance <dir>                                   # L10、D
 - genome **g-0006**（manual，父版本 g-0005；11-18 经用户批准上线）：启用上述技能和 `figure_check`。冒烟（`es eval … --category dev`）：D01–D07 7/7（g-0005 为 6/7，D06 失败），验收 D08–D10 3/3（与 g-0005 相同）。
 - **注意**：写 data-tables 技能时我已经知道 D06 的期望表头（第 4 天排查时看过），所以 D06 通过不是独立证据；D08–D10 没有影响过任何技能。
 - `es eval` 新增 `--category dev`，冒烟测试计入开发预算。
+
+**第 6 天进展（2026-11-18，进行中）**
+
+- 引擎 `python/evoscholar_write.py`：解析 LaTeX（沿 `\input` / `\include`，列出未引入的 .tex）、Word（样式链求有效字号和中文字体，段落定位）、Markdown、PDF（页面、标题页码、元数据）。检查函数有：交叉引用、引用与文献表、引用顺序、引用分组格式、图表编号与引用、图表题位置、缩写、数值单位空格、范围与千分撇、中英文标点、题名、摘要、关键词、必需章节、章节顺序、文献统计、参考文献格式、Word 字体字号、匿名、页数、表述用语，共 24 个。
+- 规则包 `rulepacks/writing/`：
+  - 完整：`common`、`hust-thesis`（master / doctor / undergrad）、`optica`、`ieee-journal`、`ml-conference`（neurips2026 / neurips2025 / icml2026 / iclr2026）。
+  - `gbt7714`：按 **GB/T 7714—2025**（2026-07-01 实施，代替 2015 版；用户提供的标准扫描件，放在 git 忽略的 `rulepacks/gbt7714/source/`）检查：引用顺序（9.2.1.1）、同处多篇引用写法（9.2.1.2）、文献类型 / 载体标识按附录 A（含新增 PP、MM）、电子资源须有载体标识（7.3）、超过 3 个责任者加「等」/ et al.（7.1.2）、西文名首字母不加缩写点（7.1.1）。2025 版条目结尾「可用」. 号（6.2），所以不查结尾标点。各类文献必备著录项目和著者-出版年制只给「请核对」。
+  - 其余 14 个包（advanced-photonics、springer-nature、wiley、acs、science、springer-journal、cvf、eccv、aaai、ijcai、acl、cn-optics、cn-physics、cn-computing）是占位包：只跑通用检查，并提示核对作者指南。
+- 华科依据：研究生撰写规定（校研〔2009〕39号）、硕博参考模板、本科附件 1 / 1.2（2024-11-01 修订）；本科压缩包解压在 `rulepacks/hust/source/undergrad/`（git 忽略）。**规定与模板有冲突**（参考文献作者 3 人 vs 6 人；博士文献量 60 篇外文 2/3 vs 100 篇外文 1/3），规则按较新的模板写，冲突写在 verify 里。
+- 工具 `manuscript_check`、`check_feedback`；技能 `writing-check`、`research-integrity`；候选 genome **g-0007**（manual，父版本 g-0006，未上线）。
+- 离线：引擎直接解析 W01 输入后生成的答案判分 pass（交叉引用规则与评测口径一致）；W07 的页码表与必需章节能直接从 `pdf_section_pages` 得到。
+- **用华科官方硕博模板做误报测试**：第一版每份模板报 49 条，主要是误报。修复后降到 12 条，剩下的都是模板本身的问题（示例文献未引用、图号混用 1.1 / 4-1、「我们」、半角冒号等）。修复内容：参考文献节里的说明文字不算条目；封面、目录、表注不查字体；「不可写成 15～20%」这类反例不报；文件扩展名不算半角句号；XXX 占位符不算缩写；章节顺序只比较顶层标题。另补了回归测试。
+- **注意**：W08 是**验收**任务。我看了它的输入，把「致谢里的单位 / 实验室名称」加进了匿名检查（通用改进），之后用引擎输出判分 pass。所以 W08 已经不能算独立的验收证据；其余验收任务没有动过。
+- **g-0006 补跑（11-18 19:00 非高峰，¥0.31）**：L01–L10、W01–W10 共 16/20 通过；与 g-0005 逐题对比无退步、无修复，失败的 L05、L07、W05、W08 在 g-0005 下也失败。
+- **第 6 天冒烟（g-0007，dev，¥0.09）**：W01–W07 6/7（W05 失败，与 g-0006 相同）。但这 7 题里智能体**没有调用 manuscript_check**，新技能只在 W02 读过（research-integrity）：短任务靠通用工具就能完成，所以冒烟只说明没有退步，不能证明检查引擎的价值，要在真实稿件上测。
+- 「有效 / 误报」标记：工具 `check_feedback`（用户在对话里说「F003 是误报」时由智能体记录）、CLI `es mark <report.json> F001,F003 fp [原因]`、`es check-stats`（各规则误报率）。数据存在 events 表，type 为 `host.check.feedback`。
+- 注意：技能是看过 W01–W10 的任务说明（不含答案）后写的；W07 计页口径没有写死。
 
 ### 第 6 天：写作规范检查
 

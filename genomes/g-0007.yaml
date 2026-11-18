@@ -1,0 +1,72 @@
+id: g-0007
+parent: g-0006
+createdBy: manual
+createdAt: 2026-11-18T07:39:33.347Z
+status: candidate
+note: 第 6 天：启用写作规范检查（manuscript_check 工具、writing-check 与 research-integrity 技能）
+instructions:
+  system: prompts/system@v5.md
+  compaction: prompts/compaction@v1.md
+skills:
+  - name: literature-review
+    version: 1
+  - name: data-tables
+    version: 1
+  - name: figure-style
+    version: 1
+  - name: figure-composer
+    version: 1
+  - name: tikz-diagram
+    version: 1
+  - name: ml-results
+    version: 1
+  - name: ml-curves
+    version: 1
+  - name: optics-spectra
+    version: 1
+  - name: optics-fields
+    version: 1
+  - name: device-curves
+    version: 1
+  - name: writing-check
+    version: 1
+  - name: research-integrity
+    version: 1
+routing:
+  roles:
+    main: deepseek/deepseek-flash
+    fast: deepseek/deepseek-flash
+    vision: deepseek/deepseek-flash
+    reflector: deepseek/deepseek-flash
+    judge: deepseek/deepseek-flash
+  rules: []
+tools:
+  enabled:
+    - web_search
+    - web_fetch
+    - list_files
+    - read_file
+    - write_file
+    - edit_file
+    - run_python
+    - run_command
+    - start_process
+    - read_process
+    - stop_process
+    - http_get
+    - lit_search
+    - lit_lookup
+    - lit_verify
+    - lit_import
+    - pdf_text
+    - pdf_page_image
+    - read_skill
+    - figure_check
+    - manuscript_check
+    - check_feedback
+workflows: {}
+budgets:
+  maxSteps: 24
+  maxOutputTokens: 8192
+  timeoutMs: 600000
+  contextBudgetTokens: 120000

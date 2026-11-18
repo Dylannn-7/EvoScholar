@@ -1,0 +1,161 @@
+id: hust-thesis
+name: 华中科技大学学位论文（本科 / 硕士 / 博士）
+extends: [common]
+variants:
+  master: 硕士学位论文（理工科模板）
+  doctor: 博士学位论文（理工科模板）
+  undergrad: 本科毕业设计（论文）
+description: >-
+  研究生依据《华中科技大学博士、硕士学位论文撰写规定》（校研〔2009〕39号）和理工科硕士 / 博士参考模板；
+  模板比规定新，两者冲突时规则按模板写，并在「请核对」里列出冲突。本科依据《本科毕设工作管理办法》（校本〔2022〕1号）附件 1 及格式示例（2024-11-01 修订）。
+sources:
+  - id: reg
+    title: 华中科技大学博士、硕士学位论文撰写规定（校研〔2009〕39号）
+    file: rulepacks/hust/source/研究生学位论文撰写规定-校研2009-39号.txt
+    checked: 2026-11-18
+  - id: tpl-master
+    title: 理工科-硕士-华中科技大学学位论文参考模板
+    file: 理工科-硕士-华中科技大学学位论文参考模板.docx
+    checked: 2026-11-18
+  - id: tpl-doctor
+    title: 理工科-博士-华中科技大学学位论文参考模板
+    file: 理工科-博士-华中科技大学学位论文参考模板.docx
+    checked: 2026-11-18
+  - id: ug
+    title: 本科毕业设计（论文）规范化要求及格式示例（附件 1、1.2，2024-11-01 修订）
+    file: 本科毕设工作管理办法（校本〔2022〕1号）附件：1-5（20241101部分修订）.zip
+    checked: 2026-11-18
+rules:
+  # ---------------- 题名、摘要、关键词
+  - id: hust.title.length
+    check: title_length
+    applies: [master, doctor]
+    params: { max: 30 }
+    severity: warning
+    source: reg
+    note: 题名一般不宜超过 30 个字（规定第二条；模板封面「不超 30 字」）
+  - id: hust.abstract.zh
+    check: abstract_length
+    applies: [master, doctor]
+    params: { lang: zh }
+    params_by_variant:
+      master: { min: 500, max: 600 }
+      doctor: { min: 800, max: 1000 }
+    source: reg
+    note: 硕士摘要一般 500–600 汉字，博士 800–1000 汉字（规定第四条第 4 款）
+  - id: hust.abstract.en
+    check: abstract_length
+    params: { lang: en }
+    source: reg
+    note: 应有与中文摘要对应的英文摘要（规定第四条第 7 款；本科格式示例含 Abstract）
+  - id: hust.keywords.zh
+    check: keywords
+    params: { lang: zh }
+    params_by_variant:
+      master: { min: 3, max: 8 }
+      doctor: { min: 3, max: 8, separator: '；' }
+      undergrad: { min: 3, max: 5, separator: '；' }
+    source: reg
+    note: 研究生 3–8 个（规定第四条第 6 款），博士模板要求分号分隔；本科 3–5 个（格式示例）
+  - id: hust.keywords.en
+    check: keywords
+    params: { lang: en }
+    params_by_variant:
+      master: { min: 3, max: 8 }
+      doctor: { min: 3, max: 8 }
+      undergrad: { min: 3, max: 5 }
+    source: reg
+  - id: hust.abstract.we
+    check: avoid_phrases
+    applies: [master, doctor]
+    params: { phrases: ['我们'], scope: all }
+    source: tpl-master
+    note: 模板：摘要及全文中均建议不出现「我们」等字样
+  # ---------------- 结构
+  - id: hust.sections.required
+    check: required_sections
+    params:
+      sections: [['摘要', '摘  要'], ['Abstract'], ['参考文献'], ['致谢', '致  谢']]
+    source: reg
+  - id: hust.sections.order
+    check: section_order
+    params_by_variant:
+      master: { order: [['摘要'], ['abstract'], ['目录', '目次'], ['致谢'], ['参考文献'], ['附录', '附录1', '附录2']] }
+      doctor: { order: [['摘要'], ['abstract'], ['目录', '目次'], ['致谢'], ['参考文献'], ['附录', '附录1', '附录2']] }
+      undergrad: { order: [['摘要'], ['abstract'], ['目录'], ['参考文献'], ['附录'], ['致谢']] }
+    source: reg
+    note: 研究生装订顺序：中英文摘要 → 目次 → 正文 → 结论 → 致谢 → 参考文献 → 附录（规定第十一条）；本科：正文 → 参考文献 → 附录 → 致谢（附件 1）
+  # ---------------- 引用与参考文献
+  - id: hust.citation.order
+    check: citation_order
+    applies: [master, doctor]
+    params: { latex_styles: [unsrt, unsrtnat, ieeetr, IEEEtran, gbt7714-numerical, gbt7714-2005-numerical] }
+    source: reg
+    note: 参考文献按正文引用先后顺序排列，重复引用按第一次出现编号（规定第九条第 1 款）
+  - id: hust.references.stats
+    check: reference_stats
+    applies: [master, doctor]
+    params_by_variant:
+      master: { min_total: 40, min_foreign_share: 0.3333, min_recent_share: 0.3333, recent_years: 5 }
+      doctor: { min_total: 100, min_foreign_share: 0.3333, min_recent_share: 0.3333, recent_years: 5 }
+    source: tpl-master
+    note: 硕士 ≥40 篇、外文 ≥1/3、近五年 ≥1/3；博士按博士模板 ≥100 篇（与 2009 规定的 ≥60 篇、外文 ≥2/3 不一致，见「请核对」）
+  - id: hust.references.format
+    check: reference_format
+    applies: [master, doctor]
+    params: { style: hust-grad, max_authors: 6, bst: 无官方 bst，按模板示例手工核对 }
+    source: tpl-master
+    note: 6 人以内列全部作者，超过 6 人写前 6 人加「等」/ et al；每条参考文献最后不加标点（模板「参考文献格式」）
+  # ---------------- 图、表、公式
+  - id: hust.floats.numbering
+    replaces: common.floats
+    check: float_numbering
+    params: { per_chapter: true }
+    source: tpl-master
+    note: 图、表按章编号（如图 4-1、表 3-1），图、表、公式分别顺序编号（规定第一条第 6 款；模板「关于图」「关于表格」）
+  - id: hust.floats.caption_position
+    check: caption_position
+    params_by_variant:
+      master: { table: above }
+      doctor: { table: above }
+      undergrad: { table: above, figure: below }
+    source: tpl-master
+    note: 表题居中置于表格顶端（研究生模板）；本科：表标题位于表格上方，图标题位于图下方（格式示例）
+  # ---------------- 数字与单位
+  - id: hust.numbers.range
+    check: range_style
+    applies: [master, doctor]
+    params: { percent_both: true, unit_once: true, no_thousands_comma: true }
+    source: tpl-master
+    note: 15%～20% 两个百分号；800～1500 m³/s 只写一次单位；多位数不用千分撇（模板「符号、单位的使用」「数字的使用」）
+  # ---------------- Word 字体字号
+  - id: hust.docx.fonts
+    check: docx_fonts
+    params_by_variant:
+      master:
+        levels:
+          h1: { size: 三号, east: 黑体 }
+          h2: { size: 四号, east: 黑体 }
+          h3: { size: 小四, east: 黑体 }
+          body: { size: 小四, east: 宋体 }
+      doctor:
+        levels:
+          h1: { size: 三号, east: 黑体 }
+          h2: { size: 四号, east: 黑体 }
+          h3: { size: 小四, east: 黑体 }
+          body: { size: 小四, east: 宋体 }
+      undergrad:
+        levels:
+          h1: { size: 小二, east: 黑体 }
+          h2: { size: 四号, east: 黑体 }
+          h3: { size: 小四, east: 黑体 }
+          body: { size: 小四, east: 宋体 }
+    source: tpl-master
+    note: 研究生：章、节题名黑体三号、四号，三级标题黑体小四，正文宋体小四（规定第十一条第 3 款；模板）；本科：章黑体小二、节黑体四号、三级黑体小四、正文宋体小四（格式示例）
+verify:
+  - 参考文献作者数：2009 年撰写规定写「3 人以内全部写上，3 人以上只写 3 人再加等」，硕博模板写「6 人以内列全部，6 人以上写 6 人加等」。规则按模板检查，请向学院确认。
+  - 博士文献阅读量：模板为不少于 100 篇（外文 ≥1/3、近五年 ≥1/3），2009 年规定为不少于 60 篇（外文 ≥2/3）。规则按模板检查，请向学院确认。
+  - 博士学位论文字数一般不少于 5 万字、绪论到总结与展望不少于 90 页（博士模板），需在 Word / PDF 中人工核对。
+  - 本科参考文献著录格式：格式示例只给了例子没有成文规则，未自动检查，请按学院要求核对。
+  - 页边距、页眉（楷体小二）、页码（正文前罗马数字、正文起阿拉伯数字）、行距（正文 1.5 倍；目录固定值 25 磅）需在 Word 中核对；本工具只检查字号和字体。
+  - 学位论文字数要求「按学科分别规定」（规定第一条第 3 款），请查所在学院的规定。
