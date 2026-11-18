@@ -1,0 +1,7 @@
+EvoScholar
+Copyright 2026 EvoScholar contributors
+
+This product includes software developed by aipoch (https://github.com/aipoch/open-science),
+licensed under the Apache License, Version 2.0:
+  - packages/harness/src  (from packages/agent-harness/src, unmodified)
+  - packages/core/src/presets.json (subset derived from packages/providers/src/providers/data.ts)

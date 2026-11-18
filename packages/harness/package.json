@@ -1,0 +1,15 @@
+{
+  "name": "@evoscholar/harness",
+  "version": "0.1.0",
+  "description": "Fork of @aipoch/agent-harness (aipoch/open-science, Apache-2.0). Kept unmodified; EvoScholar extends it from the host side.",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./chat-completions": { "types": "./dist/chat-completions.d.ts", "default": "./dist/chat-completions.js" },
+    "./responses": { "types": "./dist/responses.d.ts", "default": "./dist/responses.js" },
+    "./messages": { "types": "./dist/messages.d.ts", "default": "./dist/messages.js" },
+    "./mcp": { "types": "./dist/mcp.d.ts", "default": "./dist/mcp.js" }
+  }
+}

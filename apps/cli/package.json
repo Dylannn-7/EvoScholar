@@ -1,0 +1,7 @@
+{
+  "name": "@evoscholar/cli",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "bin": { "evoscholar": "./dist/main.js" },
+  "dependencies": { "@evoscholar/core": "0.1.0", "@evoscholar/harness": "0.1.0" }
+}

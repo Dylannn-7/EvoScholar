@@ -1,0 +1,8 @@
+{
+  "name": "@evoscholar/core",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "dependencies": { "@evoscholar/harness": "0.1.0", "yaml": "^2.9.1" }
+}
