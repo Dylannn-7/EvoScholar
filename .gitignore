@@ -7,3 +7,4 @@ dist/
 data/
 .evoscholar/
 .DS_Store
+.sync/
