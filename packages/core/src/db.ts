@@ -72,7 +72,13 @@ const MIGRATIONS: string[] = [
 export function openDb(dataDir: string): Db {
   mkdirSync(dataDir, { recursive: true })
   const db = new DatabaseSync(join(dataDir, 'evoscholar.sqlite'))
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
+  // WAL needs shared memory; network/FUSE mounts reject it. TRUNCATE also avoids deleting files.
+  try {
+    db.exec('PRAGMA journal_mode = WAL')
+  } catch {
+    db.exec('PRAGMA journal_mode = TRUNCATE')
+  }
+  db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;')
   db.exec('CREATE TABLE IF NOT EXISTS schema_version (v INTEGER NOT NULL)')
   const row = db.prepare('SELECT v FROM schema_version').get() as { v: number } | undefined
   let v = row?.v ?? 0
