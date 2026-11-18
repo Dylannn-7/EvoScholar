@@ -6,7 +6,8 @@ export const CONFIG = {
   particles: {
     curlNoiseScale: 1, curlTimeScale: 0.5, curlNoiseSpeed: 1,
     swirl: 0.0005, surfacePull: 0.5, originSpring: 0.0002, mouseStrength: 0.4,
-    pointSize: 0.04, purple: [0.6, 0.45, 1.0]
+    pointSize: 0.04, purple: [0.6, 0.45, 1.0],
+    sizeMul: 0.62            // EvoScholar tuning: finer points than the formula, to match the reference recording
   },
   fluid: {
     simResolution: 256, dyeResolution: 512,

@@ -9,23 +9,24 @@ const SDF = /* glsl */ `
 vec3 qrot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 float smin(float a, float b, float k) { float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0); return mix(b, a, h) - k * h * (1.0 - h); }
 float angDist(float a, float b) { float d = mod(a - b + 3.14159265, 6.2831853) - 3.14159265; return abs(d); }
-const float SHAPE_SCALE = 2.6;   // our ring is drawn at 1/SHAPE_SCALE of the unit design below
+const float SHAPE_SCALE = 1.2;   // the unit design below drawn at 1/SHAPE_SCALE: a large ring that fills the view
+mat2 rot2(float t) { return mat2(cos(t), -sin(t), sin(t), cos(t)); }
 float sdfShape(vec3 p) {
   p.z = sqrt(p.z * p.z + 0.0215) - sqrt(0.012);
   p = qrot(vec4(0.5, 0.5, 0.5, 0.5), p);
   if (length(p) > 0.8) return length(p) - 0.7;
   p *= SHAPE_SCALE;
+  p = p.yzx;                                                        // ring faces the camera after the group rotation
   float a = atan(p.y, p.x);
   float r = length(p.xy);
-  vec2 q = vec2(r - 0.43, p.z);
-  float tw = a * 0.75;
-  q = mat2(cos(tw), -sin(tw), sin(tw), cos(tw)) * q;
-  float open = smoothstep(0.35, 1.25, angDist(a, 2.35));          // one large opening
-  float thick = mix(0.015, 0.125, open) * (1.0 + 0.18 * sin(a * 3.0 + 0.7));
-  float ring = length(q * vec2(1.0, 1.55)) - thick;
-  float lobe1 = length(p - vec3(0.36 * cos(-0.9), 0.36 * sin(-0.9), 0.05)) - 0.15;
-  float lobe2 = length(p - vec3(0.40 * cos(0.9), 0.40 * sin(0.9), -0.06)) - 0.12;
-  return smin(smin(ring, lobe1, 0.14), lobe2, 0.12) / SHAPE_SCALE;
+  float R = 0.40 + 0.035 * sin(a * 2.0 + 0.4);                     // organic, slightly oval centreline
+  vec2 q = rot2(a * 0.5) * vec2(r - R, p.z);                        // half twist along the ring
+  float thick = 0.165 + 0.045 * sin(a * 3.0 + 0.7) + 0.025 * sin(a * 5.0 + 1.9);
+  thick *= 1.0 - 0.5 * (1.0 - smoothstep(0.0, 1.0, angDist(a, 2.35)));   // one shallow pinch
+  float ring = length(q * vec2(1.0, 1.3)) - thick;
+  float lobe1 = length(p - vec3(0.40 * cos(-0.9), 0.40 * sin(-0.9), 0.04)) - 0.19;
+  float lobe2 = length(p - vec3(0.42 * cos(0.95), 0.42 * sin(0.95), -0.05)) - 0.15;
+  return smin(smin(ring, lobe1, 0.16), lobe2, 0.14) / SHAPE_SCALE;
 }
 vec3 sdfNormal(vec3 p) {
   const vec2 e = vec2(0.001, 0.0);
@@ -183,7 +184,7 @@ export class Particles {
       vertexShader: POINT_VERT, fragmentShader: POINT_FRAG, transparent: true, depthTest: true, depthWrite: false,
       blending: THREE.AdditiveBlending,
       uniforms: {
-        uPos: { value: this.read.texture }, uDPR: { value: Math.min(window.devicePixelRatio || 1, 2) }, uSize: { value: p.pointSize * 18 },
+        uPos: { value: this.read.texture }, uDPR: { value: Math.min(window.devicePixelRatio || 1, 2) }, uSize: { value: p.pointSize * 18 * p.sizeMul },
         uTime: { value: 0 }, uMatcap: { value: matcap() }, uDim: { value: 1 }, uPurpleExp: { value: 100 }, uTwinkle: { value: 1 },
         uPurpleTint: { value: 0 }, uBreathe: { value: 0 }, uPurple: { value: new THREE.Color(...p.purple) }, uTint: { value: new THREE.Color(1, 1, 1) }
       }
