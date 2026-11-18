@@ -121,15 +121,57 @@ async function getLive(id: string, create?: { title?: string; cwd?: string }): P
   return l
 }
 
+const SKILL_MODE: Record<string, string> = {
+  'literature-review': 'literature', 'writing-check': 'writing', 'research-integrity': 'writing',
+  'figure-style': 'figure', 'figure-composer': 'figure', 'tikz-diagram': 'figure',
+  'data-tables': 'data', 'ml-results': 'data', 'ml-curves': 'data', 'optics-spectra': 'data', 'optics-fields': 'data', 'device-curves': 'data'
+}
+const IMG = /\.(png|jpe?g|gif|webp|svg)$/i
+
+/** Newest image the session produced (not an uploaded input), for the card thumbnail. */
+function latestImage(cwd: string): string | undefined {
+  let best: { rel: string; t: number } | undefined
+  const walk = (d: string, depth: number) => {
+    let names: string[] = []
+    try { names = readdirSync(d) } catch { return }
+    for (const n of names) {
+      if (n.startsWith('.') || n === 'inputs' || n === 'node_modules') continue
+      const f = join(d, n)
+      let st
+      try { st = statSync(f) } catch { continue }
+      if (st.isDirectory()) { if (depth > 0) walk(f, depth - 1) } else if (IMG.test(n) && !/\.preview\.png$/.test(n) && (!best || st.mtimeMs > best.t)) best = { rel: relative(cwd, f), t: st.mtimeMs }
+    }
+  }
+  walk(cwd, 2)
+  return best?.rel
+}
+
 function listSessions() {
-  return rt.db
+  const rows = rt.db
     .prepare(
       `SELECT s.id, s.title, s.created_at, s.genome_id, COUNT(t.id) AS turns, COALESCE(SUM(t.cost_cny),0) AS cost,
-              MAX(t.ts_start) AS last
+              MAX(t.ts_start) AS last,
+              (SELECT prompt FROM turns WHERE session_id = s.id ORDER BY id LIMIT 1) AS preview,
+              (SELECT group_concat(type || ':' || COALESCE(json_extract(payload, '$.name'), ''), ',') FROM events
+                 WHERE session_id = s.id AND type IN ('host.skill.read', 'host.manuscript.check', 'host.figure.check')) AS signals
          FROM sessions s LEFT JOIN turns t ON t.session_id = s.id
         WHERE s.category = 'usage' GROUP BY s.id ORDER BY COALESCE(MAX(t.ts_start), s.created_at) DESC LIMIT 200`
     )
-    .all()
+    .all() as Record<string, unknown>[]
+  return rows.map((r, i) => {
+    const sig = String(r.signals ?? '')
+    const modes = new Set<string>()
+    for (const part of sig.split(',').filter(Boolean)) {
+      const [type, name] = part.split(':')
+      if (type === 'host.manuscript.check') modes.add('writing')
+      else if (type === 'host.figure.check') modes.add('figure')
+      else if (SKILL_MODE[name]) modes.add(SKILL_MODE[name])
+    }
+    const mode = ['writing', 'figure', 'literature', 'data'].find((m) => modes.has(m)) ?? 'chat'
+    const thumb = i < 60 ? latestImage(join(ws.dataDir, 'projects', String(r.id))) : undefined
+    const { signals: _s, ...rest } = r
+    return { ...rest, preview: r.preview ? String(r.preview).slice(0, 240) : null, mode, thumb: thumb ?? null }
+  })
 }
 
 function setEnvKey(name: string, value: string) {
@@ -186,6 +228,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       providers: listProviders(ws.config),
       budget: rt.ledger.summary(),
       sessions: listSessions(),
+      pending: (rt.db.prepare(`SELECT COUNT(*) n FROM candidates WHERE status = 'pending'`).get() as { n: number }).n,
       alerts
     })
   }

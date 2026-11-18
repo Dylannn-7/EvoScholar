@@ -1,5 +1,11 @@
 // EvoScholar web workbench — no build step, no external requests.
 const $ = (s, el = document) => el.querySelector(s)
+let fx = { setState () {}, setDim () {}, setBudgetLevel () {}, reform () {}, setQuality () {}, setMouseStrength () {}, quality: 'off' }
+import('./fx/index.js').then((m) => { try { fx = m.initFx(document.getElementById('bg')); syncFx() } catch (e) { console.warn('fx disabled:', e) } }).catch((e) => console.warn('fx disabled:', e))
+function syncFx () {
+  fx.setDim(current ? 0.4 : 1)
+  if (state?.budget) fx.setBudgetLevel(state.budget.usageTodayCny / Math.max(0.01, state.budget.dailyUsageSoftCny))
+}
 const H = { 'content-type': 'application/json', 'x-evoscholar': '1' }
 const api = async (path, opts = {}) => {
   const r = await fetch(path, { ...opts, headers: { ...H, ...(opts.headers || {}) } })
@@ -77,44 +83,98 @@ const scroll = () => (thread.scrollTop = thread.scrollHeight)
 
 async function loadState() {
   state = await api('/api/state')
-  $('#genomeBadge').textContent = state.genome.id
-  $('#genomeBadge').title = `当前 harness：${state.genome.id}\n${state.genome.note || ''}\n主力模型：${state.genome.roles.main}`
+  const gen = (/(\d+)$/.exec(state.genome.id) || [, '0'])[1]
+  $('#counter').textContent = gen.slice(-2).padStart(2, '0')
+  $('#counter').title = `当前 harness：${state.genome.id}\n${state.genome.note || ''}\n点击查看进化`
+  try {
+    const seen = localStorage.getItem('evoscholar.genome')
+    if (seen && seen !== state.genome.id) fx.reform()
+    localStorage.setItem('evoscholar.genome', state.genome.id)
+  } catch {}
   renderSessions()
   renderBudget(state.budget)
+  renderStatus()
+  syncFx()
   const ds = state.providers.find((p) => p.id === state.genome.roles.main.split('/')[0])
   if (ds && !ds.hasKey) banner(`还没有配置 ${ds.label} 的 API Key，请在「模型与密钥」里填写。`)
 }
 function banner(text) { const b = $('#banner'); b.hidden = !text; b.textContent = text || '' }
 
-function renderSessions() {
-  $('#sessions').innerHTML = state.sessions.length
-    ? state.sessions.map((s) => `<a data-id="${esc(s.id)}" class="${s.id === current ? 'active' : ''}"><div class="t">${esc(s.title || s.id)}</div><div class="m">${s.turns} 轮 · ${yuan(s.cost)} · ${esc(s.genome_id)}</div></a>`).join('')
-    : '<div class="muted" style="padding:8px 10px">还没有会话</div>'
+const MODES = { literature: '文献', data: '数据', figure: '出图', writing: '写作', chat: '对话' }
+let modeFilter = 'all'
+function ago(ts) {
+  if (!ts) return ''
+  const s = (Date.now() - new Date(ts.replace(' ', 'T') + (ts.endsWith('Z') ? '' : 'Z')).getTime()) / 1000
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} 分钟前`
+  if (s < 86400) return `${Math.round(s / 3600)} 小时前`
+  return `${Math.round(s / 86400)} 天前`
 }
-$('#sessions').addEventListener('click', (e) => { const a = e.target.closest('a[data-id]'); if (a) openSession(a.dataset.id) })
+function renderSessions() {
+  const list = state.sessions.filter((s) => modeFilter === 'all' || s.mode === modeFilter)
+  const card = (s) => `<a class="card ${s.id === current ? 'active' : ''}" data-id="${esc(s.id)}">
+      <div class="thumb">${s.thumb ? `<img src="/api/sessions/${encodeURIComponent(s.id)}/file?path=${encodeURIComponent(s.thumb)}" alt="" loading="lazy">` : `<div class="preview">${esc((s.preview || '（还没有提问）').slice(0, 220))}</div>`}</div>
+      <div class="meta"><div class="l">${esc(s.title || s.id)}</div><div class="r">${esc(MODES[s.mode] || '对话')}\n${esc(ago(s.last || s.created_at))}</div></div></a>`
+  $('#sessions').innerHTML = `<a class="card" data-new="1"><div class="thumb"><span class="plus">＋</span></div><div class="meta"><div class="l">新建会话</div><div class="r">${state.sessions.length} 个会话</div></div></a>`
+    + (list.length ? list.map(card).join('') : '<div class="muted" style="padding:18px 0;border-top:1px solid var(--line)">这一类还没有会话</div>')
+}
+$('#sessions').addEventListener('click', (e) => {
+  const a = e.target.closest('.card')
+  if (!a) return
+  if (a.dataset.new) return newSession()
+  openSession(a.dataset.id)
+})
+$('#tags').addEventListener('click', (e) => {
+  const b = e.target.closest('.chip')
+  if (!b) return
+  modeFilter = b.dataset.mode
+  document.querySelectorAll('#tags .chip').forEach((x) => x.classList.toggle('on', x === b))
+  renderSessions()
+})
+function renderStatus() {
+  const g = state.genome
+  $('#genomeInfo').innerHTML = `<div class="row"><span>${esc(g.id)}</span><span>已上线</span></div>
+    <div class="row"><span>父版本</span><span>${esc(g.parent || '—')}</span></div>
+    <div class="row"><span>待审批</span><span id="pendingCount">${state.pending ?? 0} 个</span></div>`
+  $('#modelInfo').innerHTML = Object.entries({ main: '主力', fast: '轻量', vision: '视觉', reflector: '反思' })
+    .map(([k, n]) => `<div class="row"><span>${n}</span><span>${esc((g.roles[k] || '').split('/').pop())}</span></div>`).join('')
+  $('#exploring').textContent = `${g.id} · ${(g.note || '').slice(0, 90)}`
+  $('#counter').classList.toggle('attn', (state.pending ?? 0) > 0)
+  $('#evoBtn').classList.toggle('attn', (state.pending ?? 0) > 0)
+}
 
 function renderBudget(b) {
-  const pct = Math.min(100, (b.totalCny / b.capCny) * 100)
-  const cls = pct >= 80 ? 'bad' : pct >= 50 ? 'warn' : ''
-  const names = { usage: '日常使用', evolution: '进化', dev: '开发测试', reserve: '预留' }
-  $('#budget').innerHTML = `<div class="total">API 花费 <b>${yuan(b.totalCny)}</b> / ¥${b.capCny}</div>
-    <div class="bar ${cls}"><i style="width:${pct}%"></i></div>
-    ${Object.entries(b.byCategory).map(([k, v]) => `<div class="row"><span>${names[k] || k}</span><span>${yuan(v)} / ¥${b.categoryCaps[k]}</span></div>`).join('')}
-    <div class="row" style="margin-top:4px"><span>今日使用</span><span>${yuan(b.usageTodayCny)} / ¥${b.dailyUsageSoftCny}</span></div>
-    <div class="row"><span>今日联网</span><span>${b.webCallsToday} / ${b.webCallsPerDay} 次</span></div>`
+  const day = b.usageTodayCny / Math.max(0.01, b.dailyUsageSoftCny)
+  const cls = day >= 1 ? 'bad' : day >= 0.8 ? 'warn' : ''
+  $('#budget').innerHTML = `<div class="row"><span>今日</span><span>${yuan(b.usageTodayCny)} / ¥${b.dailyUsageSoftCny}</span></div>
+    <div class="bar ${cls}"><i style="width:${Math.min(100, day * 100)}%"></i></div>
+    <div class="row"><span>联网</span><span>${b.webCallsToday} / ${b.webCallsPerDay} 次</span></div>
+    <div class="row"><span>累计</span><span>${yuan(b.totalCny)} / ¥${b.capCny}</span></div>`
+  fx.setBudgetLevel(day)
 }
 
 // ---------- sessions ----------
-$('#newSession').onclick = async () => {
+async function newSession() {
   const title = prompt('会话名称（例如：光子神经网络综述）', '新会话')
   if (title === null) return
   const r = await post('/api/sessions', { title })
   await loadState()
   openSession(r.id)
 }
+$('#newSession').onclick = (e) => { e.preventDefault(); newSession() }
+$('#counter').onclick = () => showPanel('evolution')
+$('#backHome').onclick = () => {
+  current = null
+  es?.close()
+  document.body.classList.remove('has-session')
+  $('#title').textContent = '欢迎使用 EvoScholar'
+  renderSessions()
+  syncFx()
+}
 
 async function openSession(id) {
   current = id
+  document.body.classList.add('has-session')
+  syncFx()
   renderSessions()
   const s = await api(`/api/sessions/${id}`)
   const meta = state.sessions.find((x) => x.id === id)
@@ -176,6 +236,11 @@ function ensureLive() {
 }
 function handle(e) {
   const el = inner()
+  if (e.type === 'reasoning' || e.type === 'text') fx.setState('thinking')
+  else if (e.type === 'tool-call') fx.setState('tool')
+  else if (e.type === 'tool-result' || e.type === 'approval-resolved') fx.setState('thinking')
+  else if (e.type === 'approval') fx.setState('approval')
+  else if (e.type === 'done' || e.type === 'error') fx.setState('idle')
   switch (e.type) {
     case 'hello': setBusy(e.busy); break
     case 'reasoning': {
@@ -260,6 +325,8 @@ function setBusy(b) {
 $('#stopBtn').onclick = () => post(`/api/sessions/${current}/cancel`)
 
 // ---------- composer ----------
+$('#input').addEventListener('focus', () => fx.setMouseStrength(0.15))
+$('#input').addEventListener('blur', () => fx.setMouseStrength())
 $('#input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#composer').requestSubmit() }
 })
@@ -308,7 +375,7 @@ $('#composer').onsubmit = async (e) => {
 
 // ---------- side panel ----------
 let panelKind = null
-document.querySelectorAll('[data-panel]').forEach((b) => (b.onclick = () => (panelKind === b.dataset.panel && !$('#panel').hidden ? closePanel() : showPanel(b.dataset.panel))))
+document.querySelectorAll('[data-panel]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); panelKind === b.dataset.panel && !$('#panel').hidden ? closePanel() : showPanel(b.dataset.panel) }))
 $('#closePanel').onclick = closePanel
 function closePanel() { $('#panel').hidden = true; panelKind = null; $('#panel').classList.remove('wide-panel'); clearTimeout(evoTimer) }
 async function showPanel(kind) {
@@ -336,6 +403,8 @@ async function showPanel(kind) {
       <h3>角色分配（修改会生成新的 genome 版本）</h3>
       <form id="rolesForm">${Object.entries(roleNames).map(([k, n]) => `<div class="field"><label>${n}</label><select name="${k}">${allModels.map((m) => `<option value="${esc(m.ref)}" ${state.genome.roles[k] === m.ref ? 'selected' : ''}>${esc(m.label)}${m.ok ? '' : '（缺 Key）'}</option>`).join('')}</select></div>`).join('')}
         <button class="primary small">保存角色</button></form>
+      <h3>背景粒子画质</h3>
+      <div class="field"><select id="fxQuality">${['auto', 'high', 'mid', 'low', 'off'].map((q) => `<option value="${q}" ${(localStorage.getItem('evoscholar.fxQuality') || 'auto') === q ? 'selected' : ''}>${{ auto: '自动', high: '高（262,144 点）', mid: '中（65,536 点）', low: '低（16,384 点）', off: '关' }[q]}</option>`).join('')}</select></div>
       <h3>厂商与 API Key</h3>
       <p class="muted">Key 只写入本机项目目录下的 .env，不会上传。</p>
       ${state.providers.map((p) => `<div class="prov"><div class="h"><span><i class="dot ${p.hasKey ? 'on' : ''}"></i><b>${esc(p.label)}</b> <span class="muted">${esc(p.protocols.join(' / '))}</span></span>${p.apiKeyUrl ? `<a class="muted" href="${esc(p.apiKeyUrl)}" target="_blank">获取 Key</a>` : ''}</div>
@@ -354,6 +423,7 @@ async function showPanel(kind) {
       await post('/api/keys', { provider: f.dataset.prov, key: $('input', f).value })
       await loadState(); showPanel('settings')
     }))
+    $('#fxQuality').onchange = (e) => { try { localStorage.setItem('evoscholar.fxQuality', e.target.value) } catch {} ; location.reload() }
     $('#rolesForm').onsubmit = async (e) => {
       e.preventDefault()
       const roles = Object.fromEntries(new FormData(e.target))
@@ -443,6 +513,7 @@ async function renderCandidate(el, id, body) {
       if (b.dataset.act === 'promote') {
         if (!confirm(`上线 ${id}？之后新会话会使用它；可以随时回滚。`)) return
         await post(`/api/evolution/${id}/promote`)
+        fx.reform()
       } else {
         const reason = prompt('拒绝原因（可选，会记录在谱系里）', '')
         if (reason === null) return
@@ -455,4 +526,7 @@ async function renderCandidate(el, id, body) {
 }
 
 loadState().catch((e) => banner(e.message))
-api('/api/evolution').then((r) => $('#evoBtn').classList.toggle('attn', r.candidates.some((c) => c.status === 'pending'))).catch(() => {})
+api('/api/evolution').then((r) => {
+  const n = r.candidates.filter((c) => c.status === 'pending').length
+  if (state) { state.pending = n; renderStatus() }
+}).catch(() => {})
