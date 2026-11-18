@@ -37,6 +37,12 @@ npm run es -- budget        # 查看花费
 | `prompts/` | genome 引用的提示词 |
 | `evoscholar.config.json` | 你的受保护设置（预算、厂商端点），进化引擎不能修改 |
 
+## 开发文档
+
+- `docs/HANDOFF.md`：当前进度、架构、决策和后续计划
+- `docs/frontend-visual-plan.md`：前端视觉方案
+- `CLAUDE.md`：给 Claude Code 的开发约定
+
 ## 预算
 
 默认总额 ¥200，分为日常使用 ¥130、进化 ¥40、开发测试 ¥20、预留 ¥10，可以在 `evoscholar.config.json` 里修改。价格表见 `packages/core/src/pricing.ts`；未知模型按保守价估算。

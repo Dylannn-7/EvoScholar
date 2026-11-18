@@ -14,3 +14,5 @@ rulepacks/*/source/
 /*.docx
 /*.zip
 /*.pdf
+__pycache__/
+*.pyc
