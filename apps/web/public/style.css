@@ -107,3 +107,29 @@ button.ghost:hover, .file-btn:hover { border-color: var(--accent); }
 .ledger { width: 100%; font-size: 12px; border-collapse: collapse; }
 .ledger td { border-bottom: 1px solid var(--line); padding: 3px 2px; }
 .muted { color: var(--muted); }
+
+/* evolution panel */
+.panel.wide-panel { width: min(620px, 52vw); }
+#evoBtn.attn { border-color: var(--warn); color: var(--warn); }
+#evoBtn.attn::after { content: " ●"; }
+.evo-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 10px; }
+.evo-actions { display: flex; gap: 6px; } .evo-actions.end { justify-content: flex-end; margin-top: 10px; }
+.evo-log { font: 11.5px var(--mono); background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 8px; max-height: 220px; overflow: auto; white-space: pre-wrap; }
+.cand { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
+.cand.pending { border-color: var(--warn); }
+.cand-h { cursor: pointer; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.cand-h .nums { margin-left: auto; font: 12px var(--mono); color: var(--muted); }
+.cand-body h4 { font-size: 12.5px; margin: 12px 0 4px; }
+.chip { font-size: 11px; padding: 0 7px; border-radius: 99px; background: var(--line); color: var(--muted); }
+.chip.pending { background: var(--warn-soft); color: var(--warn); }
+.chip.approved, .chip.active { background: var(--accent-soft); color: var(--accent); }
+.chip.rejected, .chip.discarded { background: var(--bad-soft); color: var(--bad); }
+.diff { font: 11.5px/1.5 var(--mono); background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; overflow: auto; max-height: 320px; white-space: pre-wrap; margin: 0; }
+.diff .add { color: var(--accent); background: var(--accent-soft); display: inline-block; width: 100%; }
+.diff .del { color: var(--bad); background: var(--bad-soft); display: inline-block; width: 100%; }
+.diff .ctx { color: var(--muted); }
+.cases { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cases td, .cases th { border-bottom: 1px solid var(--line); padding: 2px 4px; text-align: left; }
+.cases tr.fix td { background: var(--accent-soft); } .cases tr.reg td { background: var(--bad-soft); }
+.ok { color: var(--accent); } .no { color: var(--bad); }
+.lineage { font-size: 12.5px; } .lin { margin-bottom: 4px; } .lin .note { font-size: 11.5px; }

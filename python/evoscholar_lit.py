@@ -161,7 +161,12 @@ def merge_records(records: Iterable[dict], id_field: str = "id", fuzzy: bool = T
 
 def _fitz():
     try:
-        import fitz  # PyMuPDF
+        import pymupdf as fitz  # PyMuPDF ≥ 1.24; `import fitz` prints a deprecation warning
+        return fitz
+    except ImportError:
+        pass
+    try:
+        import fitz  # older PyMuPDF
         return fitz
     except ImportError as e:  # pragma: no cover
         raise RuntimeError("需要 PyMuPDF：npm run setup:python") from e

@@ -1,6 +1,6 @@
 # EvoScholar 交接文档
 
-更新：2026-11-18（第 1–3 天完成，交接给 Claude Code 继续第 4–7 天）
+更新：2026-11-18（第 1–4 天完成；第 4 天由 Claude Code 完成，首个候选 g-0005 已经用户批准上线）
 仓库：https://github.com/Dylannn-7/EvoScholar （main，交接时为本文所在提交）
 本机：`~/doc/EvoScholar`（已是该仓库的 git 工作副本）
 方案文档（claude.ai，可读不可依赖）：https://claude.ai/artifact/7kb1ZdhqaMmFVHeGZLdVHu
@@ -9,17 +9,17 @@
 
 ## 1. 现状一句话
 
-骨架、Web 工作台、文献模块已完成并通过真实 API 关卡；**下一步是第 4 天的进化 v1**。累计 API 花费约 ¥0.20（全部记在 `dev` 分类），10 个 TS 测试和 Python 测试全部通过。
+骨架、Web 工作台、文献模块、进化 v1 已完成；**下一步是第 5 天的数据与出图**。累计 API 花费约 ¥6.09（dev ¥0.20、evolution ¥5.89），14 个 TS 测试和 Python 测试全部通过。
 
-| 天 | 模块 | 状态 | 关卡结果 |
-| --- | --- | --- | --- |
-| 1 | 骨架：harness、多厂商网关、预算账本、genome、轨迹、CLI | ✅ | deepseek-flash + 1 次联网搜索，¥0.012 |
-| 2 | Web 工作台 + 文件/Python/进程工具 | ✅ | 浏览器端到端（模拟网关）；真实模型读图 + Python 求 FWHM = 0.800 nm |
-| 3 | 文献模块 + 技能系统 | ✅ | 4 篇 MRR 光学神经网络文献小综述，引用全部 verified；评测 L02 判分 pass |
-| 4 | 进化 v1 | ⏳ 下一步 | 第一个候选经用户审批上线，评测分高于基线 |
-| 5 | 数据与出图 | 待做 | 真实数据出符合目标期刊规范的图 |
-| 6 | 写作规范检查 | 待做 | 一篇真实稿件上误报率可接受 |
-| 7 | 进化 v2 + AXON 视觉 + 发布 | 待做 | README、一键安装、端到端、GitHub 发布 |
+| 天  | 模块                                                   | 状态 | 关卡结果                                                               |
+| --- | ------------------------------------------------------ | ---- | ---------------------------------------------------------------------- |
+| 1   | 骨架：harness、多厂商网关、预算账本、genome、轨迹、CLI | ✅    | deepseek-flash + 1 次联网搜索，¥0.012                                  |
+| 2   | Web 工作台 + 文件/Python/进程工具                      | ✅    | 浏览器端到端（模拟网关）；真实模型读图 + Python 求 FWHM = 0.800 nm     |
+| 3   | 文献模块 + 技能系统                                    | ✅    | 4 篇 MRR 光学神经网络文献小综述，引用全部 verified；评测 L02 判分 pass |
+| 4   | 进化 v1                                                | ✅    | g-0005 开发集 16→17/21、验收集 8→8/9，经用户批准于 11-18 上线          |
+| 5   | 数据与出图                                             | 待做 | 真实数据出符合目标期刊规范的图                                         |
+| 6   | 写作规范检查                                           | 待做 | 一篇真实稿件上误报率可接受                                             |
+| 7   | 进化 v2 + AXON 视觉 + 发布                             | 待做 | README、一键安装、端到端、GitHub 发布                                  |
 
 ## 2. 在 Mac 上跑起来
 
@@ -70,21 +70,21 @@ python/evoscholar_lit.py  确定性文献工具函数（run_python 里 import ev
 
 ### 关键文件
 
-| 文件 | 作用 |
-| --- | --- |
-| `packages/harness/` | 上游 `agent-harness` 原样拷贝（`FORK.md` 说明）。**不要改**；合并上游时整目录重拷。 |
-| `packages/core/src/presets.json` | 从上游 `providers/data.ts` 抽取的 11 家厂商预设（端点、协议、模型、上下文窗口）。 |
-| `packages/core/src/pricing.ts` | 价格表（USD / 百万 token）、DeepSeek 高峰判定 `isDeepSeekPeak()`（UTC 周一至周五 01–04、06–10 点，即北京时间工作日 9–12、14–18 点；高峰价 ×2）；未知模型按保守价估算。 |
-| `packages/core/src/budget.ts` | `Ledger.record / summary / assertCanSpend`；`roundCap` 用于单轮进化上限。 |
-| `packages/core/src/genome.ts` | `GenomeRepo`：`load / save / setActive / nextId / deriveManual / text(promptRef) / hash`。 |
-| `packages/core/src/session.ts` | `openRuntime(ws)`、`openResearchSession(rt, {sessionId, genome, category, stage, cwd, approve, onEvent})`；工作目录默认 `data/projects/<sessionId>`；主机轨迹写入 `<cwd>/.evoscholar/trace.jsonl`。 |
-| `packages/core/src/tools/*.ts` | 工具实现，见 §5。 |
-| `apps/server/src/main.ts` | 只监听 127.0.0.1:4317；所有非 GET 请求必须带 `x-evoscholar: 1` 头（防跨站）。 |
-| `apps/web/public/` | 无构建、无 CDN 的前端（index.html / style.css / app.js）。 |
-| `genomes/g-0000.yaml` + `genomes/ACTIVE` | 第 0 代 genome；`ACTIVE` 存当前上线版本 id。 |
-| `prompts/system@v1.md`、`prompts/compaction@v1.md` | genome 引用的提示词；进化产生新版本时写成 `@v2.md` 等新文件，**旧文件不改**。 |
-| `skills/literature-review/SKILL.md` | 第一个技能（frontmatter：name、version、description）。 |
-| `evoscholar.config.json` | 用户的受保护设置（预算、汇率 7.2、厂商覆盖）。进化引擎不得修改。 |
+| 文件                                               | 作用                                                                                                                                                                                                |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/harness/`                                | 上游 `agent-harness` 原样拷贝（`FORK.md` 说明）。**不要改**；合并上游时整目录重拷。                                                                                                                 |
+| `packages/core/src/presets.json`                   | 从上游 `providers/data.ts` 抽取的 11 家厂商预设（端点、协议、模型、上下文窗口）。                                                                                                                   |
+| `packages/core/src/pricing.ts`                     | 价格表（USD / 百万 token）、DeepSeek 高峰判定 `isDeepSeekPeak()`（UTC 周一至周五 01–04、06–10 点，即北京时间工作日 9–12、14–18 点；高峰价 ×2）；未知模型按保守价估算。                              |
+| `packages/core/src/budget.ts`                      | `Ledger.record / summary / assertCanSpend`；`roundCap` 用于单轮进化上限。                                                                                                                           |
+| `packages/core/src/genome.ts`                      | `GenomeRepo`：`load / save / setActive / nextId / deriveManual / text(promptRef) / hash`。                                                                                                          |
+| `packages/core/src/session.ts`                     | `openRuntime(ws)`、`openResearchSession(rt, {sessionId, genome, category, stage, cwd, approve, onEvent})`；工作目录默认 `data/projects/<sessionId>`；主机轨迹写入 `<cwd>/.evoscholar/trace.jsonl`。 |
+| `packages/core/src/tools/*.ts`                     | 工具实现，见 §5。                                                                                                                                                                                   |
+| `apps/server/src/main.ts`                          | 只监听 127.0.0.1:4317；所有非 GET 请求必须带 `x-evoscholar: 1` 头（防跨站）。                                                                                                                       |
+| `apps/web/public/`                                 | 无构建、无 CDN 的前端（index.html / style.css / app.js）。                                                                                                                                          |
+| `genomes/g-0000.yaml` + `genomes/ACTIVE`           | 第 0 代 genome；`ACTIVE` 存当前上线版本 id。                                                                                                                                                        |
+| `prompts/system@v1.md`、`prompts/compaction@v1.md` | genome 引用的提示词；进化产生新版本时写成 `@v2.md` 等新文件，**旧文件不改**。                                                                                                                       |
+| `skills/literature-review/SKILL.md`                | 第一个技能（frontmatter：name、version、description）。                                                                                                                                             |
+| `evoscholar.config.json`                           | 用户的受保护设置（预算、汇率 7.2、厂商覆盖）。进化引擎不得修改。                                                                                                                                    |
 
 ### HarnessGenome（`genomes/*.yaml`）
 
@@ -122,19 +122,19 @@ budgets: { maxSteps: 24, maxOutputTokens: 8192, timeoutMs: 600000, contextBudget
 
 ## 5. 工具清单（genome g-0000 全部启用）
 
-| 工具 | 说明 |
-| --- | --- |
-| `web_search`、`web_fetch` | DeepSeek Search / Fetch API（`https://api.deepseek.com/v1/tools/search|fetch`），每千次 $0.75，空结果不计费；受每日联网次数上限约束 |
-| `list_files`、`read_file`、`write_file`、`edit_file` | 锁在 cwd（`inside()` 会解析符号链接）；`read_file` 读 PNG/JPG 时返回 `data:` URL 图像块，供模型原生看图 |
-| `run_python`、`run_command` | 需审批（`env.approve`；评测时为 undefined 即自动放行）；`checkCommand()` 拦截 sudo、`cd /…`、`../`、`git push`、`curl | sh` 等；子进程拿不到 `*_API_KEY`；`PYTHONPATH` 含 `python/` |
-| `start_process`、`read_process`、`stop_process` | 后台进程（每会话 ≤4 个，会话结束自动全部停止） |
-| `http_get` | 只允许 localhost / 127.0.0.1 |
-| `lit_search` | 多源检索 + 合并去重（DOI / arXiv / 题名相似度 ≥0.93）；429 重试一次后跳过并报告；完整结果写 `.evoscholar/last_search.json` |
-| `lit_lookup` | DOI（Crossref）、arXiv、题名（相似度） |
-| `lit_verify` | verified / mismatch / not_found / retracted / error；可传 references 或 .bib/.ris/GB/T 7714 文件 |
-| `lit_import` | RIS、BibTeX、EndNote、NoteExpress、GB/T 7714 自动识别（知网 / 万方导出） |
-| `pdf_text`、`pdf_page_image` | 带页码文字；扫描页渲染成图片看图 |
-| `read_skill` | 读取 SKILL.md；读取事件会进轨迹（用于归因） |
+| 工具                                                 | 说明                                                                                                                       |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `web_search`、`web_fetch`                            | DeepSeek Search / Fetch API（`https://api.deepseek.com/v1/tools/search                                                     |
+| `list_files`、`read_file`、`write_file`、`edit_file` | 锁在 cwd（`inside()` 会解析符号链接）；`read_file` 读 PNG/JPG 时返回 `data:` URL 图像块，供模型原生看图                    |
+| `run_python`、`run_command`                          | 需审批（`env.approve`；评测时为 undefined 即自动放行）；`checkCommand()` 拦截 sudo、`cd /…`、`../`、`git push`、`curl      |
+| `start_process`、`read_process`、`stop_process`      | 后台进程（每会话 ≤4 个，会话结束自动全部停止）                                                                             |
+| `http_get`                                           | 只允许 localhost / 127.0.0.1                                                                                               |
+| `lit_search`                                         | 多源检索 + 合并去重（DOI / arXiv / 题名相似度 ≥0.93）；429 重试一次后跳过并报告；完整结果写 `.evoscholar/last_search.json` |
+| `lit_lookup`                                         | DOI（Crossref）、arXiv、题名（相似度）                                                                                     |
+| `lit_verify`                                         | verified / mismatch / not_found / retracted / error；可传 references 或 .bib/.ris/GB/T 7714 文件                           |
+| `lit_import`                                         | RIS、BibTeX、EndNote、NoteExpress、GB/T 7714 自动识别（知网 / 万方导出）                                                   |
+| `pdf_text`、`pdf_page_image`                         | 带页码文字；扫描页渲染成图片看图                                                                                           |
+| `read_skill`                                         | 读取 SKILL.md；读取事件会进轨迹（用于归因）                                                                                |
 
 新增工具：在 `tools/` 写 `ToolFactory`，注册到 `TOOL_FACTORIES`，在 genome 的 `tools.enabled` 中启用，并用 mock `fetch` 写测试（参考 `literature.test.ts`）。
 
@@ -187,6 +187,28 @@ python3 evals/bench.py advance <dir>                                   # L10、D
 
 预算估计：21 题 × 每题约 2 万输入 + 2 千输出 token，非高峰约 ¥1；基线一次性跑一次，之后只跑候选。
 
+**第 4 天实际完成情况（2026-11-18）**
+
+- 代码：`packages/core/src/evolution/`（bench、runner、reflect、mutate、evolve、review）；CLI `es eval | evolve | candidates | promote | reject | rollback`；API `GET /api/evolution`、`GET /api/evolution/:id`、`POST /api/evolution/:id/promote|reject`、`POST /api/evolution/run`、`POST /api/genome/rollback`；Web 顶栏「进化」面板（提示词 diff、逐题变化、批准 / 拒绝 / 回滚、谱系）。
+- 与原计划的差异：
+  - 判分直接用夹具写的 `.fixture-events.jsonl`，不转换主机轨迹。
+  - **翻转复核**：候选与基线结果不同的题，两边各再跑一次，`judge()` 按逐题通过率计算，净增 ≥ 1 题且退步题 ≤ 1 才算更好。原因：单次运行噪声很大（例如 g-0000 的 L03 三次 ✗✓✓，D05 三次 ✓✗✗）。
+  - 反思器能看到：已试过但无效的修改（同一父版本）、失败产物的开头几行、输入 CSV 表头；输出额度 8000 token，解析失败时重试一次，原始输出存为 `data/evolution/<run>/reflector*.txt`。
+  - 缓存只复用 `error IS NULL` 的结果；预算中断时，正在评测的候选自动标为淘汰。
+- 真实运行（高峰时段，经用户同意加 `--force`）：
+
+| 轮               | 结果                                                    | 花费  |
+| ---------------- | ------------------------------------------------------- | ----- |
+| evo-202611180617 | 中止：pdf_text 宿主 bug 影响了基线                      | ≈¥0.5 |
+| evo-202611180621 | g-0001、g-0002 均 16→16，淘汰                           | ¥1.43 |
+| evo-202611180628 | 反思器输出被推理用完（3000 token），失败                | ¥0.04 |
+| evo-202611180629 | g-0003 复核后 16.5→16.5，淘汰；g-0004 13/21，预算用尽   | ¥1.96 |
+| evo-202611180639 | **g-0005 已上线**：开发集 16→17（D05 修复），验收集 8→8 | ¥1.61 |
+
+- g-0005 的改动：在 `prompts/system@v5.md` 中新增「经验手册」3 条（JSON 只写任务点名的键；CSV 不加派生列；交付前按「键集合完全等于规定集合」自检）。
+- 基线 g-0000 一直失败的题：L05、L07（时有时无）、D06、W05；验收集 W08。D06 / D04 这类「表头不符」源于任务没有逐字写出列名，而判分要求精确表头。这属于评测集的设计问题，评测集由用户自建，**没有修改**。
+- 已知限制：基线只取最新一次结果加复核样本，没有合并历史上的所有样本；下一步可以按 `genome_hash` 汇总全部历史样本来估计通过率。
+
 ### 第 5 天：数据与出图
 
 - 种子技能：`ml-results`（日志解析、均值 ± 标准差、显著性、booktabs 表）、`ml-curves`、`optics-spectra`（峰位、FWHM、Q 值、洛伦兹 / 高斯拟合、nm↔eV）、`optics-fields`（Lumerical / COMSOL 导出场分布）、`device-curves`（I-V、L-I、响应度）、`figure-style`、`figure-composer`（可参考上游 `resources/skills` 同名技能，但要自己改写）。
@@ -221,6 +243,10 @@ python3 evals/bench.py advance <dir>                                   # L10、D
 - **DeepSeek 思考模式**：`deepseek-flash` 会返回 reasoning 增量，Web 端已显示为灰色思考块；如需关闭或调整，用 genome 的 `routing.parameters`。
 - **命令拦截**：模型有时会 `cd /绝对路径 && …`，会被拒绝，模型能自行改正；这是有意为之。
 - **前几天的开发环境**：此前的开发是在用户电脑的一个 Linux 工作环境里进行的，项目文件夹在那里是 FUSE 挂载（不支持 SQLite WAL、默认禁止删除），所以 `db.ts` 有 WAL → TRUNCATE 回退。在 Mac 本机运行没有这个问题。
+- **工具抛异常**：harness 把工具里抛出的异常当作整轮失败（设计如此）。`buildTools` 用 `guarded()` 把普通异常转成 `isError` 结果交给模型自行恢复；`BudgetError` 和取消照常向上抛。新工具仍应尽量自己返回 `textResult(…, true)`。
+- **Python 助手输出**：`runLitHelper` 只解析 stdout 中第一个以 `[`/`{` 开头的行之后的内容；新版 PyMuPDF 的 `import fitz` 会打印弃用警告，已改为优先 `import pymupdf`。
+- **Mac 上的 Python**：截至第 4 天，Mac 还没跑 `npm run setup:python`，工具用的是系统 `python3`（第 4 天的基线也是在它上面跑的）。之后建好 `pyenv-darwin-*` 后，评测环境变了，最好让基线重跑一次（`es eval development --no-cache`），否则缓存的基线与新环境下的候选不可比。
+- **macOS 符号链接**：`/var` → `/private/var`。`inside()` 已兼容用根目录的非解析形式写的绝对路径。
 - 上游 `providers` 的模型列表更新很快；`presets.json` 是 11/18 的快照，有需要再从上游 `packages/providers/src/providers/data.ts` 重新抽取（`NOTICE` 已注明来源）。
 
 ## 10. 待用户确认

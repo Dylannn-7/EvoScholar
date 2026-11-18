@@ -7,7 +7,8 @@ import { httpGet, readProcess, runCommand, runPython, startProcess, stopProcess 
 export { stopAllProcesses, pythonBin, pyenvDir } from './exec'
 export { inside, checkCommand } from './sandbox'
 export { mergeWorks, titleSim, normDoi, searchAll, type Work } from './literature'
-import type { ToolEnv, ToolFactory } from './types'
+import { BudgetError } from '../budget'
+import { textResult, type ToolEnv, type ToolFactory } from './types'
 export * from './types'
 
 /** All tools the host can offer. A genome selects a subset via tools.enabled. */
@@ -46,8 +47,26 @@ export function buildTools(
   return enabled.map((name) => {
     const f = TOOL_FACTORIES[name]
     if (!f) throw new Error(`Genome enables unknown tool "${name}"`)
-    const tool = f(env)
+    const tool = guarded(f(env))
     const d = overrides[name]?.description
     return d ? { ...tool, description: readText(d) } : tool
   })
+}
+
+/**
+ * The harness treats a thrown tool error as fatal for the turn. Turn ordinary failures into
+ * error results the model can read and recover from; budget stops and cancellation still propagate.
+ */
+export function guarded(tool: AgentTool): AgentTool {
+  return {
+    ...tool,
+    async execute(args, context) {
+      try {
+        return await tool.execute(args, context)
+      } catch (e) {
+        if (e instanceof BudgetError || context?.signal?.aborted) throw e
+        return textResult(`${tool.name} 出错：${(e as Error)?.message ?? String(e)}`, true)
+      }
+    }
+  }
 }

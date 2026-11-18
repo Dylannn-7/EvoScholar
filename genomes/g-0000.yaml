@@ -1,9 +1,8 @@
-# Generation 0: hand-written seed genome. Evolution creates g-0001, g-0002, ... from here.
 id: g-0000
 parent: null
 createdBy: manual
 createdAt: 2026-11-18
-status: active
+status: archived
 note: 种子版本：DeepSeek V4.1 Flash 全角色；联网搜索、文件、Python、进程与文献工具；技能 literature-review
 instructions:
   system: prompts/system@v1.md
@@ -20,7 +19,26 @@ routing:
     judge: deepseek/deepseek-flash
   rules: []
 tools:
-  enabled: [web_search, web_fetch, list_files, read_file, write_file, edit_file, run_python, run_command, start_process, read_process, stop_process, http_get, lit_search, lit_lookup, lit_verify, lit_import, pdf_text, pdf_page_image, read_skill]
+  enabled:
+    - web_search
+    - web_fetch
+    - list_files
+    - read_file
+    - write_file
+    - edit_file
+    - run_python
+    - run_command
+    - start_process
+    - read_process
+    - stop_process
+    - http_get
+    - lit_search
+    - lit_lookup
+    - lit_verify
+    - lit_import
+    - pdf_text
+    - pdf_page_image
+    - read_skill
 workflows: {}
 budgets:
   maxSteps: 24

@@ -66,6 +66,51 @@ const MIGRATIONS: string[] = [
      kind TEXT NOT NULL,           -- thumb | rating | comment | accept | rerun | edit | verifier
      value REAL,
      note TEXT
+   );`,
+  `CREATE TABLE IF NOT EXISTS evolution_runs (
+     id TEXT PRIMARY KEY,
+     ts_start TEXT NOT NULL,
+     ts_end TEXT,
+     base_genome TEXT NOT NULL,
+     status TEXT NOT NULL,          -- running | done | failed | budget
+     cost_cny REAL DEFAULT 0,
+     note TEXT,
+     report_path TEXT
+   );
+   CREATE TABLE IF NOT EXISTS eval_runs (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     evolution_run TEXT,
+     genome_id TEXT NOT NULL,
+     genome_hash TEXT NOT NULL,
+     case_id TEXT NOT NULL,
+     split TEXT NOT NULL,
+     pass INTEGER NOT NULL,
+     failures TEXT NOT NULL,
+     manual_review TEXT,
+     steps INTEGER DEFAULT 0,
+     tool_calls INTEGER DEFAULT 0,
+     tool_errors INTEGER DEFAULT 0,
+     cost_cny REAL DEFAULT 0,
+     duration_ms INTEGER DEFAULT 0,
+     session_id TEXT,
+     run_dir TEXT,
+     error TEXT,
+     ts TEXT NOT NULL
+   );
+   CREATE INDEX IF NOT EXISTS eval_runs_key ON eval_runs(genome_hash, case_id);
+   CREATE TABLE IF NOT EXISTS candidates (
+     genome_id TEXT PRIMARY KEY,
+     evolution_run TEXT NOT NULL,
+     parent TEXT NOT NULL,
+     target TEXT NOT NULL,
+     diagnosis TEXT,
+     change TEXT,
+     dev_pass INTEGER, dev_total INTEGER, base_dev_pass INTEGER,
+     acc_pass INTEGER, acc_total INTEGER, base_acc_pass INTEGER,
+     cost_cny REAL DEFAULT 0,
+     status TEXT NOT NULL,          -- evaluating | pending | approved | rejected | discarded
+     reason TEXT,
+     ts TEXT NOT NULL
    );`
 ]
 
