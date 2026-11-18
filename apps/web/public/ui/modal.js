@@ -2,8 +2,6 @@
 export const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 
-export const yuan = (n) => '¥' + (n ?? 0).toFixed(n >= 10 ? 1 : n >= 1 ? 2 : 4)
-
 let toastRoot = null
 export function toast(message, kind = 'info', ms = 3200) {
   if (!toastRoot) toastRoot = document.getElementById('toastRoot')

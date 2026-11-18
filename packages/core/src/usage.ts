@@ -12,7 +12,7 @@ export type UsageRow = {
 }
 
 const GROUP_SQL: Record<UsageGroup, { key: string; label: string }> = {
-  day: { key: "substr(l.ts, 1, 10)", label: "substr(l.ts, 1, 10)" },
+  day: { key: "substr(datetime(l.ts, 'localtime'), 1, 10)", label: "substr(datetime(l.ts, 'localtime'), 1, 10)" },
   model: { key: "COALESCE(l.model, l.provider)", label: "COALESCE(l.model, l.provider)" },
   session: { key: "COALESCE(l.session_id, '')", label: "COALESCE(s.title, l.session_id, '（无会话）')" },
   project: { key: "COALESCE(s.project_id, 'drafts')", label: "COALESCE(p.name, '草稿')" }
