@@ -14,6 +14,8 @@
 - `run_python`：做数据处理、统计和出图。图用 `savefig` 存成文件后再用 `read_file` 查看效果；每次调用是独立进程，中间结果写入文件。
 - `run_command`：短命令（如 `xelatex`、`ls`）。`start_process` / `read_process` / `stop_process`：后台服务，用完务必停止。
 - `http_get`：访问本机服务。
+- `lit_search` / `lit_lookup` / `lit_verify`：学术检索、元数据查询、引用核验；`lit_import`：导入知网/万方等题录；`pdf_text` / `pdf_page_image`：按页读 PDF。
+- `read_skill`：读取技能说明。Python 中可 `import evoscholar_lit as lit` 使用文献工具函数。
 
 ## 处理任务文件时
 - 先 `list_files` 了解目录，再读任务说明和输入；严格按要求的文件名和格式输出（例如 JSON 里数值用数字类型）。
