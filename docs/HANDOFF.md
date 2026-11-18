@@ -277,6 +277,14 @@ python3 evals/bench.py advance <dir>                                   # L10、D
 - 写回：Word 插批注（可选修订模式）；LaTeX 输出 patch 或 `% EVO:` 行尾注释。
 - 用户标记「有效 / 误报」作为进化信号。用 W01–W07 冒烟。
 
+**第 7 天进展（2026-11-18，进行中）**
+
+- Mac 的 Python 环境已建好：`data/pyenv-darwin-arm64`（uv；numpy 2.5、matplotlib 3.11、PyMuPDF 2.1，`setup-python.mjs` 增加了 pyyaml、pillow）。37 个 Python 测试在新环境下通过；工具会自动使用这个环境。
+- 新环境下重跑基线（g-0007，30 题，--no-cache，¥0.65）：25/30（开发 17/21，验收 8/9）。失败：L05、L07、W05、W08（之前也失败），以及 D06（之前在 g-0006 / 系统 Python 下通过过一次，这次又是「表头不符」）。
+- **AXON 视觉已完成**（`apps/web/public/`）：three.js 0.150.1 的 ES module 本地 vendor（`vendor/three.module.js` + LICENSE）；`fx/config.js`（参数照 axon-reference §7–§8）、`fx/fluid.js`（GPU 流体）、`fx/particles.js`（位置 ping-pong、自写的扭转开口环 SDF、curl noise、点渲染、程序化 matcap）、`fx/index.js`（WebGL2 / 浮点纹理检测并自动降级、画质档位、注视相机、30 秒后台暂停、prefers-reduced-motion）。版式按视觉方案 §2 重排：品牌、genome 计数器（有待审批时呼吸）、模式筛选 chip、会话卡片（最近生成的图或首个问题）、居中对话（打开会话时约 684px，粒子降到 40% 亮度）、右栏 [预算] [GENOME] [模型] [连接]、欢迎页 [说明] [能做什么] [正在探索]。粒子状态：思考 / 工具 / 待审批 / 预算 / genome 上线后重组。服务端会话列表新增 mode、preview、thumb，/api/state 新增 pending。
+  - 调试中修了两个 fx bug：鼠标流体从不触发（50ms 断线逻辑写错）；流体速度溢出后粒子变 NaN 永久丢失（加了 NaN 复位和数值截断，并把每帧 splat 力度按子步均分）。
+  - 已验证：控制台无报错、无横向滚动、气泡不混合、中文走等宽回退字体、计数器打开进化面板、窄屏布局。**未验证**：中低档帧率、真实会话的卡片缩略图（库里还没有 usage 会话）。
+
 ### 第 7 天：进化 v2、AXON 视觉、发布
 
 - 进化 v2：从高分轨迹蒸馏新 SKILL.md；工作流编排的算子式变异（插入校验步骤、拆分 / 合并子代理、并行检索），用上游的 `createDelegationTool` 做子代理；谱系树可视化。
