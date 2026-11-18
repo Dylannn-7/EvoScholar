@@ -4,6 +4,7 @@ import YAML from 'yaml'
 import { checkFeedbackStats, type RuleStats } from './checkfeedback'
 import type { Runtime } from './session'
 import { listSkills } from './skills'
+import { TOOL_FACTORIES } from './tools'
 
 export type SkillSummary = {
   name: string
@@ -36,9 +37,11 @@ export type WritingRulepackSummary = {
   verifyCount: number
 }
 
+export type ToolSummary = { name: string; description: string; enabled: boolean; source: 'builtin' | 'evolved' | 'imported' }
 export type CapabilitiesSummary = {
   genome: { id: string; note?: string; tools: string[]; budgets: Record<string, number | undefined> }
   skills: SkillSummary[]
+  tools: ToolSummary[]
   figureRulepacks: FigureRulepackSummary[]
   writingRulepacks: WritingRulepackSummary[]
   feedbackStats: RuleStats[]
@@ -98,9 +101,17 @@ export function getCapabilities(rt: Runtime): CapabilitiesSummary {
     }))
     .sort((a, b) => (a.status === b.status ? b.ruleCount - a.ruleCount || a.id.localeCompare(b.id) : a.status === 'verified' ? -1 : 1))
 
+  const env = { ws: rt.ws, cwd: rt.ws.dataDir, ledger: rt.ledger, category: () => 'usage' as const }
+  const tools: ToolSummary[] = Object.entries(TOOL_FACTORIES).map(([name, f]) => {
+    let description = ''
+    try { description = f(env).description } catch {}
+    return { name, description, enabled: g.tools.enabled.includes(name), source: 'builtin' as const }
+  }).sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name))
+
   return {
     genome: { id: g.id, note: g.note, tools: g.tools.enabled, budgets: g.budgets },
     skills,
+    tools,
     figureRulepacks,
     writingRulepacks,
     feedbackStats: checkFeedbackStats(rt)

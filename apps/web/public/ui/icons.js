@@ -1,0 +1,46 @@
+// Monochrome line icons (1.5px stroke, 20px grid). No emoji anywhere in the UI.
+const P = {
+  brand: '<polygon fill="currentColor" stroke="none" points="10,2.5 11.4,7.2 15.9,5.4 13.2,9.4 17.3,12 12.4,12.1 13.2,16.9 10,13.3 6.8,16.9 7.6,12.1 2.7,12 6.8,9.4 4.1,5.4 8.6,7.2"/>',
+  workbench: '<path d="M3.5 5.5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-3.5 3v-3a2 2 0 0 1-2-2Z"/>',
+  trajectory: '<path d="M3 15c2.5 0 3-4 5-4s2.5 3 4.5 3S15 6 17 5"/><circle cx="3" cy="15" r="1.2"/><circle cx="17" cy="5" r="1.2"/>',
+  plugins: '<path d="M8 3.5h4v2.2a1.6 1.6 0 1 0 3.2 0V3.5h1.3v4h-2.2a1.6 1.6 0 1 0 0 3.2h2.2v5.8h-4v-2.2a1.6 1.6 0 1 0-3.2 0v2.2H3.5v-4h2.2a1.6 1.6 0 1 0 0-3.2H3.5v-4H8Z"/>',
+  library: '<path d="M3.5 5.5a1.5 1.5 0 0 1 1.5-1.5h3.2l1.6 1.8H15a1.5 1.5 0 0 1 1.5 1.5v7.2A1.5 1.5 0 0 1 15 16H5a1.5 1.5 0 0 1-1.5-1.5Z"/><path d="M3.5 8.5h13"/>',
+  usage: '<path d="M4 16V9M8 16V5M12 16v-6M16 16V7"/>',
+  settings: '<circle cx="10" cy="10" r="2.6"/><path d="M16.2 11.9l1.3 1-1.6 2.8-1.6-.6a6 6 0 0 1-1.7 1l-.3 1.6H9l-.3-1.6a6 6 0 0 1-1.7-1l-1.6.6-1.6-2.8 1.3-1a6 6 0 0 1 0-1.9l-1.3-1 1.6-2.8 1.6.6a6 6 0 0 1 1.7-1L9 2.2h3.2l.3 1.6a6 6 0 0 1 1.7 1l1.6-.6 1.6 2.8-1.3 1a6 6 0 0 1 0 1.9Z"/>',
+  plus: '<path d="M10 4v12M4 10h12"/>',
+  folderPlus: '<path d="M3.5 5.5a1.5 1.5 0 0 1 1.5-1.5h3.2l1.6 1.8H15a1.5 1.5 0 0 1 1.5 1.5v7.2A1.5 1.5 0 0 1 15 16H5a1.5 1.5 0 0 1-1.5-1.5Z"/><path d="M10 8.5v5M7.5 11h5"/>',
+  folder: '<path d="M3.5 5.5a1.5 1.5 0 0 1 1.5-1.5h3.2l1.6 1.8H15a1.5 1.5 0 0 1 1.5 1.5v7.2A1.5 1.5 0 0 1 15 16H5a1.5 1.5 0 0 1-1.5-1.5Z"/>',
+  chevron: '<path d="M8 5l5 5-5 5"/>',
+  chevronDown: '<path d="M5.5 8l4.5 4.5L14.5 8"/>',
+  arrowUp: '<path d="M10 16V4M5 9l5-5 5 5"/>',
+  stop: '<rect x="5.5" y="5.5" width="9" height="9" rx="1.5" fill="currentColor" stroke="none"/>',
+  paperclip: '<path d="M15.5 9.5l-5.6 5.6a3.5 3.5 0 0 1-5-5l6.2-6.2a2.3 2.3 0 0 1 3.3 3.3l-6 6a1.1 1.1 0 0 1-1.6-1.6l5.4-5.4"/>',
+  at: '<circle cx="10" cy="10" r="3"/><path d="M13 10v1.2a2.3 2.3 0 0 0 4.5 0V10a7.5 7.5 0 1 0-3 6"/>',
+  close: '<path d="M5 5l10 10M15 5L5 15"/>',
+  check: '<path d="M4.5 10.5l3.5 3.5 7.5-8"/>',
+  more: '<circle cx="5" cy="10" r="1.2" fill="currentColor" stroke="none"/><circle cx="10" cy="10" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.2" fill="currentColor" stroke="none"/>',
+  star: '<path d="M10 3.2l2 4.2 4.6.6-3.4 3.2.9 4.6L10 13.6 5.9 15.8l.9-4.6L3.4 8l4.6-.6Z"/>',
+  file: '<path d="M6 3.5h5.5L15 7v9.5H6Z"/><path d="M11.5 3.5V7H15"/>',
+  image: '<rect x="3.5" y="4.5" width="13" height="11" rx="1.5"/><circle cx="7.5" cy="8.5" r="1.3"/><path d="M4 14l4-4 3 3 2-2 3.5 3.5"/>',
+  data: '<ellipse cx="10" cy="5.5" rx="5.5" ry="2"/><path d="M4.5 5.5v9c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2v-9M4.5 10c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/>',
+  code: '<path d="M7.5 6L3.5 10l4 4M12.5 6l4 4-4 4"/>',
+  shield: '<path d="M10 3l6 2.2v4.3c0 3.6-2.6 6.2-6 7.5-3.4-1.3-6-3.9-6-7.5V5.2Z"/>',
+  bolt: '<path d="M11 2.5L4.5 11h5l-1 6.5L15.5 9h-5Z"/>',
+  brain: '<path d="M8 4.5a2.5 2.5 0 0 0-4 2 2.5 2.5 0 0 0-.5 4.5A2.5 2.5 0 0 0 7 15a2 2 0 0 0 3 1V5.5a2 2 0 0 0-2-1ZM12 4.5a2.5 2.5 0 0 1 4 2 2.5 2.5 0 0 1 .5 4.5A2.5 2.5 0 0 1 13 15a2 2 0 0 1-3 1"/>',
+  link: '<path d="M8.5 11.5l3-3M7 9l-1.5 1.5a2.8 2.8 0 0 0 4 4L11 13M13 11l1.5-1.5a2.8 2.8 0 0 0-4-4L9 7"/>',
+  download: '<path d="M10 3.5v9M6 8.5l4 4 4-4M4 16.5h12"/>',
+  search: '<circle cx="9" cy="9" r="5"/><path d="M13 13l3.5 3.5"/>',
+  refresh: '<path d="M15.5 8A6 6 0 1 0 16 11.5M15.5 3.5V8H11"/>',
+  trash: '<path d="M4.5 6h11M8 6V4h4v2M6 6l.8 10.5h6.4L14 6"/>',
+  archive: '<rect x="3.5" y="4" width="13" height="3.5" rx="1"/><path d="M4.5 7.5v8h11v-8M8 10.5h4"/>',
+  pin: '<path d="M12.5 3.5l4 4-2.5 1-3.5 3.5.5 3-1.5 1.5-7-7L4 8l3 .5 3.5-3.5Z"/><path d="M3.5 16.5l3.5-3.5"/>',
+  edit: '<path d="M4 16l1-4 8-8 3 3-8 8Zm7-10l3 3"/>',
+  key: '<circle cx="7" cy="12.5" r="3.5"/><path d="M9.5 10l6-6M13.5 6l2 2"/>',
+  palette: '<path d="M10 3.5a6.5 6.5 0 1 0 0 13c1 0 1.5-.6 1.5-1.4 0-.9-.8-1.2-.8-2s.6-1.3 1.6-1.3H14a2.5 2.5 0 0 0 2.5-2.5c0-3.3-2.9-5.8-6.5-5.8Z"/><circle cx="6.5" cy="9" r=".9"/><circle cx="9" cy="6.5" r=".9"/><circle cx="12.5" cy="7" r=".9"/>',
+  info: '<circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6.5v.2"/>',
+  dot: '<circle cx="10" cy="10" r="3" fill="currentColor" stroke="none"/>'
+}
+
+export function icon(name, size = 18, cls = '') {
+  return `<svg class="ico ${cls}" viewBox="0 0 20 20" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || P.dot}</svg>`
+}

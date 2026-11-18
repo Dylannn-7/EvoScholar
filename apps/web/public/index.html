@@ -3,231 +3,47 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EvoScholar · 科研工作台</title>
+<title>EvoScholar</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <canvas id="bg" aria-hidden="true"></canvas>
+<div class="app">
+  <nav class="rail glass" id="rail" aria-label="主导航"></nav>
 
-<div class="app-shell" id="appShell">
-  <!-- 1. Far-left Activity Rail -->
-  <nav class="rail" aria-label="主导航">
-    <button type="button" class="rail-brand" id="brandHomeBtn" title="EvoScholar 首页">
-      <svg viewBox="0 0 40 40" width="20" height="20" aria-hidden="true">
-        <polygon fill="currentColor" points="20,6 22.6,14.6 30.9,11.2 25.9,18.6 33.4,23.4 24.6,23.6 25.9,32.4 20,25.8 14.1,32.4 15.4,23.6 6.6,23.4 14.1,18.6 9.1,11.2 17.4,14.6"/>
-      </svg>
-    </button>
-
-    <div class="rail-nav">
-      <button type="button" class="rail-btn on" data-view="workbench" title="工作台">
-        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h7A2.5 2.5 0 0 1 16 5.5v5.5a2.5 2.5 0 0 1-2.5 2.5H9l-3.6 2.8A.4.4 0 0 1 4.7 16v-2.6A2.5 2.5 0 0 1 4 11V5.5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-        <span class="rail-lbl">工作台</span>
-      </button>
-
-      <button type="button" class="rail-btn" data-view="evolution" title="进化实验室">
-        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="6" cy="5" r="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="6" cy="15" r="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 7v6M6 12c0-2.5 8-1 8-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        <span class="rail-lbl">进化</span>
-        <span class="rail-badge" id="evoBadge" hidden>0</span>
-      </button>
-
-      <button type="button" class="rail-btn" data-view="capabilities" title="技能与规则库">
-        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M10 3 3.5 6.5 10 10l6.5-3.5L10 3ZM3.5 10l6.5 3.5 6.5-3.5M3.5 13.5 10 17l6.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span class="rail-lbl">规则库</span>
-      </button>
-
-      <button type="button" class="rail-btn" data-view="ledger" title="预算与账本">
-        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M3.5 6.5A2 2 0 0 1 5.5 4.5h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-7Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M13 10h3.5M6.5 8.5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        <span class="rail-lbl">账本</span>
-      </button>
+  <aside class="side glass" id="side" aria-label="项目与会话" hidden>
+    <div class="side-head">
+      <div class="title">EvoScholar<span class="sub">RESEARCH WORKBENCH</span></div>
+      <button class="icon-btn" id="addProject" data-tip="添加项目文件夹" type="button"></button>
     </div>
-
-    <div class="rail-foot">
-      <button type="button" class="rail-btn" id="settingsBtn" title="设置">
-        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M10 12.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M16.2 11.9l1.3 1-1.6 2.8-1.6-.6a6 6 0 0 1-1.7 1l-.3 1.6H9l-.3-1.6a6 6 0 0 1-1.7-1l-1.6.6-1.6-2.8 1.3-1a6 6 0 0 1 0-1.9l-1.3-1 1.6-2.8 1.6.6a6 6 0 0 1 1.7-1L9 2.2h3.2l.3 1.6a6 6 0 0 1 1.7 1l1.6-.6 1.6 2.8-1.3 1a6 6 0 0 1 0 1.9Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
-        <span class="rail-lbl">设置</span>
-      </button>
-    </div>
-  </nav>
-
-  <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
-
-  <!-- 2. Left Session Sidebar (Claude-inspired quiet hierarchy) -->
-  <aside class="sidebar" id="sidebar" aria-label="会话列表">
-    <div class="sidebar-head">
-      <span class="sb-title">EvoScholar</span>
-      <div class="sidebar-head-btns">
-        <button type="button" class="icon-btn" id="toggleFilterBtn" title="筛选与搜索" aria-label="筛选与搜索">
-          <svg viewBox="0 0 16 16" width="14" height="14"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 10.5 13.5 13.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-        </button>
-        <button type="button" class="icon-btn" id="newSessionBtn" title="新建会话" aria-label="新建会话">
-          <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        </button>
-      </div>
-    </div>
-
-    <div class="sidebar-tools" id="sidebarTools" hidden>
-      <div class="search-box">
-        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 10.5 13.5 13.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-        <input type="search" id="sessionSearch" placeholder="搜索会话…">
-      </div>
-      <div class="mode-strip" id="tags" aria-label="模式筛选">
-        <button type="button" class="mchip on" data-mode="all">全部</button>
-        <button type="button" class="mchip" data-mode="literature">文献</button>
-        <button type="button" class="mchip" data-mode="data">数据</button>
-        <button type="button" class="mchip" data-mode="figure">出图</button>
-        <button type="button" class="mchip" data-mode="writing">写作</button>
-        <button type="button" class="mchip" data-mode="chat">对话</button>
-      </div>
-    </div>
-
-    <button type="button" class="new-chat-row" id="newChatRow">
-      <svg viewBox="0 0 16 16" width="14" height="14"><path d="M11.8 2.5a1.4 1.4 0 0 1 2 2L6.4 11.9 3.5 12.5l.6-2.9L11.8 2.5Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>
-      <span>新会话</span>
-    </button>
-
-    <div class="session-list" id="sessions"></div>
-    <div class="row-menu" id="rowMenu" hidden></div>
-
-    <button type="button" class="sidebar-foot" id="sidebarFoot" title="查看用量与账本">
-      <span id="sfToday">今日 ¥0.00</span>
-      <span id="sfWeb">联网 0 次</span>
-    </button>
+    <button class="new-chat" id="newChat" type="button"></button>
+    <div class="tree" id="tree"></div>
   </aside>
 
-  <!-- 3. Main Workspace Area -->
-  <main class="workspace" id="workspace">
-    <!-- Shared Codex-style Top Navigation Bar -->
-    <header class="topbar" id="topbar">
-      <div class="topbar-left">
-        <div class="nav-arrows">
-          <button type="button" class="icon-btn" id="navBackBtn" title="后退" aria-label="后退" disabled>
-            <svg viewBox="0 0 16 16" width="14" height="14"><path d="M10.5 8H3.5M7 4.5 3.5 8 7 11.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <button type="button" class="icon-btn" id="navFwdBtn" title="前进" aria-label="前进" disabled>
-            <svg viewBox="0 0 16 16" width="14" height="14"><path d="M5.5 8h7M9 4.5 12.5 8 9 11.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <button type="button" class="icon-btn" id="sidebarToggleBtn" title="收起 / 展开侧边栏 (⌘B)" aria-label="切换侧边栏">
-            <svg viewBox="0 0 16 16" width="15" height="15"><rect x="2" y="2.5" width="12" height="11" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 2.5v11" stroke="currentColor" stroke-width="1.3"/></svg>
-          </button>
-        </div>
-
-        <span class="mode-badge" id="topModeBadge" hidden>对话</span>
-        <div class="topbar-titles">
-          <h1 id="title" title="点击重命名会话"></h1>
-          <div class="topbar-sub" id="subtitle"></div>
-        </div>
-      </div>
-
-      <div class="topbar-right">
-        <button type="button" class="pill-btn" id="inspectorBtn" title="会话进度与产物检查器" hidden>
-          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 2.5v11" stroke="currentColor" stroke-width="1.3"/></svg>
-          <span>检查器</span>
-          <span class="count-pill" id="inspectorCount" hidden>0</span>
-        </button>
-      </div>
-    </header>
-
-    <!-- View: Workbench (Chat & Home) -->
-    <section class="view-workbench" id="viewWorkbench">
-      <div class="banner" id="banner" hidden></div>
-
-      <section class="thread" id="thread">
-        <div class="thread-inner" id="threadInner"></div>
-      </section>
-
-      <div class="composer-area" id="composerArea">
-        <div class="composer-wrap">
-          <button type="button" class="session-pill" id="sessionPill" hidden></button>
-
-          <div class="popover-menu" id="attachMenu" hidden>
-            <button type="button" data-attach="file">
-              <span class="pm-title">上传文件到工作目录 (inputs/)</span>
-              <span class="pm-desc">CSV、TeX、Docx、PDF、数据文件或代码</span>
-            </button>
-            <button type="button" data-attach="image">
-              <span class="pm-title">发送图片给模型视觉识别</span>
-              <span class="pm-desc">PNG / JPG / WebP，支持直接贴入剪贴板截图</span>
-            </button>
-          </div>
-
-          <div class="popover-menu" id="slashMenu" hidden></div>
-
-          <!-- Model + Effort dual popover (Claude style) -->
-          <div class="model-popover" id="modelMenu" hidden>
-            <div class="mp-main" id="modelMainList"></div>
-            <div class="mp-sub" id="effortSubPanel" hidden></div>
-          </div>
-
-          <form class="composer" id="composer">
-            <div class="drop-overlay" id="dropOverlay" hidden>松开文件上传到 inputs/</div>
-            <div class="attachments" id="attachments"></div>
-            <textarea id="input" rows="1" placeholder="问点什么……支持粘贴截图、拖入文件，或输入 / 选择科研模板"></textarea>
-            <div class="composer-bar">
-              <div class="cb-left">
-                <button type="button" class="tb-btn" id="attachBtn" title="上传文件或图片" aria-label="上传文件或图片">
-                  <svg viewBox="0 0 16 16" width="15" height="15"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-                </button>
-                <button type="button" class="tb-btn" id="slashBtn" title="科研模板指令">/</button>
-                <input type="file" id="fileInput" multiple hidden>
-                <input type="file" id="imageInput" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
-              </div>
-              <div class="cb-right">
-                <button type="button" class="tb-btn model-btn" id="modelChip" title="选择模型与思考程度">
-                  <span class="mc-name" id="modelName">—</span>
-                  <span class="mc-effort" id="effortTag" title="点击直接调节思考程度" hidden>默认</span>
-                </button>
-                <button type="button" class="stop" id="stopBtn" title="停止本轮" aria-label="停止" hidden><i></i></button>
-                <button type="submit" class="send" id="sendBtn" title="发送 (Enter)" aria-label="发送">
-                  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </button>
-              </div>
-            </div>
-          </form>
-        </div>
+  <main class="main" id="main">
+    <section class="view" id="view-workbench">
+      <div class="conv" id="conv">
+        <header class="conv-head" id="convHead"></header>
+        <div class="banner" id="banner" hidden></div>
+        <section class="thread" id="thread"><div class="thread-inner" id="threadInner"></div></section>
+        <form class="composer glass dark" id="composer" autocomplete="off">
+          <div class="chips" id="chips"></div>
+          <textarea id="input" rows="1" placeholder="描述你的任务……可以拖入文件或图片，输入 @ 引用项目文件"></textarea>
+          <div class="cbar" id="cbar"></div>
+          <input type="file" id="fileInput" multiple hidden>
+        </form>
+        <div class="suggest" id="suggest"></div>
       </div>
     </section>
-
-    <!-- View: Evolution Lab -->
-    <section class="view-page" id="viewEvolution" hidden></section>
-
-    <!-- View: Capabilities (Skills & Rulepacks) -->
-    <section class="view-page" id="viewCapabilities" hidden></section>
-
-    <!-- View: Ledger & Budget -->
-    <section class="view-page" id="viewLedger" hidden></section>
+    <section class="view" id="view-trajectory" hidden></section>
+    <section class="view" id="view-plugins" hidden></section>
+    <section class="view" id="view-library" hidden></section>
+    <section class="view" id="view-usage" hidden></section>
+    <section class="view" id="view-settings" hidden></section>
   </main>
-
-  <!-- 4. Right Collapsible Session Inspector -->
-  <aside class="inspector" id="inspector" hidden aria-label="会话检查器">
-    <div class="inspector-head">
-      <span>会话检查器</span>
-      <div class="inspector-head-btns">
-        <button type="button" class="icon-btn" id="refreshInspectorBtn" title="刷新产物" aria-label="刷新产物">
-          <svg viewBox="0 0 16 16" width="14" height="14"><path d="M13.5 8a5.5 5.5 0 1 1-1.4-3.7M13.5 2.5v2.8h-2.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-        <button type="button" class="icon-btn" id="closeInspectorBtn" title="关闭检查器" aria-label="关闭检查器">
-          <svg viewBox="0 0 12 12" width="11" height="11"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-        </button>
-      </div>
-    </div>
-    <div class="inspector-body" id="inspectorBody"></div>
-  </aside>
 </div>
-
 <div id="modalRoot"></div>
-<div id="toastRoot" class="toast-root" aria-live="polite"></div>
-
-<template id="tplApproval">
-  <div class="approval">
-    <div class="approval-head"><span>需要确认执行</span> · <code class="tool"></code></div>
-    <pre class="summary"></pre>
-    <div class="approval-actions">
-      <button type="button" class="btn ghost small deny">拒绝</button>
-      <button type="button" class="btn primary small allow">允许执行</button>
-    </div>
-  </div>
-</template>
-
+<div id="toastRoot"></div>
 <script type="module" src="/app.js"></script>
 </body>
 </html>
