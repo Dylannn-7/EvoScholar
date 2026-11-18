@@ -34,6 +34,9 @@ export class TrajectoryRecorder {
       .run(this.sessionId, now(), this.genomeId, runId ?? null, type, JSON.stringify(payload))
   }
 
+  /** Id of the turn in progress (or the last one). */
+  get turn(): number | undefined { return this.turnId }
+
   beginTurn(prompt: string): number {
     this.agg = { steps: 0, toolCalls: 0, toolErrors: 0, input: 0, output: 0 }
     const r = this.db

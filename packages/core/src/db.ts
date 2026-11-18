@@ -155,7 +155,72 @@ const MIGRATIONS: string[] = [
    );
    CREATE INDEX library_session ON library(session_id);
    CREATE INDEX library_project ON library(project_id);
-   CREATE INDEX ledger_session ON ledger(session_id);`
+   CREATE INDEX ledger_session ON ledger(session_id);`,
+  // v2 P3: in-loop evolution — memory (lessons / preferences), attribution, overlays, turn scores, log.
+  `CREATE TABLE memory (
+     id TEXT PRIMARY KEY,
+     kind TEXT NOT NULL,            -- lesson | preference
+     scope TEXT NOT NULL,           -- global | project | stage
+     project_id TEXT,
+     stage TEXT,
+     trigger TEXT NOT NULL,
+     content TEXT NOT NULL,
+     source TEXT NOT NULL,          -- model | user | choice | edit | host
+     evidence TEXT,                 -- session id(s)
+     status TEXT NOT NULL,          -- trial | active | retired
+     trust TEXT NOT NULL DEFAULT 'trusted', -- trusted | untrusted
+     pinned INTEGER NOT NULL DEFAULT 0,
+     uses INTEGER NOT NULL DEFAULT 0,
+     wins REAL NOT NULL DEFAULT 0,
+     losses REAL NOT NULL DEFAULT 0,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL,
+     last_used_at TEXT
+   );
+   CREATE TABLE memory_uses (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     memory_id TEXT NOT NULL,
+     session_id TEXT NOT NULL,
+     turn_id INTEGER,
+     adopted INTEGER NOT NULL DEFAULT 0,
+     score REAL,
+     ts TEXT NOT NULL
+   );
+   CREATE INDEX memory_uses_turn ON memory_uses(session_id, turn_id);
+   CREATE TABLE overlays (
+     id TEXT PRIMARY KEY,
+     session_id TEXT NOT NULL,
+     op TEXT NOT NULL,
+     target TEXT,
+     value TEXT NOT NULL,
+     reason TEXT,
+     status TEXT NOT NULL,          -- trial | kept | reverted | promoted
+     turn_id INTEGER,
+     before_score REAL,
+     after_score REAL,
+     created_at TEXT NOT NULL
+   );
+   CREATE TABLE turn_scores (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     session_id TEXT NOT NULL,
+     turn_id INTEGER,
+     score REAL NOT NULL,
+     confidence REAL NOT NULL,
+     signals TEXT NOT NULL,
+     ts TEXT NOT NULL
+   );
+   CREATE TABLE evolve_log (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     session_id TEXT,
+     project_id TEXT,
+     turn_id INTEGER,
+     kind TEXT NOT NULL,            -- recall | reflect | adjust | selfcheck | learned | preference | observe | credit | revert
+     refs TEXT,
+     text TEXT NOT NULL,
+     data TEXT,
+     ts TEXT NOT NULL
+   );
+   CREATE INDEX evolve_log_session ON evolve_log(session_id);`
 ]
 
 export function openDb(dataDir: string): Db {

@@ -23,6 +23,7 @@ export function storedQuality () {
 export function initFx (canvas) {
   const pref = storedQuality()
   const quality = pref === 'auto' ? autoQuality() : pref
+  document.body.classList.remove('fx-off')
   if (quality === 'off') { document.body.classList.add('fx-off'); return { ...NOOP, quality } }
   let renderer
   try {
@@ -31,6 +32,7 @@ export function initFx (canvas) {
     document.body.classList.add('fx-off')
     return NOOP
   }
+  const life = new AbortController()
   const gl = renderer.getContext()
   const floatOk = renderer.capabilities.isWebGL2 && !!renderer.extensions.get('EXT_color_buffer_float')
   if (!floatOk) { renderer.dispose(); document.body.classList.add('fx-off'); return NOOP }
@@ -65,9 +67,9 @@ export function initFx (canvas) {
   // ---- input
   const mouse = { x: innerWidth / 2, y: innerHeight / 2, px: null, py: null, last: 0 }
   const move = (x, y) => { mouse.x = x; mouse.y = y }
-  addEventListener('mousemove', (e) => move(e.clientX, e.clientY), { passive: true })
-  addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) { move(t.clientX, t.clientY); mouse.px = t.clientX; mouse.py = t.clientY } }, { passive: true })
-  addEventListener('touchmove', (e) => { const t = e.touches[0]; if (t) move(t.clientX, t.clientY) }, { passive: true })
+  addEventListener('mousemove', (e) => move(e.clientX, e.clientY), { passive: true, signal: life.signal })
+  addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) { move(t.clientX, t.clientY); mouse.px = t.clientX; mouse.py = t.clientY } }, { passive: true, signal: life.signal })
+  addEventListener('touchmove', (e) => { const t = e.touches[0]; if (t) move(t.clientX, t.clientY) }, { passive: true, signal: life.signal })
   const mobile = matchMedia('(pointer: coarse)').matches
   const clampMap = (v, a, b, c, d) => c + (d - c) * Math.min(1, Math.max(0, (v - a) / (b - a)))
 
@@ -99,7 +101,7 @@ export function initFx (canvas) {
     renderer.setSize(innerWidth, innerHeight, false)
     camera.aspect = innerWidth / innerHeight
     camera.updateProjectionMatrix()
-  })
+  }, { signal: life.signal })
 
   // ---- loop
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -167,7 +169,7 @@ export function initFx (canvas) {
       lastT = performance.now()
       raf = requestAnimationFrame(frame)
     }
-  })
+  }, { signal: life.signal })
 
   return {
     quality,
@@ -187,7 +189,7 @@ export function initFx (canvas) {
       }
     },
     reform () { particles.reform() },
-    setQuality (q) { try { localStorage.setItem(QKEY, q) } catch {} ; location.reload() },
-    dispose () { running = false; cancelAnimationFrame(raf); particles.dispose(); fluid.dispose(); renderer.dispose() }
+    setQuality (q) { try { localStorage.setItem(QKEY, q) } catch {} },
+    dispose () { life.abort(); running = false; cancelAnimationFrame(raf); particles.dispose(); fluid.dispose(); renderer.dispose() }
   }
 }

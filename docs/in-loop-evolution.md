@@ -1,6 +1,7 @@
 # 循环内自进化（In-Loop Self-Evolution）设计
 
-状态：方案定稿 v3（2026-11-18，两轮讨论的决策都已确认），**未实现**，等用户下达开始指令
+状态：v3 方案 + `docs/PLAN.md` §3 的修改。**P3 已实现（2026-11-19）**：记忆库（经验 / 偏好，Beta 打分，试用 → 生效 → 淘汰，外部来源标为 untrusted）、回忆注入（回合开始 + 失败时上下文检索）、失败信号与强制反思、第三次相同失败的 guard、reflect / note_lesson / recall / tune_harness / offer_choices 五个工具、会话覆盖层（prompt.note、tool.note、skill.enable / disable，下一回合通过 configure 生效）、回答前自检（每回合最多一次）、回合评分与归因、迟到的好评 / 差评补记、「以后都……」直接记为置顶偏好、用户修改交付文件后的观察。代码在 `packages/core/src/evolve/`，测试在 `evolve.loop.test.ts`。
+未实现、留到 P4：patch_skill / forge_skill / run_skill（可执行技能）、覆盖层沉淀为 genome 候选并回放验证、workflow.* 与 route / param 算子、规则包提案。按 PLAN §3 第 5 条去掉了评委打分。
 
 ## 0. 已确定的决策
 

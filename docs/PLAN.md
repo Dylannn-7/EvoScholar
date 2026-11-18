@@ -117,7 +117,8 @@
 |------|------|---------------|
 | P0 | 已提交（603aaba） | ¥0 |
 | P1 | 已提交（146133a）。新增 `gemini.ts`、`projects.ts`、`library.ts`、`usage.ts`、`permissions.ts`、`routes-v2.ts`、`http.ts`；用户设置存放在 `data/settings.json`；41 个 TS 测试 + 38 个 Python 测试通过；DeepSeek 两种协议实测连通 | ¥0.0083 |
-| P2 | 完成，等待确认提交。前端重写为 `app.js`（外壳、路由、弹出菜单）+ `ui/workbench.js`（项目树、透明会话、输入框）+ `ui/settings.js`（接入向导）+ `ui/pages.js`（插件、资料空间、用量、轨迹）；复用 markdown / modal，审阅弹窗抽到 `ui/review.js`；无 emoji；用模拟网关跑通「项目 → 会话 → 审批 → 交付文件 → 资料空间 → 用量」 | ¥0 |
+| P2 | 已提交（401dfe2）。前端重写为 `app.js`（外壳、路由、弹出菜单）+ `ui/workbench.js`（项目树、透明会话、输入框）+ `ui/settings.js`（接入向导）+ `ui/pages.js`（插件、资料空间、用量、轨迹）；复用 markdown / modal，审阅弹窗抽到 `ui/review.js`；无 emoji；用模拟网关跑通「项目 → 会话 → 审批 → 交付文件 → 资料空间 → 用量」 | ¥0 |
+| P3 | 已提交。`packages/core/src/evolve/`（store、loop）接入 `openResearchSession`；思维链里的回忆 / 反思 / 调整 / 选择 / 自检 / 学到；选项卡；撤销；轨迹页（时间线、记忆管理、会话调整、版本）。DeepSeek 实测：真实失败后模型自主 reflect 并记下可复用经验 | ¥0.0286 |
 
 ## 6. 不变的硬规则
 

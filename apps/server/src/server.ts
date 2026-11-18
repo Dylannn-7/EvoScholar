@@ -42,6 +42,7 @@ import {
 import { createJournalAgentStore, type AgentEvent, type AgentMessage, type ContentBlock } from '@evoscholar/harness'
 
 type ApprovalEntry = { id: string; tool: string; summary: string; resolve: (ok: boolean) => void }
+type ChoiceEntry = { id: string; question: string; options: { label: string; detail?: string }[]; resolve: (i: number | null) => void }
 
 type SessionMeta = { projectId: string | null; cwd: string; model: string | null; effort: string | null; permission: PermissionMode }
 type Live = {
@@ -50,6 +51,7 @@ type Live = {
   clients: Set<ServerResponse>
   busy: boolean
   approvals: Map<string, ApprovalEntry>
+  choices: Map<string, ChoiceEntry>
   seenTool: Set<string>
 }
 
@@ -202,7 +204,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     if (existing) return existing
     const row = rt.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown> | undefined
     if (!row && !create) throw Object.assign(new Error('会话不存在'), { status: 404 })
-    const l = { clients: new Set(), busy: false, approvals: new Map(), seenTool: new Set() } as unknown as Live
+    const l = { clients: new Set(), busy: false, approvals: new Map(), choices: new Map(), seenTool: new Set() } as unknown as Live
     l.meta = metaFor(id, row, create)
     const onEvent = (e: AgentEvent) => {
       if (e.type === 'model' && e.purpose !== 'compaction') {
@@ -229,6 +231,17 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       permission: () => l.meta.permission,
       outputDir,
       onFiles: (paths) => indexFiles(rt.db, { root: l.meta.cwd, projectId: l.meta.projectId, sessionId: id }, paths, 'output'),
+      evolve: {
+        store: rt.evolve,
+        projectId: l.meta.projectId,
+        emit: (e) => broadcast(l, { type: 'evolve', ...e }),
+        choose: (question, options) =>
+          new Promise<number | null>((resolveChoice) => {
+            const cid = randomUUID().slice(0, 8)
+            l.choices.set(cid, { id: cid, question, options, resolve: resolveChoice })
+            broadcast(l, { type: 'choice', id: cid, question, options })
+          })
+      },
       category: 'usage',
       onEvent,
       onWarning: (m) => broadcast(l, { type: 'warning', message: m }),
@@ -441,7 +454,10 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         busy: l.busy,
         genome: l.rs.genome.id,
         messages: displayMessages(snap.messages),
-        pendingApprovals: [...l.approvals.values()].map(({ id, tool, summary }) => ({ id, tool, summary }))
+        pendingApprovals: [...l.approvals.values()].map(({ id, tool, summary }) => ({ id, tool, summary })),
+        pendingChoices: [...l.choices.values()].map(({ id, question, options }) => ({ id, question, options })),
+        evolve: rt.evolve.recentLog({ sessionId: mm[1], limit: 300 }).reverse(),
+        turns: (rt.db.prepare('SELECT id FROM turns WHERE session_id = ? ORDER BY id').all(mm[1]) as { id: number }[]).map((t) => t.id)
       })
     }
     if (mm && req.method === 'PATCH') {
@@ -612,6 +628,8 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
           live0.busy = false
           for (const entry of live0.approvals.values()) entry.resolve(false)
           live0.approvals.clear()
+          for (const entry of live0.choices.values()) entry.resolve(null)
+          live0.choices.clear()
           indexOutputs(live0)
           broadcast(live0, { type: 'done' })
         })
@@ -647,12 +665,28 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       broadcast(l, { type: 'approval-resolved', id: mm[2], allow: !!b.allow })
       return send(res, 200, { ok: true })
     }
+    mm = m(/^\/api\/sessions\/([\w-]+)\/choice\/(\w+)$/)
+    if (mm && req.method === 'POST') {
+      const l = await getLive(mm[1])
+      const entry = l.choices.get(mm[2])
+      if (!entry) return send(res, 404, { error: '选项已失效' })
+      const b = await body(req)
+      l.choices.delete(mm[2])
+      const idx = Number.isInteger(b.index) && b.index >= 0 && b.index < entry.options.length ? b.index : null
+      entry.resolve(idx)
+      broadcast(l, { type: 'choice-resolved', id: mm[2], index: idx })
+      return send(res, 200, { ok: true })
+    }
     mm = m(/^\/api\/sessions\/([\w-]+)\/feedback$/)
     if (mm && req.method === 'POST') {
       const l = await getLive(mm[1])
       const b = await body(req)
       if (!['thumb', 'rating', 'comment', 'accept', 'rerun'].includes(b.kind)) return send(res, 400, { error: 'kind' })
       l.rs.recorder.feedback(b.kind, typeof b.value === 'number' ? b.value : null, b.note ? String(b.note).slice(0, 2000) : undefined)
+      if (b.kind === 'thumb' && typeof b.value === 'number') l.rs.evolve?.userFeedback(b.value)
+      if (b.kind === 'comment' && b.note) {
+        try { rt.evolve.upsert({ kind: 'preference', trigger: '用户对回答的评价', content: String(b.note).slice(0, 300), source: 'user', projectId: l.meta.projectId, evidence: l.rs.id }) } catch {}
+      }
       return send(res, 200, { ok: true })
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/files$/)

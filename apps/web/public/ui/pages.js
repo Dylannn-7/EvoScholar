@@ -2,7 +2,7 @@
 import { go, store } from '../app.js'
 import { ago, api, fmtSize, fmtTokens, patch, post } from './api.js'
 import { icon } from './icons.js'
-import { confirmDialog, esc, toast } from './modal.js'
+import { confirmDialog, esc, promptDialog, toast } from './modal.js'
 import { openFilePreviewModal } from './review.js'
 
 const shell = (root, title, desc, actions = '') => {
@@ -129,26 +129,75 @@ function chart (rows) {
 }
 
 // ---------------------------------------------------------------- trajectory
+const KIND = { recall: '回忆', reflect: '反思', adjust: '调整', selfcheck: '自检', learned: '学到', preference: '偏好', observe: '观察', credit: '归因', revert: '撤销', choice: '选择' }
+const STATUS = { trial: ['试用', 'warn'], active: ['生效', 'ok'], retired: ['已淘汰', ''] }
+let trajTab = 'timeline'
+let memFilter = 'live'
 export async function renderTrajectory (root) {
-  const body = shell(root, '轨迹', '智能体在思考—行动循环里的自进化记录：回忆了哪些经验、因为什么反思、调整了什么，以及哪些 harness 改动在等你批准。')
-  const evo = await api('/api/evolution')
+  const body = shell(root, '轨迹', '智能体在思考—行动循环里的自进化记录：回忆了哪些经验、因为什么反思、调整了什么、学到了什么。经验和偏好自动生效但随时可撤销；持久修改 harness 需要你批准。')
+  const [ev, evo] = await Promise.all([api('/api/evolve'), api('/api/evolution')])
   const pending = evo.candidates.filter((c) => c.status === 'pending')
-  body.innerHTML = `
-    <div class="section-t">待你批准</div>
-    ${pending.length ? `<div class="timeline">${pending.map((c) => `<div class="tl-item"><i class="rail-dot"></i><div class="c">
-        <div class="h"><code>${esc(c.genome_id)}</code><span class="badge warn">待批准</span><span class="faint">${esc(c.target || '')}</span><span class="page-actions"><button class="btn ghost small" data-rej="${esc(c.genome_id)}" type="button">拒绝</button><button class="btn primary small" data-pro="${esc(c.genome_id)}" type="button">批准上线</button></span></div>
-        <p>${esc(c.change || c.diagnosis || '')}</p></div></div>`).join('')}</div>` : '<p class="muted">没有等待批准的改动。</p>'}
-    <div class="section-t">回合中的自进化</div>
-    <div class="empty-state" style="margin:20px auto"><b>循环内自进化即将接入</b>接入后，每个回合的回忆、反思、调整、自检会按时间排在这里，每条都能追溯到证据会话，并可以撤销。</div>
-    <div class="section-t">harness 版本</div>
-    <div class="timeline">${evo.lineage.slice().reverse().slice(0, 30).map((g) => `<div class="tl-item"><i class="rail-dot ${g.status === 'active' ? '' : 'dim'}"></i><div class="c">
-      <div class="h"><code>${esc(g.id)}</code>${g.status === 'active' ? '<span class="badge ok">当前</span>' : `<span class="badge">${esc({ archived: '历史', rejected: '已拒绝', candidate: '候选' }[g.status] || g.status)}</span>`}<span class="faint">${esc(g.createdBy?.startsWith('evolution') ? '进化生成' : '手动')}</span>
-      ${g.status === 'archived' ? `<span class="page-actions"><button class="btn ghost small" data-rb="${esc(g.id)}" type="button">回滚到此版本</button></span>` : ''}</div>
-      <p>${esc(g.note || '')}</p></div></div>`).join('')}</div>`
+  const live = ev.memory.filter((m) => m.status !== 'retired')
+  const overlays = ev.overlays.filter((o) => o.status === 'trial' || o.status === 'kept')
+  const tabs = [['timeline', `时间线 ${ev.log.length}`], ['memory', `记忆 ${live.length}`], ['overlays', `会话调整 ${overlays.length}`], ['versions', `版本${pending.length ? ` · 待批准 ${pending.length}` : ''}`]]
+  const score = (m) => (m.wins + 1) / (m.wins + m.losses + 2)
+  const sessLink = (id, title) => id ? `<a class="muted" data-sess="${esc(id)}" style="cursor:pointer">${esc(title || id)}</a>` : ''
+  const draw = () => {
+    let html = `<div class="toolbar"><div class="seg">${tabs.map(([id, l]) => `<button type="button" class="${trajTab === id ? 'on' : ''}" data-t="${id}">${l}</button>`).join('')}</div>
+      ${trajTab === 'memory' ? `<div class="seg">${[['live', '在用'], ['trial', '试用'], ['active', '生效'], ['retired', '已淘汰']].map(([id, l]) => `<button type="button" class="${memFilter === id ? 'on' : ''}" data-mf="${id}">${l}</button>`).join('')}</div><button class="btn ghost small" id="addPref" type="button">${icon('plus', 14)}添加偏好</button>` : ''}</div>`
+    if (trajTab === 'timeline') {
+      html += ev.log.length ? `<div class="timeline">${ev.log.map((e) => `<div class="tl-item"><i class="rail-dot ${['adjust', 'learned', 'preference'].includes(e.kind) ? '' : 'dim'}"></i><div class="c">
+          <div class="h"><span class="badge ${['adjust', 'learned', 'preference'].includes(e.kind) ? 'accent' : e.kind === 'selfcheck' ? 'warn' : ''}">${KIND[e.kind] || esc(e.kind)}</span>${(e.refs || []).slice(0, 5).map((r) => `<code>${esc(r)}</code>`).join(' ')}<span class="faint">${esc(ago(e.ts))}</span><span class="page-actions">${sessLink(e.session_id, e.session_title)}</span></div>
+          <p>${esc(e.text)}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有自进化记录</b>开始一个会话后，回忆、反思、调整和学到的内容会按时间排在这里。</div>'
+    } else if (trajTab === 'memory') {
+      const list = ev.memory.filter((m) => memFilter === 'live' ? m.status !== 'retired' : m.status === memFilter)
+      html += list.length ? `<div class="cards">${list.map((m) => { const [sl, sc] = STATUS[m.status]; return `<div class="pcard" data-mem="${esc(m.id)}">
+          <div class="top"><code>${esc(m.id)}</code><span class="badge">${m.kind === 'lesson' ? '经验' : '偏好'}</span><span class="badge ${sc}">${sl}</span>${m.pinned ? '<span class="badge accent">置顶</span>' : ''}${m.trust === 'untrusted' ? '<span class="badge warn">来源含外部内容</span>' : ''}</div>
+          <div class="ds" style="-webkit-line-clamp:5"><b style="color:#fff;font-weight:500">${esc(m.trigger)}</b> → ${esc(m.content)}</div>
+          <div class="ft"><span>得分 ${score(m).toFixed(2)}</span><span>用过 ${m.uses} 次</span><span>${{ model: '模型提炼', user: '你给的', choice: '你的选择', edit: '你的修改', host: '系统' }[m.source] || ''}</span><span>${m.scope === 'project' ? '项目内' : m.scope === 'stage' ? `阶段 ${esc(m.stage || '')}` : '全局'}</span>
+            <span class="page-actions"><button class="icon-btn" data-act="pin" title="${m.pinned ? '取消置顶' : '置顶（总是注入）'}" type="button">${icon('pin', 14)}</button><button class="icon-btn" data-act="edit" title="编辑" type="button">${icon('edit', 14)}</button>
+            ${m.status === 'retired' ? `<button class="icon-btn" data-act="restore" title="恢复" type="button">${icon('refresh', 14)}</button>` : `<button class="icon-btn" data-act="retire" title="淘汰（不再注入）" type="button">${icon('archive', 14)}</button>`}<button class="icon-btn" data-act="del" title="删除" type="button">${icon('trash', 14)}</button></span></div></div>` }).join('')}</div>` : '<div class="empty-state"><b>这里还没有条目</b>会话中提炼的经验、你的选择和明确要求（例如「以后都用 Okabe-Ito 配色」）会出现在这里。</div>'
+    } else if (trajTab === 'overlays') {
+      html += ev.overlays.length ? `<div class="timeline">${ev.overlays.slice().reverse().map((o) => `<div class="tl-item"><i class="rail-dot ${o.status === 'reverted' ? 'dim' : ''}"></i><div class="c">
+          <div class="h"><code>${esc(o.id)}</code><span class="badge">${esc(o.op)}${o.target ? ` · ${esc(o.target)}` : ''}</span><span class="badge ${o.status === 'reverted' ? '' : o.status === 'kept' ? 'ok' : 'warn'}">${{ trial: '试用中', kept: '保留', reverted: '已撤销', promoted: '已沉淀' }[o.status] || esc(o.status)}</span>
+          ${o.before_score !== null && o.after_score !== null ? `<span class="faint">回合得分 ${Number(o.before_score).toFixed(2)} → ${Number(o.after_score).toFixed(2)}</span>` : ''}<span class="page-actions">${sessLink(o.session_id)}${o.status === 'trial' || o.status === 'kept' ? `<button class="btn ghost small" data-rev="${esc(o.id)}" type="button">撤销</button>` : ''}</span></div>
+          <p>${esc(o.value || '')}${o.reason ? `<br><span class="faint">原因：${esc(o.reason)}</span>` : ''}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有会话调整</b>智能体在会话里用 tune_harness 试用的工作方式调整会列在这里；表现好的调整之后可以沉淀为 genome 候选，经你批准上线。</div>'
+    } else {
+      html += `<div class="section-t">待你批准</div>${pending.length ? `<div class="timeline">${pending.map((c) => `<div class="tl-item"><i class="rail-dot"></i><div class="c">
+          <div class="h"><code>${esc(c.genome_id)}</code><span class="badge warn">待批准</span><span class="faint">${esc(c.target || '')}</span><span class="page-actions"><button class="btn ghost small" data-rej="${esc(c.genome_id)}" type="button">拒绝</button><button class="btn primary small" data-pro="${esc(c.genome_id)}" type="button">批准上线</button></span></div>
+          <p>${esc(c.change || c.diagnosis || '')}</p></div></div>`).join('')}</div>` : '<p class="muted">没有等待批准的改动。</p>'}
+        <div class="section-t">harness 版本</div><div class="timeline">${evo.lineage.slice().reverse().slice(0, 40).map((g) => `<div class="tl-item"><i class="rail-dot ${g.status === 'active' ? '' : 'dim'}"></i><div class="c">
+          <div class="h"><code>${esc(g.id)}</code>${g.status === 'active' ? '<span class="badge ok">当前</span>' : `<span class="badge">${esc({ archived: '历史', rejected: '已拒绝', candidate: '候选' }[g.status] || g.status)}</span>`}<span class="faint">${esc(g.createdBy?.startsWith('evolution') ? '进化生成' : '手动')}</span>
+          ${g.status === 'archived' ? `<span class="page-actions"><button class="btn ghost small" data-rb="${esc(g.id)}" type="button">回滚到此版本</button></span>` : ''}</div><p>${esc(g.note || '')}</p></div></div>`).join('')}</div>`
+    }
+    body.innerHTML = html
+  }
+  draw()
   body.onclick = async (e) => {
-    const b = e.target.closest('[data-pro],[data-rej],[data-rb]')
-    if (!b) return
+    const t = e.target.closest('[data-t]'); if (t) { trajTab = t.dataset.t; return draw() }
+    const mf = e.target.closest('[data-mf]'); if (mf) { memFilter = mf.dataset.mf; return draw() }
+    const sl = e.target.closest('[data-sess]'); if (sl) { go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: sl.dataset.sess })) }
     try {
+      if (e.target.closest('#addPref')) {
+        const text = await promptDialog({ title: '添加偏好', message: '写一条你希望智能体以后都遵守的习惯，例如「出图用 Okabe-Ito 配色，坐标轴标签不加粗」。', multiline: true })
+        if (!text) return
+        await post('/api/memory', { kind: 'preference', trigger: '用户设定', content: text, pinned: true })
+        return renderTrajectory(root)
+      }
+      const act = e.target.closest('[data-act]')
+      if (act) {
+        const id = act.closest('[data-mem]').dataset.mem
+        const m = ev.memory.find((x) => x.id === id)
+        if (act.dataset.act === 'pin') await patch(`/api/memory/${id}`, { pinned: !m.pinned })
+        if (act.dataset.act === 'retire') await patch(`/api/memory/${id}`, { status: 'retired' })
+        if (act.dataset.act === 'restore') await patch(`/api/memory/${id}`, { status: 'active' })
+        if (act.dataset.act === 'edit') { const c = await promptDialog({ title: `编辑 ${id}`, message: m.trigger, defaultValue: m.content, multiline: true }); if (!c) return; await patch(`/api/memory/${id}`, { content: c }) }
+        if (act.dataset.act === 'del') { if (!(await confirmDialog({ title: '删除条目', message: `删除 ${id}？`, confirmText: '删除', danger: true }))) return; await fetch(`/api/memory/${id}`, { method: 'DELETE', headers: { 'x-evoscholar': '1' } }) }
+        return renderTrajectory(root)
+      }
+      const rev = e.target.closest('[data-rev]'); if (rev) { await post(`/api/overlays/${rev.dataset.rev}/revert`); return renderTrajectory(root) }
+      const b = e.target.closest('[data-pro],[data-rej],[data-rb]')
+      if (!b) return
       if (b.dataset.pro) { if (!(await confirmDialog({ title: '批准上线', message: `把 ${b.dataset.pro} 设为当前 harness？可以随时回滚。`, confirmText: '批准' }))) return; await post(`/api/evolution/${b.dataset.pro}/promote`) }
       if (b.dataset.rej) await post(`/api/evolution/${b.dataset.rej}/reject`, {})
       if (b.dataset.rb) { if (!(await confirmDialog({ title: '回滚', message: `回滚到 ${b.dataset.rb}？`, confirmText: '回滚' }))) return; await post('/api/genome/rollback', { to: b.dataset.rb }) }

@@ -57,7 +57,7 @@ function checkBaseUrl(raw: string): string {
   return u.href.replace(/\/+$/, '')
 }
 
-export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Promise<void> }) {
+export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Promise<void>; onOverlayChange?: () => void }) {
   const ws = rt.ws
   const settings = () => ws.settings
 
@@ -228,6 +228,50 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
         totals: usageTotals(rt.db, days),
         rows: usageBy(rt.db, group, { days, sessionId: url.searchParams.get('session') ?? undefined, projectId: url.searchParams.get('project') ?? undefined })
       }), true
+    }
+    // ---------- in-loop evolution: memory, overlays, log ----------
+    if (p === '/api/evolve' && method === 'GET') {
+      const session = url.searchParams.get('session') ?? undefined
+      return send(res, 200, {
+        memory: rt.evolve.list(),
+        overlays: rt.evolve.overlays(session, true).slice(-200),
+        log: rt.evolve.recentLog({ sessionId: session, limit: 300 })
+      }), true
+    }
+    if ((mm = /^\/api\/memory\/([LP]-\d{4})$/.exec(p))) {
+      const id = mm[1]
+      if (!rt.evolve.get(id)) throw httpError(404, '条目不存在')
+      if (method === 'PATCH') {
+        const b = await body(req)
+        try {
+          if (b.pinned !== undefined) rt.evolve.pin(id, !!b.pinned)
+          if (b.status !== undefined) {
+            if (!['trial', 'active', 'retired'].includes(b.status)) throw new Error('未知状态')
+            rt.evolve.setStatus(id, b.status)
+          }
+          if (b.trigger !== undefined || b.content !== undefined) rt.evolve.edit(id, { trigger: b.trigger, content: b.content })
+        } catch (e) { throw httpError(400, (e as Error).message) }
+        rt.evolve.log({ kind: 'revert', text: `你修改了 ${id}`, refs: [id] })
+        return send(res, 200, { item: rt.evolve.get(id) }), true
+      }
+      if (method === 'DELETE') {
+        rt.evolve.remove(id)
+        rt.evolve.log({ kind: 'revert', text: `你删除了 ${id}`, refs: [id] })
+        return send(res, 200, { ok: true }), true
+      }
+    }
+    if (p === '/api/memory' && method === 'POST') {
+      const b = await body(req)
+      try {
+        const { item } = rt.evolve.upsert({ kind: b.kind === 'lesson' ? 'lesson' : 'preference', trigger: String(b.trigger ?? ''), content: String(b.content ?? ''), source: 'user', projectId: b.projectId ? String(b.projectId) : null, pinned: !!b.pinned })
+        return send(res, 200, { item }), true
+      } catch (e) { throw httpError(400, (e as Error).message) }
+    }
+    if ((mm = /^\/api\/overlays\/(O-[\w]+)\/revert$/.exec(p)) && method === 'POST') {
+      rt.evolve.setOverlay(mm[1], 'reverted')
+      rt.evolve.log({ kind: 'revert', text: `你撤销了本会话调整 ${mm[1]}`, refs: [mm[1]] })
+      hooks.onOverlayChange?.()
+      return send(res, 200, { ok: true }), true
     }
     return false
   }
