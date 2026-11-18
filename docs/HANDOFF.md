@@ -259,7 +259,8 @@ python3 evals/bench.py advance <dir>                                   # L10、D
   - 新增：没有 .bib 时读取 .bbl；PDF 只做页数 / 元数据 / 章节检查（PDF 抽取的文字做内容检查噪声太大）；`stage`（submission / camera-ready）：终稿不查匿名，页数上限按会议说明 +1（NeurIPS 10、ICML 9、ICLR 10）。
   - 报告：`check-tex-camera-ready/`、`check-tex-submission/`、`check-pdf-*/`（各含 report.json / report.md，tex 的含批注副本）。
   - **用户标记结果（同意初判）**：有效 3（图未引用、表无标题、LLM 未定义）、误报 3（KL、MLE、GPT 未定义）、不确定 2（2025 checklist 不适用于 2023 稿件；缩写在摘要中先用）。总误报率 50%，但误报全部来自提示级规则 `common.abbreviations.undefined`（75%）；错误 / 提醒级规则 0 误报。**用户决定公知缩写不报**：`common.yaml` 的 `common.abbreviations` 规则加了可编辑的 `well_known` 列表（数学 / 统计 / 信号处理记号与模型、数据集名；LLM 不在其中，因为用户判为有效）。重跑后 DPO 终稿报告剩 6 条，KL、MLE、GPT 不再报。
-  - 还没测：中文学位论文 / 中文期刊 / GB/T 7714 规则需要一篇中文稿件。
+  - **中文稿件**：用户提供华科博士论文 LaTeX 节选（张心泽 2023，`data/manuscripts/hust-phd-zhang/`，git 忽略），按 hust-thesis doctor 检查。第一版报 88 条，修复后 16 条。修复内容：支持 \ctitle / \cabstract / \ckeywords / \eabstract / \ekeywords，并为类文件生成的摘要、目录、参考文献、附录、致谢插入虚拟章节；识别「中文（English full name，ABBR）」定义；首字母匹配支持复合词（Multilayer perceptron → MLP）；中英文全称之间不比较；`\newcommand` 里的 `\ref{#1}`、tabular 列宽 `P{0.9cm}`、型号 8700K、BI-LSTM 不报；接受 gbt7714-2025.bst；子图标签也算图被引用；.bib 里未引用的条目不报，文献统计只算被引用的条目；摘要中的缩写不算「定义前使用」。另修了一个变量重名导致只有 .bbl 的稿件崩溃的 bug（加了回归测试）。
+  - 检查还发现论文本身的问题：缩写 MA 有两种全称（Moving average / Memetic algorithm），GD 全称一处拼成「Gradient decent」，RVFL 两种英文全称；摘要 1564 字超过「一般 800–1000 字」。
 - 「有效 / 误报」标记：工具 `check_feedback`（用户在对话里说「F003 是误报」时由智能体记录）、CLI `es mark <report.json> F001,F003 fp [原因]`、`es check-stats`（各规则误报率）。数据存在 events 表，type 为 `host.check.feedback`。
 - 注意：技能是看过 W01–W10 的任务说明（不含答案）后写的；W07 计页口径没有写死。
 
