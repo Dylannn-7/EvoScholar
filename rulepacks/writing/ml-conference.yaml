@@ -28,23 +28,27 @@ rules:
     check: page_limit
     applies: [neurips2026]
     params: { max_pages: 9, excluded: [References, NeurIPS Paper Checklist, Appendix, Technical Appendices and Supplementary Material] }
+    params_by_stage: { camera-ready: { max_pages: 10 } }
     source: neurips2026
-    note: 正文最多 9 页（含图表）；参考文献、附录和必填的 checklist 不计入
+    note: 正文最多 9 页（含图表）；参考文献、附录和必填的 checklist 不计入；录用后终稿多 1 页
   - id: ml.pages.neurips2025
     check: page_limit
     applies: [neurips2025]
     params: { max_pages: 9, excluded: [References, NeurIPS Paper Checklist, Appendix, Technical Appendices and Supplementary Material] }
+    params_by_stage: { camera-ready: { max_pages: 10 } }
     source: neurips2025
   - id: ml.pages.icml2026
     check: page_limit
     applies: [icml2026]
     params: { max_pages: 8, excluded: [Impact Statement, Acknowledgements, Acknowledgments, References, Appendix] }
+    params_by_stage: { camera-ready: { max_pages: 9 } }
     source: icml2026
     note: 正文 8 页；参考文献、Impact Statement、附录不限页
   - id: ml.pages.iclr2026
     check: page_limit
     applies: [iclr2026]
     params: { max_pages: 9, excluded: [References, Appendix, Ethics Statement, Reproducibility Statement] }
+    params_by_stage: { camera-ready: { max_pages: 10 } }
     source: iclr2026
     note: 投稿时正文 ≤9 页（讨论期和终稿 10 页），参考文献不计入，附录放在参考文献之后
   - id: ml.checklist.neurips
@@ -61,8 +65,9 @@ rules:
     note: 必须有 Impact Statement，单独一节，放在文末（与致谢同处、参考文献之前）
   - id: ml.anonymity
     check: anonymity
+    skip_stages: [camera-ready]
     source: neurips2026
-    note: 三个会议都是双盲：不能有作者信息、致谢、元数据；NeurIPS 投稿不要用 final 选项；ICLR 自己的 arXiv 文章用第三人称引用
+    note: 只在投稿阶段检查（终稿可以署名、致谢）。三个会议都是双盲：不能有作者信息、致谢、元数据；NeurIPS 投稿不要用 final 选项；ICLR 自己的 arXiv 文章用第三人称引用
 verify:
   - ICLR 2026：如果 LLM 在研究构思或写作中起了重要作用，必须单独写一节 LLM usage（可放附录）；Ethics / Reproducibility statement 为推荐项。本工具不判断是否需要。
   - NeurIPS 2027、ICML 2027、ICLR 2027 的投稿说明发布后需要更新本规则包。

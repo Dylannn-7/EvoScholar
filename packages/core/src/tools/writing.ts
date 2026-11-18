@@ -28,14 +28,16 @@ export const manuscriptCheck: ToolFactory = (env) => ({
       path: { type: 'string', description: '稿件路径（工作目录内）' },
       packs: { type: 'array', items: { type: 'string' }, description: '规则包列表，默认 ["common"]' },
       variant: { type: 'string', description: '规则包的类型，如 master、neurips2026' },
-      annotate: { type: 'boolean', description: '是否生成带批注的副本' }
+      annotate: { type: 'boolean', description: '是否生成带批注的副本' },
+      stage: { type: 'string', enum: ['submission', 'camera-ready'], description: '投稿版（默认，做匿名检查）或录用后终稿（不查匿名，页数按终稿上限）' }
     },
     required: ['path'],
     additionalProperties: false
   },
   scheduling: 'parallel',
   validate: (i) => {
-    const a = objectArgs(i, ['path', 'packs', 'variant', 'annotate'], ['path']) as { packs?: unknown; variant?: unknown }
+    const a = objectArgs(i, ['path', 'packs', 'variant', 'annotate', 'stage'], ['path']) as { packs?: unknown; variant?: unknown; stage?: unknown }
+    if (a.stage !== undefined && a.stage !== 'submission' && a.stage !== 'camera-ready') throw new Error('stage 只能是 submission 或 camera-ready')
     if (a.packs !== undefined && (!Array.isArray(a.packs) || a.packs.length > 6 || a.packs.some((p) => typeof p !== 'string' || !/^[a-z0-9-]{1,40}$/.test(p))))
       throw new Error('packs 必须是小写规则包名数组（最多 6 个）')
     if (a.variant !== undefined && !/^[a-z0-9-]{1,30}$/.test(String(a.variant))) throw new Error('variant 只能是小写字母、数字和 -')
@@ -43,11 +45,11 @@ export const manuscriptCheck: ToolFactory = (env) => ({
   },
   authorize: async () => true,
   async execute(args, c) {
-    const a = args as { path: string; packs?: string[]; variant?: string; annotate?: boolean }
+    const a = args as { path: string; packs?: string[]; variant?: string; annotate?: boolean; stage?: string }
     const file = inside(env.cwd, a.path)
     const out = join(env.cwd, '.evoscholar', 'checks', basename(file).replace(/\.[^.]+$/, ''))
     mkdirSync(out, { recursive: true })
-    const cli = ['check', file, '--out', out, ...(a.packs ?? ['common']).flatMap((p) => ['--pack', p]), ...(a.variant ? ['--variant', a.variant] : []), ...(a.annotate ? ['--annotate'] : [])]
+    const cli = ['check', file, '--out', out, ...(a.packs ?? ['common']).flatMap((p) => ['--pack', p]), ...(a.variant ? ['--variant', a.variant] : []), ...(a.annotate ? ['--annotate'] : []), ...(a.stage ? ['--stage', a.stage] : [])]
     const r = JSON.parse(await runPyHelper(env, 'evoscholar_write.py', cli, c.signal, 180)) as Report
     env.trace?.({ kind: 'manuscript.check', file: relative(env.cwd, file), packs: a.packs ?? ['common'], variant: a.variant ?? null, counts: r.counts })
     const files = (r.written ?? []).map((w) => relative(env.cwd, w)).join('、')

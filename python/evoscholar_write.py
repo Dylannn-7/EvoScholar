@@ -270,7 +270,19 @@ def load_latex(main: Path) -> Doc:
                 rec['loc'] = f'{f.relative_to(root)}:{line}'
                 doc.bib.append(rec)
         else:
-            doc.notes.append(f'找不到参考文献库 {n}.bib')
+            bbl = next((b for b in (root / (n + '.bbl'), root / (main.stem + '.bbl')) if b.exists()), None)
+            if bbl is not None:
+                # arXiv-style sources ship only the compiled bibliography.
+                btxt = bbl.read_text(encoding='utf-8', errors='replace')
+                doc.bib_files.append(str(bbl.relative_to(root)))
+                items = list(re.finditer(r'\\bibitem\s*(?:\[(?:[^\[\]]|\[[^\]]*\])*\])?\s*\{([^}]+)\}', btxt))
+                for k, bm in enumerate(items):
+                    end = items[k + 1].start() if k + 1 < len(items) else btxt.find('\\end{thebibliography}')
+                    doc.bib.append({'key': bm.group(1).strip(), 'raw': _strip_tex(btxt[bm.end(): end if end > 0 else bm.end() + 600]),
+                                    'loc': f'{bbl.relative_to(root)}:{btxt[: bm.start()].count(chr(10)) + 1}', 'from_bbl': True})
+                doc.notes.append(f'没有 {n}.bib，参考文献取自编译生成的 {bbl.name}')
+            else:
+                doc.notes.append(f'找不到参考文献库 {n}.bib')
     for m in re.finditer(r'\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}', t):
         end = t.find('\\bibitem', m.end())
         end = t.find('\\end{thebibliography}', m.end()) if end < 0 else end
@@ -656,6 +668,9 @@ def _float_numbering(doc: Doc, p: dict, rule: dict) -> list:
     out = []
     if doc.kind == 'latex':
         refd = {r['name'] for r in doc.refs}
+        for m in re.finditer(r'\\(?:ref|cref|autoref)\{([^}]*?)(\d+)\}\s*(?:-{1,3}|–|—|to|~?--~?)\s*\\(?:ref|cref|autoref)\{([^}]*?)(\d+)\}', doc.text):
+            if m.group(1) == m.group(3) and int(m.group(2)) < int(m.group(4)) <= int(m.group(2)) + 50:
+                refd |= {f'{m.group(1)}{k}' for k in range(int(m.group(2)), int(m.group(4)) + 1)}
         for f in doc.floats:
             if f['caption'] is None:
                 out.append(finding(rule['id'] + '.caption', 'warning', f['loc'], f'{"图" if f["kind"] == "figure" else "表"}没有 \\caption'))
@@ -727,21 +742,57 @@ def _caption_position(doc: Doc, p: dict, rule: dict) -> list:
 
 
 _ACR = re.compile(r'(?<![A-Za-z\\{])([A-Z][A-Za-z]*[A-Z][A-Za-z0-9]*|[A-Z]{2,})s?(?![A-Za-z])')
-_ACR_DEF = re.compile(r'([A-Za-z][A-Za-z\- ]{2,80}?|[\u4e00-\u9fff]{2,30})\s*[(（]\s*([A-Z][A-Za-z0-9\-]*[A-Z][A-Za-z0-9]*s?|[A-Z]{2,}s?)\s*[)）]')
-COMMON_ACRONYMS = {'PDF', 'URL', 'ID', 'OK', 'USA', 'UK', 'EU', 'PhD', 'MSc', 'BSc', 'IEEE', 'ACM', 'DOI', 'ISBN', 'ISSN', 'LaTeX', 'TeX',
+_ACR_DEF = re.compile(r'([A-Za-z][A-Za-z\- ]{2,80}?|[\u4e00-\u9fff]{2,30})\s*[(（]\s*([A-Z][A-Za-z0-9\-]*[A-Z][A-Za-z0-9]*s?|[A-Z]{2,}s?)\s*[)）;；,，]')
+COMMON_ACRONYMS = {'AI', 'PDF', 'URL', 'ID', 'OK', 'USA', 'UK', 'EU', 'PhD', 'MSc', 'BSc', 'IEEE', 'ACM', 'DOI', 'ISBN', 'ISSN', 'LaTeX', 'TeX',
                    'CPU', 'GPU', 'RAM', 'GB', 'MB', 'KB', 'TB', 'API', 'HTTP', 'HTTPS', 'HTML', 'XML', 'JSON', 'CSV', 'SVG', 'PNG', 'JPEG',
                    'TIFF', 'EPS', 'ASCII', 'UTF', 'II', 'III', 'IV', 'VI', 'VII', 'VIII', 'IX', 'XI', 'XII', 'AM', 'PM', 'Fig', 'Eq', 'Eqs',
                    'NeurIPS', 'ICML', 'ICLR', 'CVPR', 'ICCV', 'ECCV', 'AAAI', 'IJCAI', 'ACL', 'EMNLP', 'SPIE', 'OSA', 'GitHub', 'arXiv',
                    'MATLAB', 'COMSOL', 'NVIDIA', 'CUDA', 'Python', 'PyTorch', 'TensorFlow', 'CMOS', 'IoT'}
 
 
+def _initials_match(full: str, ab: str) -> bool:
+    """Do the abbreviation's letters appear, in order, as initials of the words just before it?
+    All-caps word parts contribute every letter (preference-based RL → p b r l → PbRL)."""
+    if HAS_CJK.search(full):
+        return True
+    letters = [c for c in ab.lower() if c.isalpha()]
+    parts = [w for w in re.split(r'[\s\-–/]+', full.strip()) if w][- (len(letters) + 4):]
+    inits = []
+    for w in parts:
+        if re.fullmatch(r'[A-Z]{2,}s?', w):
+            inits += list(w.rstrip('s').lower())
+        elif w[0].isalpha():
+            inits.append(w[0].lower())
+    if not inits or not letters or inits[-1] == '' :
+        return False
+    # letters must be a subsequence of initials, starting at one of the last len(letters)+2 words
+    for start in range(max(0, len(inits) - len(letters) - 2), len(inits)):
+        if inits[start] != letters[0]:
+            continue
+        k = 0
+        for c in inits[start:]:
+            if k < len(letters) and c == letters[k]:
+                k += 1
+        if k == len(letters):
+            return True
+    return False
+
+
 def _plain(doc: Doc) -> str:
     t = doc.text
     if doc.kind == 'latex':
-        t = re.sub(r'\$\$.*?\$\$|\$[^$\n]*\$|\\\(.*?\\\)|\\\[.*?\\\]', lambda m: ' ' * len(m.group(0)), t, flags=re.S)
+        body = re.search(r'\\begin\{document\}', t)
+        if body:   # preamble: macro definitions, package options
+            t = ' ' * body.end() + t[body.end():]
+        t = re.sub(r'\\(?:re)?newcommand\*?\s*\{?\\[a-zA-Z@]+\}?\s*(?:\[\d\])?\s*\{(?:[^{}]|\{[^{}]*\})*\}', lambda m: ' ' * len(m.group(0)), t)
+        t = re.sub(r'\$\$|\$[^$\n]*\$|\\\(.*?\\\)|\\\[.*?\\\]', lambda m: ' ' * len(m.group(0)), t, flags=re.S)
         t = re.sub(r'\\begin\{(equation|align|gather|multline|eqnarray|verbatim|lstlisting|minted)\*?\}.*?\\end\{\1\*?\}', lambda m: ' ' * len(m.group(0)), t, flags=re.S)
         t = re.sub(r'\\(label|ref|eqref|cref|Cref|autoref|cite[a-zA-Z]*|includegraphics|usepackage|documentclass|bibliography|bibliographystyle|input|include|url|href|graphicspath)\*?\s*(\[[^\]]*\])?\s*\{[^}]*\}', lambda m: ' ' * len(m.group(0)), t)
-        t = re.sub(r'\\[a-zA-Z@]+', lambda m: ' ' * len(m.group(0)), t)
+        blank = lambda m: ' ' * len(m.group(0))
+        t = re.sub(r'\\(?:v|h)space\*?\s*\{[^}]*\}|\\(?:vskip|hskip|kern|vspace)\s*-?[\d.]+\s*[a-z]{2}|\\(?:setlength|addtolength)\s*\{[^}]*\}\s*\{[^}]*\}', blank, t)
+        t = re.sub(r'(\\[a-zA-Z@]+\*?)\s*\[[^\]\n]*\]', lambda m: ' ' * len(m.group(0)), t)   # command options like [width=2mm]
+        t = re.sub(r'\\[a-zA-Z@]+', blank, t)
+        t = t.replace('{', ' ').replace('}', ' ')
     return t
 
 
@@ -767,11 +818,15 @@ def _abbreviations(doc: Doc, p: dict, rule: dict) -> list:
     if stop:
         text = text[:stop]
     allow = COMMON_ACRONYMS | set(p.get('allow', []))
+    text = re.sub(r'\bTL;DR\b', lambda m: ' ' * len(m.group(0)), text)
+    norm = lambda a: a[:-1] if a.endswith('s') and sum(ch.isupper() for ch in a[:-1]) >= 2 else a
     defs: dict[str, tuple[int, str]] = {}
     out = []
     for m in _ACR_DEF.finditer(text):
-        ab = m.group(2).rstrip('s') if m.group(2).endswith('s') and m.group(2)[:-1].isupper() else m.group(2)
+        ab = norm(m.group(2))
         full = m.group(1).strip()
+        if not _initials_match(full, ab):
+            continue
         if ab in defs:
             prev_full = defs[ab][1]
             key = lambda s: re.sub(r'[^a-z\u4e00-\u9fff]', '', s.lower())[-24:]
@@ -782,11 +837,14 @@ def _abbreviations(doc: Doc, p: dict, rule: dict) -> list:
     first_use: dict[str, int] = {}
     counts: dict[str, int] = {}
     for m in _ACR.finditer(text):
-        ab = m.group(1)
+        ab = norm(m.group(0).strip())
+        a0, a1 = m.start(), m.end()
+        if re.match(r'[A-Za-z]-', text[max(0, a0 - 2):a0]) or re.match(r'-\d|/[A-Z]', text[a1:a1 + 2]) or re.search(r'[A-Za-z]/$', text[max(0, a0 - 2):a0]):
+            continue
         if ab in allow or len(ab) > 10 or not re.search(r'[A-Z].*[A-Z]', ab) or re.fullmatch(r'(.)\1+', ab):
             continue
         counts[ab] = counts.get(ab, 0) + 1
-        first_use.setdefault(ab, m.start(1))
+        first_use.setdefault(ab, m.start())
     min_uses = p.get('min_uses', 2)
     reported = 0
     for ab, pos in sorted(first_use.items(), key=lambda kv: kv[1]):
@@ -1315,13 +1373,20 @@ def resolve_packs(names: Iterable[str]) -> list[dict]:
 def _source_label(pack: dict, sid: str | None) -> str:
     for s in pack.get('sources', []) or []:
         if s.get('id') == sid:
-            where = s.get('url') or s.get('file') or ''
-            return f'{s.get("title", sid)}（{where}，核对于 {s.get("checked", "?")}）'
+            where = s.get('url') or s.get('file')
+            return f'{s.get("title", sid)}（{where + "，" if where else ""}核对于 {s.get("checked", "?")}）'
     return sid or ''
 
 
-def run(path: str | Path, packs: Iterable[str] = ('common',), variant: str | None = None, doc: Doc | None = None) -> dict:
-    """Run every rule of the given packs (and the packs they extend) on a manuscript."""
+PDF_CHECKS = {'page_limit', 'anonymity', 'required_sections', 'section_order'}
+STAGES = ('submission', 'camera-ready')
+
+
+def run(path: str | Path, packs: Iterable[str] = ('common',), variant: str | None = None, doc: Doc | None = None, stage: str = 'submission') -> dict:
+    """Run every rule of the given packs (and the packs they extend) on a manuscript.
+    stage: 'submission' (default) or 'camera-ready' (rules may skip or relax themselves per stage)."""
+    if stage not in STAGES:
+        raise ValueError(f'stage 只能是 {" / ".join(STAGES)}')
     doc = doc or load(path)
     resolved = resolve_packs(packs)
     findings: list[dict] = []
@@ -1349,7 +1414,12 @@ def run(path: str | Path, packs: Iterable[str] = ('common',), variant: str | Non
             if fn is None:
                 skipped.append(rule['id'])
                 continue
+            if doc.kind == 'pdf' and rule['check'] not in PDF_CHECKS:
+                continue
+            if stage in (rule.get('skip_stages') or []):
+                continue
             params = dict(rule.get('params') or {})
+            params.update((rule.get('params_by_stage') or {}).get(stage, {}))
             pv = (rule.get('params_by_variant') or {})
             if pv:
                 if eff not in pv:
@@ -1374,7 +1444,8 @@ def run(path: str | Path, packs: Iterable[str] = ('common',), variant: str | Non
         'file': doc.path.name, 'kind': doc.kind, 'packs': [p['id'] for p in resolved], 'variant': variant or next((next(iter(p['variants'])) for p in resolved if p.get('variants')), None),
         'files': doc.files, 'unreached_tex': doc.unreached, 'sections': len(doc.sections), 'citations': sum(len(c['keys']) for c in doc.cites),
         'references': len(doc.bib), 'figures': sum(1 for f in doc.floats if f['kind'] == 'figure'), 'tables': sum(1 for f in doc.floats if f['kind'] == 'table'),
-        'notes': doc.notes,
+        'notes': doc.notes + (['PDF 只做页数、元数据和章节检查；正文内容检查请对源文件（.tex / .docx）运行'] if doc.kind == 'pdf' else []),
+        'stage': stage,
     }
     return {'summary': summary, 'findings': findings, 'verify': verify, 'skipped_rules': skipped,
             'counts': {s: sum(1 for f in findings if f['severity'] == s) for s in ('error', 'warning', 'info')}}
@@ -1384,7 +1455,7 @@ def format_report(rep: dict, max_items: int = 80) -> str:
     s = rep['summary']
     c = rep['counts']
     lines = [f'# 稿件检查报告：{s["file"]}',
-             f'规则包：{", ".join(s["packs"])}{"（" + s["variant"] + "）" if s.get("variant") else ""} · 错误 {c["error"]} · 提醒 {c["warning"]} · 提示 {c["info"]}',
+             f'规则包：{", ".join(s["packs"])}{"（" + s["variant"] + "）" if s.get("variant") else ""}{" · 终稿" if s.get("stage") == "camera-ready" else ""} · 错误 {c["error"]} · 提醒 {c["warning"]} · 提示 {c["info"]}',
              f'结构：{s["sections"]} 个标题，{s["figures"]} 图，{s["tables"]} 表，{s["references"]} 条参考文献，{s["citations"]} 次引用']
     if s.get('files') and len(s['files']) > 1:
         lines.append(f'参与编译的文件：{", ".join(s["files"])}')
@@ -1466,13 +1537,14 @@ def _cli(argv: list[str]) -> int:
     c.add_argument('--variant')
     c.add_argument('--out')
     c.add_argument('--annotate', action='store_true')
+    c.add_argument('--stage', default='submission', choices=STAGES)
     sub.add_parser('packs')
     a = ap.parse_args(argv)
     if a.cmd == 'packs':
         print(json.dumps([{'id': n, 'name': load_pack(n).get('name'), 'variants': list((load_pack(n).get('variants') or {}).keys()),
                            'rules': len(load_pack(n).get('rules') or []), 'verify': len(load_pack(n).get('verify') or [])} for n in list_packs()], ensure_ascii=False))
         return 0
-    rep = run(a.file, a.pack or ['common'], a.variant)
+    rep = run(a.file, a.pack or ['common'], a.variant, stage=a.stage)
     if a.out:
         out = Path(a.out)
         out.mkdir(parents=True, exist_ok=True)

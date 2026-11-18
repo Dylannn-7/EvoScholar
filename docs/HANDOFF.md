@@ -254,6 +254,12 @@ python3 evals/bench.py advance <dir>                                   # L10、D
 - **注意**：W08 是**验收**任务。我看了它的输入，把「致谢里的单位 / 实验室名称」加进了匿名检查（通用改进），之后用引擎输出判分 pass。所以 W08 已经不能算独立的验收证据；其余验收任务没有动过。
 - **g-0006 补跑（11-18 19:00 非高峰，¥0.31）**：L01–L10、W01–W10 共 16/20 通过；与 g-0005 逐题对比无退步、无修复，失败的 L05、L07、W05、W08 在 g-0005 下也失败。
 - **第 6 天冒烟（g-0007，dev，¥0.09）**：W01–W07 6/7（W05 失败，与 g-0006 相同）。但这 7 题里智能体**没有调用 manuscript_check**，新技能只在 W02 读过（research-integrity）：短任务靠通用工具就能完成，所以冒烟只说明没有退步，不能证明检查引擎的价值，要在真实稿件上测。
+- **关卡（真实稿件）进行中**：用户提供 DPO（NeurIPS 2023，arXiv 2305.18290v3）LaTeX 源码，解压在 `data/manuscripts/dpo-2305.18290v3/`（git 忽略，并已编译出 main.pdf）。
+  - 第一版 common 包报 29 条，其中 22 条是规则实现的误报：`\vspace{-2mm}` 当成数值单位、`\ref{a-1}-\ref{a-3}` 范围引用没识别、`\textit{全称} (缩写)` / `(CDB; \cite…)` 的定义没识别、Preferred-FT / PPO-GT / GPT-4 / TL;DR / CNN/DailyMail 当成缩写、导言区 `\newcommand` 当成使用、不是定义的「(DPO)」当成冲突定义。全部修复并补了回归测试，降到 7 条。
+  - 新增：没有 .bib 时读取 .bbl；PDF 只做页数 / 元数据 / 章节检查（PDF 抽取的文字做内容检查噪声太大）；`stage`（submission / camera-ready）：终稿不查匿名，页数上限按会议说明 +1（NeurIPS 10、ICML 9、ICLR 10）。
+  - 报告：`check-tex-camera-ready/`、`check-tex-submission/`、`check-pdf-*/`（各含 report.json / report.md，tex 的含批注副本）。
+  - **用户标记结果（同意初判）**：有效 3（图未引用、表无标题、LLM 未定义）、误报 3（KL、MLE、GPT 未定义）、不确定 2（2025 checklist 不适用于 2023 稿件；缩写在摘要中先用）。总误报率 50%，但误报全部来自提示级规则 `common.abbreviations.undefined`（75%）；错误 / 提醒级规则 0 误报。下一步可以考虑：公知缩写默认不报，或把这条规则默认关闭。
+  - 还没测：中文学位论文 / 中文期刊 / GB/T 7714 规则需要一篇中文稿件。
 - 「有效 / 误报」标记：工具 `check_feedback`（用户在对话里说「F003 是误报」时由智能体记录）、CLI `es mark <report.json> F001,F003 fp [原因]`、`es check-stats`（各规则误报率）。数据存在 events 表，type 为 `host.check.feedback`。
 - 注意：技能是看过 W01–W10 的任务说明（不含答案）后写的；W07 计页口径没有写死。
 
