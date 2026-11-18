@@ -13,9 +13,11 @@ import {
 import { Ledger } from './budget'
 import type { BudgetCategory, Workspace } from './config'
 import { openDb, type Db } from './db'
-import { GenomeRepo, PROTECTED_LIMITS, roleFor, type HarnessGenome } from './genome'
+import { GenomeRepo, PROTECTED_LIMITS, modelFor, stageRole, type HarnessGenome } from './genome'
 import { meterModel } from './metering'
-import { createModel, modelInfo } from './providers'
+import { createModel, defaultModelRef, modelInfo } from './providers'
+import { permissionGate } from './permissions'
+import type { PermissionMode } from './config'
 import { buildTools, stopAllProcesses, type ToolEnv } from './tools'
 import { TrajectoryRecorder, textOf } from './trajectory'
 import { skillIndex } from './skills'
@@ -31,6 +33,9 @@ export function openRuntime(ws: Workspace, onAlert?: (m: string) => void): Runti
 export type ResearchSession = {
   id: string
   cwd: string
+  /** Model ref and effort the session was opened with. */
+  model: string
+  effort?: string
   genome: HarnessGenome
   session: AgentSession
   recorder: TrajectoryRecorder
@@ -54,17 +59,31 @@ export async function openResearchSession(
     approve?: ToolEnv['approve']
     /** Working directory for file/process tools. Defaults to data/projects/<sessionId>. */
     cwd?: string
+    /** Model ref chosen in the composer; overrides the user's default model. */
+    model?: string
+    /** Raw reasoning effort value for `model`. */
+    effort?: string
+    /** Permission mode, read on every approval (can change between turns). */
+    permission?: () => PermissionMode
+    /** Folder (relative to cwd) where deliverables should be written. */
+    outputDir?: string
+    /** Files a tool created or modified (relative to cwd). */
+    onFiles?: (paths: string[]) => void
   } = {}
 ): Promise<ResearchSession> {
   const genome = opts.genome ?? rt.genomes.load()
   const sessionId = opts.sessionId ?? `s-${new Date().toISOString().slice(0, 10)}-${randomUUID().slice(0, 8)}`
   const category = opts.category ?? 'usage'
-  const ref = roleFor(genome, opts.stage)
+  const ref = modelFor(genome, stageRole(genome, opts.stage), {
+    defaults: rt.ws.settings?.defaults,
+    session: opts.model,
+    fallback: defaultModelRef(rt.ws.config)
+  })
   const recorder = new TrajectoryRecorder(rt.db, sessionId, genome.id, { category, title: opts.title, stage: opts.stage })
   const info = modelInfo(rt.ws.config, ref)
   const enforceCap = category !== 'usage' || !!rt.ws.config.budget.enforceUsageCap
   const model = meterModel(
-    createModel(rt.ws.config, ref, { parameters: genome.routing.parameters?.[ref] }),
+    createModel(rt.ws.config, ref, { parameters: genome.routing.parameters?.[ref], effort: opts.effort }),
     { ledger: rt.ledger, modelRef: ref, contextWindow: info.contextWindow, imageInputTokenCap: info.imageInputTokenCap,
       enforceCap, category: () => category, sessionId, genomeId: genome.id, onWarning: opts.onWarning }
   )
@@ -76,7 +95,10 @@ export async function openResearchSession(
     appendFileSync(traceFile, JSON.stringify(row) + '\n')
     recorder.hostEvent(row)
   }
-  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, skills: genome.skills, approve: opts.approve, trace }
+  const approve = permissionGate(opts.permission ?? (() => 'ask'), opts.approve)
+  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, skills: genome.skills, approve, trace, model: ref, onFiles: opts.onFiles }
+  const platform = process.platform === 'win32' ? 'Windows（命令用 PowerShell 语法）' : process.platform === 'darwin' ? 'macOS' : 'Linux'
+  const outputNote = opts.outputDir ? `\n- 交付文件（图、表、文稿、数据结果）写到 ${opts.outputDir}/ 下；用户上传的文件在 evoscholar-in/ 下；不要改动项目里其他已有文件，除非用户明确要求` : ''
   const tools = buildTools(genome.tools.enabled, env, genome.tools.overrides, (s) => rt.genomes.text(s))
   const workflow = openWorkflow(genome, env, model, opts.stage)
   const b = genome.budgets
@@ -90,7 +112,7 @@ export async function openResearchSession(
     sessionId,
     model: workflow?.model ?? model,
     tools: [...tools, ...(workflow?.tools ?? [])],
-    instructions: rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, genome.skills) + (workflow?.instructions ?? '') + `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）\n- 日期：${new Date().toISOString().slice(0, 10)}`,
+    instructions: rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, genome.skills) + (workflow?.instructions ?? '') + `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）${outputNote}\n- 系统：${platform}\n- 日期：${new Date().toISOString().slice(0, 10)}`,
     store: createJournalAgentStore({ directory: join(rt.ws.dataDir, 'sessions') }),
     maxSteps: b.maxSteps,
     maxOutputTokens,
@@ -113,6 +135,8 @@ export async function openResearchSession(
   return {
     id: sessionId,
     cwd,
+    model: ref,
+    effort: opts.effort,
     genome,
     session,
     recorder,

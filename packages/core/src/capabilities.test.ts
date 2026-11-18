@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { clearLiveModelCache, getCapabilities, openRuntime, openWorkspace, recordCheckFeedback, refreshProviderModels, resolveProviderParameters, listProviders } from './index'
+import { fetchProviderModels, getCapabilities, openRuntime, openWorkspace, recordCheckFeedback, resolveProviderParameters, listProviders, saveSettings } from './index'
 import { BudgetError, Ledger } from './budget'
 
 const REPO = resolve(__dirname, '../../..')
@@ -74,9 +74,11 @@ test('provider effort translation and live model list refresh', async () => {
         ]
       })) as unknown as typeof fetch
 
-    const res = await refreshProviderModels(ws.config, 'deepseek', mockFetch)
-    assert.equal(res.refreshed, true)
-    assert.equal(res.count, 2)
+    const res = await fetchProviderModels(ws.config, 'deepseek', mockFetch)
+    assert.ok(res.ok)
+    assert.equal(res.models.length, 2)
+    ws.settings.providers.deepseek = { models: res.models, modelsFetchedAt: new Date().toISOString() }
+    saveSettings(ws)
     const ds = listProviders(ws.config).find((p) => p.id === 'deepseek')!
     assert.equal(ds.modelsSource, 'live')
     assert.deepEqual(
@@ -90,8 +92,8 @@ test('provider effort translation and live model list refresh', async () => {
     assert.equal(ds.models[1].contextWindow, 256000)
     assert.equal(ds.models[1].maxOutputTokens, 65536)
     assert.deepEqual(ds.models[1].reasoningEffort, { supported: true, values: ['none', 'low', 'medium', 'high'] })
+    assert.equal(openWorkspace(dir).settings.providers.deepseek.models?.length, 2, 'fetched models persist in data/settings.json')
   } finally {
-    clearLiveModelCache()
     if (oldKey === undefined) delete process.env.DEEPSEEK_API_KEY
     else process.env.DEEPSEEK_API_KEY = oldKey
     rmSync(dir, { recursive: true, force: true })

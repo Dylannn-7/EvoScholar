@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { HarnessGenome } from '../genome'
+import { modelFor, type HarnessGenome } from '../genome'
 import type { Runtime } from '../session'
 import { skillNameValid } from '../skills'
 import { workflowOperators, type WorkflowOperator } from '../workflow-plan'
@@ -144,7 +144,7 @@ export async function reflect(
 失败任务（${failed.length} 个）：
 
 ${failed.map(({ c, r }) => dossier(rt, c, r)).join('\n\n---\n\n')}`
-  const ref = genome.routing.roles.reflector ?? genome.routing.roles.main
+  const ref = modelFor(genome, 'reflector', { defaults: rt.ws.settings?.defaults })
   const call = (extra = '') => complete(rt, ref, REFLECTOR + extra, user, { category: 'evolution', genomeId: genome.id, signal, maxOutputTokens: 8000 })
   let text = await call()
   if (dumpDir) writeFileSync(join(dumpDir, 'reflector.txt'), text)

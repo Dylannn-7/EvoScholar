@@ -1,2185 +1,2267 @@
 [
- {
-  "id": "openai",
-  "label": "OpenAI",
-  "apiEndpoints": [
-   "responses"
-  ],
-  "baseUrl": "https://api.openai.com",
-  "apiKeyUrl": "https://platform.openai.com/api-keys",
-  "models": [
-   {
-    "id": "gpt-6.1-sol",
-    "contextWindow": 1050000,
+  {
+    "id": "openai",
+    "label": "OpenAI",
+    "defaultProtocol": "responses",
+    "bases": {
+      "responses": "https://api.openai.com/v1",
+      "chat-completions": "https://api.openai.com/v1"
+    },
+    "apiKeyUrl": "https://platform.openai.com/api-keys",
     "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.6-sol",
-    "contextWindow": 1050000,
+      "supported": true,
+      "values": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    "models": [
+      {
+        "id": "gpt-6.1-sol",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.6-sol",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "ultra"
+          ]
+        }
+      },
+      {
+        "id": "gpt-6-astra",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-6.1-terra",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-6-sol",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-6-luna",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.6-terra",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "ultra"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.6-luna",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.5",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.4",
+        "contextWindow": 1050000
+      },
+      {
+        "id": "gpt-5.4-mini",
+        "contextWindow": 400000
+      }
+    ]
+  },
+  {
+    "id": "anthropic",
+    "label": "Anthropic",
+    "defaultProtocol": "messages",
+    "bases": {
+      "messages": "https://api.anthropic.com",
+      "chat-completions": "https://api.anthropic.com/v1"
+    },
+    "modelsListUrl": "https://api.anthropic.com/v1/models",
+    "apiKeyUrl": "https://console.anthropic.com/settings/keys",
     "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "ultra"
-     ]
-    }
-   },
-   {
-    "id": "gpt-6-astra",
-    "contextWindow": 1050000,
+      "supported": true,
+      "values": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "models": [
+      {
+        "id": "claude-opus-5-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "claude-opus-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "claude-fable-5-2",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "claude-fable-5-1",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "claude-opus-4-8",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "claude-sonnet-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "claude-sonnet-5-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "claude-haiku-5-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "claude-haiku-4-5-20251001",
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000,
+        "reasoningEffort": {
+          "supported": false
+        }
+      }
+    ]
+  },
+  {
+    "id": "deepseek",
+    "label": "DeepSeek",
+    "defaultProtocol": "chat-completions",
+    "bases": {
+      "chat-completions": "https://api.deepseek.com/v1",
+      "messages": "https://api.deepseek.com/anthropic"
+    },
+    "modelsListUrl": "https://api.deepseek.com/models",
+    "apiKeyUrl": "https://platform.deepseek.com/api_keys",
     "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-6.1-terra",
-    "contextWindow": 1050000,
+      "supported": true,
+      "values": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    "models": [
+      {
+        "id": "deepseek-flash",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 384000
+      },
+      {
+        "id": "deepseek-v4-pro",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 384000
+      },
+      {
+        "id": "deepseek-v4-flash",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 384000
+      },
+      {
+        "id": "deepseek-v4-flash-vision-exp",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 384000
+      }
+    ]
+  },
+  {
+    "id": "bailian",
+    "label": "Bailian",
+    "defaultProtocol": "chat-completions",
+    "regions": [
+      {
+        "id": "china",
+        "label": "China",
+        "bases": {
+          "chat-completions": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          "messages": "https://dashscope.aliyuncs.com/apps/anthropic"
+        }
+      },
+      {
+        "id": "global",
+        "label": "Global",
+        "bases": {
+          "chat-completions": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
+          "messages": "https://dashscope-us.aliyuncs.com/apps/anthropic"
+        }
+      }
+    ],
+    "bases": {
+      "chat-completions": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "messages": "https://dashscope.aliyuncs.com/apps/anthropic"
+    },
     "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-6-sol",
-    "contextWindow": 1050000,
+      "supported": false
+    },
+    "models": [
+      {
+        "id": "qwen3.8-max",
+        "contextWindow": 983616,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "qwen3.7-plus",
+        "contextWindow": 1000000
+      },
+      {
+        "id": "qwen3.7-max",
+        "contextWindow": 1000000
+      },
+      {
+        "id": "qwen3.7-flash",
+        "contextWindow": 1000000
+      },
+      {
+        "id": "qwen3.6-plus",
+        "contextWindow": 1000000
+      },
+      {
+        "id": "qwen3.6-flash",
+        "contextWindow": 1000000
+      },
+      {
+        "id": "deepseek-v4-flash-0731",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 384000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "deepseek-v4-pro",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 384000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "deepseek-v4-flash",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 384000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "high",
+            "max"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "zhipu",
+    "label": "Zhipu AI (GLM)",
+    "defaultProtocol": "chat-completions",
+    "regions": [
+      {
+        "id": "global",
+        "label": "Global (Z.AI)",
+        "bases": {
+          "chat-completions": "https://api.z.ai/api/paas/v4",
+          "messages": "https://api.z.ai/api/anthropic"
+        }
+      },
+      {
+        "id": "china",
+        "label": "China (BigModel)",
+        "bases": {
+          "chat-completions": "https://open.bigmodel.cn/api/paas/v4",
+          "messages": "https://open.bigmodel.cn/api/anthropic"
+        }
+      }
+    ],
+    "bases": {
+      "chat-completions": "https://api.z.ai/api/paas/v4",
+      "messages": "https://api.z.ai/api/anthropic"
+    },
     "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-6-luna",
-    "contextWindow": 1050000,
+      "supported": false
+    },
+    "models": [
+      {
+        "id": "glm-5.3-flash",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5.3",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5.2",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5.1",
+        "contextWindow": 200000,
+        "maxOutputTokens": 131072
+      },
+      {
+        "id": "glm-5",
+        "contextWindow": 200000,
+        "maxOutputTokens": 131072
+      },
+      {
+        "id": "glm-5v-turbo",
+        "contextWindow": 200000,
+        "maxOutputTokens": 131072
+      },
+      {
+        "id": "glm-5-turbo",
+        "contextWindow": 200000,
+        "maxOutputTokens": 131072
+      },
+      {
+        "id": "glm-4.5-air",
+        "contextWindow": 128000,
+        "maxOutputTokens": 98304
+      }
+    ]
+  },
+  {
+    "id": "kimi",
+    "label": "Kimi (Moonshot)",
+    "defaultProtocol": "chat-completions",
+    "bases": {
+      "chat-completions": "https://api.moonshot.cn/v1",
+      "messages": "https://api.moonshot.cn/anthropic"
+    },
+    "modelsListUrl": "https://api.moonshot.cn/v1/models",
+    "apiKeyUrl": "https://platform.kimi.com/console",
     "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.6-terra",
-    "contextWindow": 1050000,
+      "supported": true,
+      "values": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "models": [
+      {
+        "id": "kimi-k3.1-pro",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 1048576,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "kimi-k3",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 1048576
+      },
+      {
+        "id": "kimi-k3.1-pro-highspeed",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 1048576,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "kimi-k2.7-code",
+        "contextWindow": 256000,
+        "maxOutputTokens": 262144
+      },
+      {
+        "id": "kimi-k2.6",
+        "contextWindow": 256000,
+        "maxOutputTokens": 262144
+      },
+      {
+        "id": "kimi-k2.5",
+        "contextWindow": 256000
+      }
+    ]
+  },
+  {
+    "id": "minimax",
+    "label": "MiniMax",
+    "defaultProtocol": "messages",
+    "regions": [
+      {
+        "id": "global",
+        "label": "Global",
+        "bases": {
+          "chat-completions": "https://api.minimax.io/v1",
+          "messages": "https://api.minimax.io/anthropic",
+          "responses": "https://api.minimax.io/v1"
+        }
+      },
+      {
+        "id": "china",
+        "label": "China",
+        "bases": {
+          "chat-completions": "https://api.minimaxi.com/v1",
+          "messages": "https://api.minimaxi.com/anthropic",
+          "responses": "https://api.minimaxi.com/v1"
+        }
+      }
+    ],
+    "bases": {
+      "chat-completions": "https://api.minimax.io/v1",
+      "messages": "https://api.minimax.io/anthropic",
+      "responses": "https://api.minimax.io/v1"
+    },
     "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "ultra"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.6-luna",
-    "contextWindow": 1050000,
+      "supported": false
+    },
+    "models": [
+      {
+        "id": "MiniMax-M3.1-Flash",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "MiniMax-M3",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "MiniMax-M3.1-Flash-Preview",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "MiniMax-M2.7",
+        "contextWindow": 204800
+      },
+      {
+        "id": "MiniMax-M2.5",
+        "contextWindow": 204800
+      }
+    ]
+  },
+  {
+    "id": "volcengine",
+    "label": "Volcengine Ark",
+    "defaultProtocol": "chat-completions",
+    "bases": {
+      "chat-completions": "https://ark.cn-beijing.volces.com/api/v3",
+      "messages": "https://ark.cn-beijing.volces.com/api/compatible",
+      "responses": "https://ark.cn-beijing.volces.com/api/v3"
+    },
+    "apiKeyUrl": "https://console.volcengine.com/ark/region:ark+cn-beijing/apikey",
     "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.5",
-    "contextWindow": 1050000,
+      "supported": true,
+      "values": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "models": [
+      {
+        "id": "doubao-seed-2-1-pro-260915",
+        "contextWindow": 1024000
+      },
+      {
+        "id": "deepseek-v4-1-flash-260910",
+        "contextWindow": 1024000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5-3-flash-260828",
+        "contextWindow": 1024000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "doubao-seed-2-1-pro-260628",
+        "contextWindow": 256000
+      },
+      {
+        "id": "doubao-seed-2-1-turbo-260628",
+        "contextWindow": 256000
+      },
+      {
+        "id": "doubao-seed-2-0-pro-260215",
+        "contextWindow": 256000
+      },
+      {
+        "id": "doubao-seed-2-0-lite-260215",
+        "contextWindow": 256000
+      },
+      {
+        "id": "doubao-seed-2-0-mini-260215",
+        "contextWindow": 256000
+      },
+      {
+        "id": "doubao-seed-2-0-code-preview-260215",
+        "contextWindow": 256000
+      }
+    ]
+  },
+  {
+    "id": "opencode-go",
+    "label": "OpenCode Go",
+    "defaultProtocol": "chat-completions",
+    "bases": {
+      "chat-completions": "https://opencode.ai/zen/go/v1"
+    },
+    "apiKeyUrl": "https://opencode.ai/zen",
     "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.4",
-    "contextWindow": 1050000
-   },
-   {
-    "id": "gpt-5.4-mini",
-    "contextWindow": 400000
-   }
-  ],
-  "reasoningEffort": {
-   "supported": true,
-   "values": [
-    "low",
-    "medium",
-    "high",
-    "xhigh"
-   ]
+      "supported": false
+    },
+    "models": [
+      {
+        "id": "kimi-k2.7-code",
+        "contextWindow": 262144
+      },
+      {
+        "id": "grok-4.7",
+        "contextWindow": 500000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "grok-4.6",
+        "contextWindow": 500000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.6-luna",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5.3-flash",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5.3",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5.2",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5.1",
+        "contextWindow": 202752
+      },
+      {
+        "id": "kimi-k3",
+        "contextWindow": 1048576
+      },
+      {
+        "id": "kimi-k2.6",
+        "contextWindow": 262144
+      },
+      {
+        "id": "longcat-2.0",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "deepseek-v4.1-flash",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "deepseek-v4-pro",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "deepseek-v4-flash",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "deepseek-v4-flash-vision-exp",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "mimo-v2.6-flash",
+        "contextWindow": 1048576
+      },
+      {
+        "id": "mimo-v2.6-pro",
+        "contextWindow": 1048576
+      },
+      {
+        "id": "mimo-v2.5",
+        "contextWindow": 1000000
+      },
+      {
+        "id": "mimo-v2.5-pro",
+        "contextWindow": 1048576
+      },
+      {
+        "id": "minimax-m3",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "muse-spark-1.3-contributor",
+        "contextWindow": 1048576,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "muse-spark-1.2-contributor",
+        "contextWindow": 1048576,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "qwen3.8-max",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "qwen3.8-flash",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "qwen3.7-max",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "qwen3.7-plus",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 65536,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "hy4-preview",
+        "contextWindow": 1024000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "hy3",
+        "contextWindow": 256000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "opencode",
+    "label": "OpenCode Zen",
+    "defaultProtocol": "chat-completions",
+    "bases": {
+      "chat-completions": "https://opencode.ai/zen/v1"
+    },
+    "apiKeyUrl": "https://opencode.ai/zen",
+    "reasoningEffort": {
+      "supported": false
+    },
+    "models": [
+      {
+        "id": "kimi-k2.7-code",
+        "contextWindow": 262144
+      },
+      {
+        "id": "gpt-6-astra",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-6.1-sol",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-6-sol",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-6-luna",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.6-sol",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.6-terra",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.6-luna",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "claude-fable-5-1",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "claude-fable-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "claude-opus-5-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "claude-opus-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "claude-sonnet-5-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "claude-sonnet-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "grok-4.7",
+        "contextWindow": 500000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "grok-4.6",
+        "contextWindow": 500000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.5",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.5-pro",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.4",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.4-pro",
+        "contextWindow": 1050000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.4-mini",
+        "contextWindow": 400000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.4-nano",
+        "contextWindow": 400000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.3-codex",
+        "contextWindow": 400000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.3-codex-spark",
+        "contextWindow": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.2",
+        "contextWindow": 400000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.1",
+        "contextWindow": 400000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5",
+        "contextWindow": 400000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "gpt-5-nano",
+        "contextWindow": 400000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "claude-opus-4-8",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "claude-opus-4-7",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "claude-opus-4-6",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "claude-opus-4-5",
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "claude-sonnet-4-6",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "claude-sonnet-4-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000
+      },
+      {
+        "id": "claude-haiku-4-5",
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000
+      },
+      {
+        "id": "grok-4.5",
+        "contextWindow": 500000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "grok-build-0.1",
+        "contextWindow": 256000
+      },
+      {
+        "id": "muse-spark-1.3",
+        "contextWindow": 1048576,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "muse-spark-1.2",
+        "contextWindow": 1048576,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "qwen3.8-max",
+        "contextWindow": 262144,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "qwen3.8-flash",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "qwen3.7-max",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "qwen3.7-plus",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "qwen3.5-plus",
+        "contextWindow": 262144,
+        "maxOutputTokens": 65536,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "kimi-k3",
+        "contextWindow": 1048576
+      },
+      {
+        "id": "kimi-k2.6",
+        "contextWindow": 262144,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "deepseek-v4.1-flash",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "deepseek-v4-flash-vision-exp",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "deepseek-v4-flash",
+        "contextWindow": 1000000
+      },
+      {
+        "id": "deepseek-v4-pro",
+        "contextWindow": 1000000
+      },
+      {
+        "id": "minimax-m3",
+        "contextWindow": 512000
+      },
+      {
+        "id": "glm-5.3",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5.3-flash",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5.2",
+        "contextWindow": 1000000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "glm-5.1",
+        "contextWindow": 204800,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "big-pickle",
+        "contextWindow": 200000
+      },
+      {
+        "id": "mimo-v2.5-free",
+        "contextWindow": 200000
+      }
+    ]
+  },
+  {
+    "id": "openrouter",
+    "label": "OpenRouter",
+    "defaultProtocol": "chat-completions",
+    "bases": {
+      "chat-completions": "https://openrouter.ai/api/v1",
+      "responses": "https://openrouter.ai/api/v1",
+      "messages": "https://openrouter.ai/api"
+    },
+    "apiKeyUrl": "https://openrouter.ai/workspaces/default/keys",
+    "reasoningEffort": {
+      "supported": false
+    },
+    "models": [
+      {
+        "id": "anthropic/claude-opus-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "anthropic/claude-opus-5.5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "anthropic/claude-sonnet-5.5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "anthropic/claude-fable-5.1",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "anthropic/claude-opus-4.8",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "anthropic/claude-sonnet-5",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "anthropic/claude-haiku-4.5",
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000,
+        "reasoningEffort": {
+          "supported": false
+        }
+      },
+      {
+        "id": "openai/gpt-6.1-sol",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-6.1-sol-pro",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-6-astra",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-6-astra-pro",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-6-luna",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-6-luna-pro",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-5.6-terra-pro",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-5.6-terra",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-5.6-sol-pro",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-5.6-sol",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-5.6-luna-pro",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-5.6-luna",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-5.5-pro",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-5.5",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "openai/gpt-5.3-codex",
+        "contextWindow": 400000,
+        "maxOutputTokens": 128000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "x-ai/grok-4.7",
+        "contextWindow": 500000,
+        "maxOutputTokens": 450000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "deepseek/deepseek-v4.1-flash",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 943718,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "z-ai/glm-5.3",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 943718,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "z-ai/glm-5.3-flash",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "qwen/qwen3.8-max-0902",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "minimax/minimax-m3",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 512000,
+        "reasoningEffort": {
+          "supported": false
+        }
+      },
+      {
+        "id": "xiaomi/mimo-v2.6-pro",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": false
+        }
+      },
+      {
+        "id": "xiaomi/mimo-v2.6-flash",
+        "contextWindow": 1050000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": false
+        }
+      },
+      {
+        "id": "google/gemini-3.1-pro-preview",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 65536,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "google/gemini-3.6-flash",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 65536,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "google/gemini-3.5-flash",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 65536,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "x-ai/grok-4.5",
+        "contextWindow": 500000,
+        "maxOutputTokens": 450000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "deepseek/deepseek-v4-pro",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 384000,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "z-ai/glm-5.2",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 943718,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high",
+            "xhigh"
+          ]
+        }
+      },
+      {
+        "id": "moonshotai/kimi-k3",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 943718,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      },
+      {
+        "id": "qwen/qwen3.7-max",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 131072,
+        "reasoningEffort": {
+          "supported": true,
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      },
+      {
+        "id": "openrouter/free",
+        "contextWindow": 200000,
+        "reasoningEffort": {
+          "supported": false
+        }
+      },
+      {
+        "id": "google/gemma-4-31b-it:free",
+        "contextWindow": 262144,
+        "maxOutputTokens": 32768,
+        "reasoningEffort": {
+          "supported": false
+        }
+      }
+    ]
+  },
+  {
+    "id": "gemini",
+    "label": "Google Gemini",
+    "defaultProtocol": "gemini",
+    "bases": {
+      "gemini": "https://generativelanguage.googleapis.com/v1beta",
+      "chat-completions": "https://generativelanguage.googleapis.com/v1beta/openai"
+    },
+    "modelsListUrl": "https://generativelanguage.googleapis.com/v1beta/models",
+    "apiKeyUrl": "https://aistudio.google.com/apikey",
+    "reasoningEffort": {
+      "supported": true,
+      "values": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "models": [
+      {
+        "id": "gemini-3-pro-preview",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 65536
+      },
+      {
+        "id": "gemini-3-flash-preview",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 65536
+      },
+      {
+        "id": "gemini-2.5-pro",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 65536
+      },
+      {
+        "id": "gemini-2.5-flash",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 65536
+      }
+    ]
+  },
+  {
+    "id": "azure",
+    "label": "Azure OpenAI",
+    "defaultProtocol": "chat-completions",
+    "authHeader": "api-key",
+    "bases": {
+      "chat-completions": "https://<resource>.openai.azure.com/openai/v1",
+      "responses": "https://<resource>.openai.azure.com/openai/v1"
+    },
+    "apiKeyUrl": "https://portal.azure.com",
+    "reasoningEffort": {
+      "supported": true,
+      "values": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "models": []
   }
- },
- {
-  "id": "anthropic",
-  "label": "Anthropic",
-  "baseUrl": "https://api.anthropic.com",
-  "apiKeyUrl": "https://console.anthropic.com/settings/keys",
-  "models": [
-   {
-    "id": "claude-opus-5-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000
-   },
-   {
-    "id": "claude-opus-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000
-   },
-   {
-    "id": "claude-fable-5-2",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000
-   },
-   {
-    "id": "claude-fable-5-1",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000
-   },
-   {
-    "id": "claude-opus-4-8",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000
-   },
-   {
-    "id": "claude-sonnet-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000
-   },
-   {
-    "id": "claude-sonnet-5-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000
-   },
-   {
-    "id": "claude-haiku-5-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000
-   },
-   {
-    "id": "claude-haiku-4-5-20251001",
-    "contextWindow": 200000,
-    "maxOutputTokens": 64000,
-    "reasoningEffort": {
-     "supported": false
-    }
-   }
-  ],
-  "modelsListUrl": "https://api.anthropic.com/v1/models",
-  "reasoningEffort": {
-   "supported": true,
-   "values": [
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max"
-   ]
-  }
- },
- {
-  "id": "deepseek",
-  "label": "DeepSeek",
-  "apiEndpoints": [
-   "messages",
-   "chat-completions"
-  ],
-  "baseUrl": "https://api.deepseek.com/anthropic",
-  "chatCompletionsBaseUrl": "https://api.deepseek.com/v1",
-  "apiKeyUrl": "https://platform.deepseek.com/api_keys",
-  "models": [
-   {
-    "id": "deepseek-flash",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 384000
-   },
-   {
-    "id": "deepseek-v4-pro",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 384000
-   },
-   {
-    "id": "deepseek-v4-flash",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 384000
-   },
-   {
-    "id": "deepseek-v4-flash-vision-exp",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 384000
-   }
-  ],
-  "modelsListUrl": "https://api.deepseek.com/v1/models",
-  "reasoningEffort": {
-   "supported": true,
-   "values": [
-    "none",
-    "low",
-    "high",
-    "max"
-   ]
-  }
- },
- {
-  "id": "bailian",
-  "label": "Bailian",
-  "apiEndpoints": [
-   "messages",
-   "chat-completions"
-  ],
-  "regions": [
-   {
-    "id": "china",
-    "label": "China",
-    "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic/v1/messages",
-    "chatCompletionsBaseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1"
-   },
-   {
-    "id": "global",
-    "label": "Global",
-    "baseUrl": "https://dashscope-us.aliyuncs.com/apps/anthropic/v1/messages",
-    "chatCompletionsBaseUrl": "https://dashscope-us.aliyuncs.com/compatible-mode/v1"
-   }
-  ],
-  "models": [
-   {
-    "id": "qwen3.8-max",
-    "contextWindow": 983616,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "qwen3.7-plus",
-    "contextWindow": 1000000
-   },
-   {
-    "id": "qwen3.7-max",
-    "contextWindow": 1000000
-   },
-   {
-    "id": "qwen3.7-flash",
-    "contextWindow": 1000000
-   },
-   {
-    "id": "qwen3.6-plus",
-    "contextWindow": 1000000
-   },
-   {
-    "id": "qwen3.6-flash",
-    "contextWindow": 1000000
-   },
-   {
-    "id": "deepseek-v4-flash-0731",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 384000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "deepseek-v4-pro",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 384000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "deepseek-v4-flash",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 384000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "high",
-      "max"
-     ]
-    }
-   }
-  ],
-  "reasoningEffort": {
-   "supported": false
-  }
- },
- {
-  "id": "zhipu",
-  "label": "Zhipu AI (GLM)",
-  "apiEndpoints": [
-   "messages",
-   "chat-completions"
-  ],
-  "regions": [
-   {
-    "id": "global",
-    "label": "Global (Z.AI)",
-    "baseUrl": "https://api.z.ai/api/anthropic",
-    "chatCompletionsBaseUrl": "https://api.z.ai/api/paas/v4"
-   },
-   {
-    "id": "china",
-    "label": "China (BigModel)",
-    "baseUrl": "https://open.bigmodel.cn/api/anthropic",
-    "chatCompletionsBaseUrl": "https://open.bigmodel.cn/api/paas/v4"
-   }
-  ],
-  "models": [
-   {
-    "id": "glm-5.3-flash",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5.3",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5.2",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5.1",
-    "contextWindow": 200000,
-    "maxOutputTokens": 131072
-   },
-   {
-    "id": "glm-5",
-    "contextWindow": 200000,
-    "maxOutputTokens": 131072
-   },
-   {
-    "id": "glm-5v-turbo",
-    "contextWindow": 200000,
-    "maxOutputTokens": 131072
-   },
-   {
-    "id": "glm-5-turbo",
-    "contextWindow": 200000,
-    "maxOutputTokens": 131072
-   },
-   {
-    "id": "glm-4.5-air",
-    "contextWindow": 128000,
-    "maxOutputTokens": 98304
-   }
-  ],
-  "reasoningEffort": {
-   "supported": false
-  }
- },
- {
-  "id": "kimi",
-  "label": "Kimi (Moonshot)",
-  "apiEndpoints": [
-   "messages",
-   "chat-completions"
-  ],
-  "baseUrl": "https://api.moonshot.cn/anthropic",
-  "chatCompletionsBaseUrl": "https://api.moonshot.cn/v1",
-  "apiKeyUrl": "https://platform.kimi.com/console",
-  "models": [
-   {
-    "id": "kimi-k3.1-pro",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 1048576,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "kimi-k3",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 1048576
-   },
-   {
-    "id": "kimi-k3.1-pro-highspeed",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 1048576,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "kimi-k2.7-code",
-    "contextWindow": 256000,
-    "maxOutputTokens": 262144
-   },
-   {
-    "id": "kimi-k2.6",
-    "contextWindow": 256000,
-    "maxOutputTokens": 262144
-   },
-   {
-    "id": "kimi-k2.5",
-    "contextWindow": 256000
-   }
-  ],
-  "modelsListUrl": "https://api.moonshot.cn/v1/models",
-  "reasoningEffort": {
-   "supported": true,
-   "values": [
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max"
-   ]
-  }
- },
- {
-  "id": "minimax",
-  "label": "MiniMax",
-  "apiEndpoints": [
-   "messages",
-   "chat-completions",
-   "responses"
-  ],
-  "regions": [
-   {
-    "id": "global",
-    "label": "Global",
-    "baseUrl": "https://api.minimax.io/anthropic",
-    "chatCompletionsBaseUrl": "https://api.minimax.io/v1"
-   },
-   {
-    "id": "china",
-    "label": "China",
-    "baseUrl": "https://api.minimaxi.com/anthropic",
-    "chatCompletionsBaseUrl": "https://api.minimaxi.com/v1"
-   }
-  ],
-  "models": [
-   {
-    "id": "MiniMax-M3.1-Flash",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "MiniMax-M3",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "MiniMax-M3.1-Flash-Preview",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "MiniMax-M2.7",
-    "contextWindow": 204800
-   },
-   {
-    "id": "MiniMax-M2.5",
-    "contextWindow": 204800
-   }
-  ],
-  "reasoningEffort": {
-   "supported": false
-  }
- },
- {
-  "id": "volcengine",
-  "label": "Volcengine Ark",
-  "apiEndpoints": [
-   "messages",
-   "chat-completions",
-   "responses"
-  ],
-  "baseUrl": "https://ark.cn-beijing.volces.com/api/compatible",
-  "chatCompletionsBaseUrl": "https://ark.cn-beijing.volces.com/api/v3",
-  "apiKeyUrl": "https://console.volcengine.com/ark/region:ark+cn-beijing/apikey",
-  "models": [
-   {
-    "id": "doubao-seed-2-1-pro-260915",
-    "contextWindow": 1024000
-   },
-   {
-    "id": "deepseek-v4-1-flash-260910",
-    "contextWindow": 1024000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5-3-flash-260828",
-    "contextWindow": 1024000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "doubao-seed-2-1-pro-260628",
-    "contextWindow": 256000
-   },
-   {
-    "id": "doubao-seed-2-1-turbo-260628",
-    "contextWindow": 256000
-   },
-   {
-    "id": "doubao-seed-2-0-pro-260215",
-    "contextWindow": 256000
-   },
-   {
-    "id": "doubao-seed-2-0-lite-260215",
-    "contextWindow": 256000
-   },
-   {
-    "id": "doubao-seed-2-0-mini-260215",
-    "contextWindow": 256000
-   },
-   {
-    "id": "doubao-seed-2-0-code-preview-260215",
-    "contextWindow": 256000
-   }
-  ],
-  "reasoningEffort": {
-   "supported": true,
-   "values": [
-    "minimal",
-    "low",
-    "medium",
-    "high"
-   ]
-  }
- },
- {
-  "id": "opencode-go",
-  "label": "OpenCode Go",
-  "apiEndpoints": [
-   "chat-completions"
-  ],
-  "baseUrl": "https://opencode.ai/zen/go/v1",
-  "apiKeyUrl": "https://opencode.ai/zen",
-  "models": [
-   {
-    "id": "kimi-k2.7-code",
-    "contextWindow": 262144
-   },
-   {
-    "id": "grok-4.7",
-    "contextWindow": 500000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "grok-4.6",
-    "contextWindow": 500000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.6-luna",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5.3-flash",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5.3",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5.2",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5.1",
-    "contextWindow": 202752
-   },
-   {
-    "id": "kimi-k3",
-    "contextWindow": 1048576
-   },
-   {
-    "id": "kimi-k2.6",
-    "contextWindow": 262144
-   },
-   {
-    "id": "longcat-2.0",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "deepseek-v4.1-flash",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "deepseek-v4-pro",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "deepseek-v4-flash",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "deepseek-v4-flash-vision-exp",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "mimo-v2.6-flash",
-    "contextWindow": 1048576
-   },
-   {
-    "id": "mimo-v2.6-pro",
-    "contextWindow": 1048576
-   },
-   {
-    "id": "mimo-v2.5",
-    "contextWindow": 1000000
-   },
-   {
-    "id": "mimo-v2.5-pro",
-    "contextWindow": 1048576
-   },
-   {
-    "id": "minimax-m3",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "muse-spark-1.3-contributor",
-    "contextWindow": 1048576,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "minimal",
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "muse-spark-1.2-contributor",
-    "contextWindow": 1048576,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "minimal",
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "qwen3.8-max",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "qwen3.8-flash",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "qwen3.7-max",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "qwen3.7-plus",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 65536,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "hy4-preview",
-    "contextWindow": 1024000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "hy3",
-    "contextWindow": 256000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   }
-  ],
-  "reasoningEffort": {
-   "supported": false
-  }
- },
- {
-  "id": "opencode",
-  "label": "OpenCode Zen",
-  "apiEndpoints": [
-   "chat-completions"
-  ],
-  "baseUrl": "https://opencode.ai/zen/v1",
-  "apiKeyUrl": "https://opencode.ai/zen",
-  "models": [
-   {
-    "id": "kimi-k2.7-code",
-    "contextWindow": 262144
-   },
-   {
-    "id": "gpt-6-astra",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-6.1-sol",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-6-sol",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-6-luna",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.6-sol",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.6-terra",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.6-luna",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "claude-fable-5-1",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "claude-fable-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "claude-opus-5-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "claude-opus-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "claude-sonnet-5-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "claude-sonnet-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "grok-4.7",
-    "contextWindow": 500000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "grok-4.6",
-    "contextWindow": 500000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.5",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.5-pro",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.4",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.4-pro",
-    "contextWindow": 1050000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.4-mini",
-    "contextWindow": 400000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.4-nano",
-    "contextWindow": 400000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.3-codex",
-    "contextWindow": 400000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.3-codex-spark",
-    "contextWindow": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.2",
-    "contextWindow": 400000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5.1",
-    "contextWindow": 400000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5",
-    "contextWindow": 400000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "minimal",
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "gpt-5-nano",
-    "contextWindow": 400000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "minimal",
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "claude-opus-4-8",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "claude-opus-4-7",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "claude-opus-4-6",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "claude-opus-4-5",
-    "contextWindow": 200000,
-    "maxOutputTokens": 64000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "claude-sonnet-4-6",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 64000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "claude-sonnet-4-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 64000
-   },
-   {
-    "id": "claude-haiku-4-5",
-    "contextWindow": 200000,
-    "maxOutputTokens": 64000
-   },
-   {
-    "id": "grok-4.5",
-    "contextWindow": 500000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "grok-build-0.1",
-    "contextWindow": 256000
-   },
-   {
-    "id": "muse-spark-1.3",
-    "contextWindow": 1048576,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "minimal",
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "muse-spark-1.2",
-    "contextWindow": 1048576,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "minimal",
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "qwen3.8-max",
-    "contextWindow": 262144,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "qwen3.8-flash",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "qwen3.7-max",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "qwen3.7-plus",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "qwen3.5-plus",
-    "contextWindow": 262144,
-    "maxOutputTokens": 65536,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "kimi-k3",
-    "contextWindow": 1048576
-   },
-   {
-    "id": "kimi-k2.6",
-    "contextWindow": 262144,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "deepseek-v4.1-flash",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "deepseek-v4-flash-vision-exp",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "deepseek-v4-flash",
-    "contextWindow": 1000000
-   },
-   {
-    "id": "deepseek-v4-pro",
-    "contextWindow": 1000000
-   },
-   {
-    "id": "minimax-m3",
-    "contextWindow": 512000
-   },
-   {
-    "id": "glm-5.3",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5.3-flash",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5.2",
-    "contextWindow": 1000000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "glm-5.1",
-    "contextWindow": 204800,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "big-pickle",
-    "contextWindow": 200000
-   },
-   {
-    "id": "mimo-v2.5-free",
-    "contextWindow": 200000
-   }
-  ],
-  "reasoningEffort": {
-   "supported": false
-  }
- },
- {
-  "id": "openrouter",
-  "label": "OpenRouter",
-  "apiEndpoints": [
-   "messages",
-   "chat-completions"
-  ],
-  "baseUrl": "https://openrouter.ai/api",
-  "chatCompletionsBaseUrl": "https://openrouter.ai/api/v1",
-  "apiKeyUrl": "https://openrouter.ai/workspaces/default/keys",
-  "models": [
-   {
-    "id": "anthropic/claude-opus-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "anthropic/claude-opus-5.5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "anthropic/claude-sonnet-5.5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "anthropic/claude-fable-5.1",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "anthropic/claude-opus-4.8",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "anthropic/claude-sonnet-5",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "anthropic/claude-haiku-4.5",
-    "contextWindow": 200000,
-    "maxOutputTokens": 64000,
-    "reasoningEffort": {
-     "supported": false
-    }
-   },
-   {
-    "id": "openai/gpt-6.1-sol",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-6.1-sol-pro",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-6-astra",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-6-astra-pro",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-6-luna",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-6-luna-pro",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-5.6-terra-pro",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-5.6-terra",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-5.6-sol-pro",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-5.6-sol",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-5.6-luna-pro",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-5.6-luna",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-5.5-pro",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-5.5",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "openai/gpt-5.3-codex",
-    "contextWindow": 400000,
-    "maxOutputTokens": 128000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "x-ai/grok-4.7",
-    "contextWindow": 500000,
-    "maxOutputTokens": 450000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "deepseek/deepseek-v4.1-flash",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 943718,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "z-ai/glm-5.3",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 943718,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "z-ai/glm-5.3-flash",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "qwen/qwen3.8-max-0902",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "minimax/minimax-m3",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 512000,
-    "reasoningEffort": {
-     "supported": false
-    }
-   },
-   {
-    "id": "xiaomi/mimo-v2.6-pro",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": false
-    }
-   },
-   {
-    "id": "xiaomi/mimo-v2.6-flash",
-    "contextWindow": 1050000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": false
-    }
-   },
-   {
-    "id": "google/gemini-3.1-pro-preview",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 65536,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "google/gemini-3.6-flash",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 65536,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "minimal",
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "google/gemini-3.5-flash",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 65536,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "minimal",
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "x-ai/grok-4.5",
-    "contextWindow": 500000,
-    "maxOutputTokens": 450000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "medium",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "deepseek/deepseek-v4-pro",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 384000,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "z-ai/glm-5.2",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 943718,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high",
-      "xhigh"
-     ]
-    }
-   },
-   {
-    "id": "moonshotai/kimi-k3",
-    "contextWindow": 1048576,
-    "maxOutputTokens": 943718,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "low",
-      "high",
-      "max"
-     ]
-    }
-   },
-   {
-    "id": "qwen/qwen3.7-max",
-    "contextWindow": 1000000,
-    "maxOutputTokens": 131072,
-    "reasoningEffort": {
-     "supported": true,
-     "values": [
-      "none",
-      "high"
-     ]
-    }
-   },
-   {
-    "id": "openrouter/free",
-    "contextWindow": 200000,
-    "reasoningEffort": {
-     "supported": false
-    }
-   },
-   {
-    "id": "google/gemma-4-31b-it:free",
-    "contextWindow": 262144,
-    "maxOutputTokens": 32768,
-    "reasoningEffort": {
-     "supported": false
-    }
-   }
-  ],
-  "reasoningEffort": {
-   "supported": false
-  }
- }
 ]

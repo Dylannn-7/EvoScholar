@@ -17,7 +17,7 @@ const PORT = Number(process.env.EVOSCHOLAR_PORT ?? 4317)
 const server = createServer(app.handler)
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`EvoScholar 工作台：http://127.0.0.1:${PORT}`)
-  console.log(`当前 genome：${rt.genomes.activeId()} · 已花费 ¥${rt.ledger.summary().totalCny.toFixed(4)} / ¥${ws.config.budget.totalCny}`)
+  console.log(`当前 genome：${rt.genomes.activeId()}`)
 })
 
 const shutdown = async () => {

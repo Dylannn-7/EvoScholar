@@ -17,7 +17,8 @@ export type HarnessGenome = {
   instructions: { system: string; stages?: Record<string, string>; compaction?: string }
   skills?: SkillRef[]
   routing: {
-    roles: Record<Role, string>
+    /** Legacy: model refs per role. Since v2 models come from user settings (decision A1). */
+    roles?: Partial<Record<Role, string>>
     rules?: { when: { stage?: string }; use: Role }[]
     parameters?: Record<string, Record<string, Json>>
   }
@@ -107,7 +108,7 @@ export class GenomeRepo {
 export function validateGenome(g: HarnessGenome): void {
   if (!g?.id || !/^g-[\w-]+$/.test(g.id)) throw new Error('Genome id must look like g-0001')
   if (!g.instructions?.system) throw new Error(`${g.id}: instructions.system is required`)
-  if (!g.routing?.roles?.main) throw new Error(`${g.id}: routing.roles.main is required`)
+  if (!g.routing || typeof g.routing !== 'object') throw new Error(`${g.id}: routing is required`)
   if (!Array.isArray(g.tools?.enabled)) throw new Error(`${g.id}: tools.enabled must be a list`)
   if (g.skills && (!Array.isArray(g.skills) || g.skills.some((s) =>
     !s || typeof s.name !== 'string' || !skillNameValid(s.name) || !Number.isSafeInteger(s.version) || s.version < 1
@@ -122,8 +123,32 @@ export function validateGenome(g: HarnessGenome): void {
   }
 }
 
-export function roleFor(g: HarnessGenome, stage?: string, fallback: Role = 'main'): string {
+/** Which role a stage uses (genome routing rules). */
+export function stageRole(g: HarnessGenome, stage?: string, fallback: Role = 'main'): Role {
   const rule = g.routing.rules?.find((r) => !r.when.stage || r.when.stage === stage)
-  const role = rule?.use ?? fallback
-  return g.routing.roles[role] ?? g.routing.roles.main
+  return rule?.use ?? fallback
+}
+
+export type ModelChoice = {
+  /** User settings defaults (settings.json). */
+  defaults?: { model?: string; fast?: string; vision?: string }
+  /** Model picked for this session in the composer. */
+  session?: string
+  /** Last resort when nothing is configured. */
+  fallback?: string
+}
+
+/** Resolve a role to a concrete model ref: session choice → user defaults → legacy genome roles. */
+export function modelFor(g: HarnessGenome, role: Role, c: ModelChoice = {}): string {
+  const legacy = g.routing.roles ?? {}
+  const main = c.session ?? c.defaults?.model ?? legacy.main ?? c.fallback
+  if (!main) throw new Error('还没有选择模型：请先在「设置 → 模型与密钥」里接入厂商并选择默认模型')
+  if (role === 'main') return main
+  if (role === 'vision') return c.defaults?.vision ?? (c.session ? main : legacy.vision ?? main)
+  return c.defaults?.fast ?? (c.session ? main : legacy[role] ?? legacy.fast ?? main)
+}
+
+/** Legacy helper: model ref for a stage. */
+export function roleFor(g: HarnessGenome, stage?: string, fallback: Role = 'main', c: ModelChoice = {}): string {
+  return modelFor(g, stageRole(g, stage, fallback), c)
 }

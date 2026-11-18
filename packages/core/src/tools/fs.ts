@@ -107,7 +107,7 @@ export const writeFile: ToolFactory = (env) => ({
     if (typeof a.content !== 'string') throw new Error('content must be a string')
     return a as Json
   },
-  authorize: async () => true,
+  authorize: async (args) => (env.approve ? env.approve('write_file', `写入文件 ${(args as { path: string }).path}`, 'edit') : true),
   async execute(args) {
     const a = args as { path: string; content: string }
     const file = inside(env.cwd, a.path)
@@ -115,6 +115,7 @@ export const writeFile: ToolFactory = (env) => ({
     const existed = existsSync(file)
     writeFileSync(file, a.content, 'utf8')
     env.trace?.({ kind: 'file.write', path: a.path, bytes: Buffer.byteLength(a.content) })
+    env.onFiles?.([relative(env.cwd, file)])
     return textResult(`${existed ? '已覆盖' : '已创建'} ${a.path}（${Buffer.byteLength(a.content)} B）`)
   }
 })
@@ -131,7 +132,7 @@ export const editFile: ToolFactory = (env) => ({
   },
   scheduling: 'exclusive',
   validate: (i) => objectArgs(i, ['path', 'old_text', 'new_text'], ['path', 'old_text', 'new_text']) as Json,
-  authorize: async () => true,
+  authorize: async (args) => (env.approve ? env.approve('edit_file', `修改文件 ${(args as { path: string }).path}`, 'edit') : true),
   async execute(args) {
     const a = args as { path: string; old_text: string; new_text: string }
     const file = inside(env.cwd, a.path)
@@ -141,6 +142,7 @@ export const editFile: ToolFactory = (env) => ({
     if (count !== 1) return textResult(`old_text 出现了 ${count} 次，需要恰好 1 次`, true)
     writeFileSync(file, text.replace(a.old_text, () => a.new_text), 'utf8')
     env.trace?.({ kind: 'file.edit', path: a.path })
+    env.onFiles?.([relative(env.cwd, file)])
     return textResult(`已修改 ${a.path}`)
   }
 })

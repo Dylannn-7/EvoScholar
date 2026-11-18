@@ -15,14 +15,27 @@ export type ToolEnv = {
   /** Read-only workflow children do not save shared scratch outputs. */
   readOnly?: boolean
   /**
-   * Called for tools with side effects outside plain file edits (code execution, processes).
+   * Permission gate for side effects. `kind` is 'edit' for file writes and 'exec' for code and
+   * processes; the session's permission mode decides which reach the user.
    * Undefined means unattended mode (evaluation runs in an isolated directory): auto-approve.
    */
-  approve?: (tool: string, summary: string) => Promise<boolean>
+  approve?: (tool: string, summary: string, kind?: ApprovalKind) => Promise<boolean>
+  /** Model ref chosen for this session (composer); used to resolve helper roles. */
+  model?: string
+  /** Called with cwd-relative paths of files a tool created or modified (library index). */
+  onFiles?: (paths: string[]) => void
   /** Optional sink for host-level trace events (exported with evaluation runs). */
   trace?: (event: Record<string, unknown>) => void
 }
+export type ApprovalKind = 'edit' | 'exec'
 export type ToolFactory = (env: ToolEnv) => AgentTool
+
+/** Shell used by run_command / start_process on this platform. */
+export function shellFor(command: string): [string, string[]] {
+  return process.platform === 'win32'
+    ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command]]
+    : ['/bin/sh', ['-c', command]]
+}
 
 export function textResult(text: string, isError = false) {
   return { content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) }

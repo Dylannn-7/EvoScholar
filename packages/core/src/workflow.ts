@@ -3,7 +3,7 @@ import {
   type Json, type ModelRequest, type ToolContext, type ToolResult
 } from '@evoscholar/harness'
 import { BudgetError } from './budget'
-import type { HarnessGenome } from './genome'
+import { modelFor, type HarnessGenome } from './genome'
 import { meterModel } from './metering'
 import { createModel, endpointFor, modelInfo } from './providers'
 import { reviewEvidence } from './review-evidence'
@@ -165,8 +165,9 @@ export function openWorkflow(genome: HarnessGenome, env: ToolEnv, parent: AgentM
       }
     }
   }
-  const fast = genome.routing.roles.fast ?? genome.routing.roles.main
-  const judge = genome.routing.roles.judge ?? fast
+  const choice = { defaults: env.ws.settings?.defaults, session: env.model }
+  const fast = modelFor(genome, 'fast', choice)
+  const judge = modelFor(genome, 'judge', choice)
   if (review) {
     agents[REVIEWER] = agent('根据宿主提供的题面和只读文件证据，核对拟交付答复的事实、数字和产物。一次返回最多三条具体发现，写明对应文件。片段不足时标为待核实。', judge, [], true)
     hints.push(`交付前会执行一次 ${VERIFY}。收到核对结果后修正有依据的问题；核对失败时如实说明验证状态。`)
