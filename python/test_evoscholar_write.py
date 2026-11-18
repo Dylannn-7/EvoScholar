@@ -154,6 +154,8 @@ class ChineseLatexThesis(unittest.TestCase):
 \begin{figure}\subcaptionbox{\label{fig:sub}子图}{x}\caption{图}\label{fig:main}\end{figure}
 见\ref{tab:a}和\ref{fig:main}\cite{k1}。
 \begin{ack}感谢。\end{ack}
+\begin{paperRelation}\begin{table}\begin{tabular}{cc}a&b\end{tabular}\end{table}\end{paperRelation}
+\begin{table}\begin{tabular}{cc}a&b\end{tabular}\end{table}
 \bibliographystyle{gbt7714-2025}
 \bibliography{refs}
 \end{document}
@@ -165,10 +167,12 @@ class ChineseLatexThesis(unittest.TestCase):
         self.assertEqual(doc.meta['keywords_sep'], '；')
         self.assertEqual([x['title'] for x in doc.sections if x.get('virtual')], ['摘要', 'Abstract', '目录', '致谢', '参考文献'])
         rep = Wr.run(d / 'main.tex', ['hust-thesis'], 'doctor')
-        noisy = [f for f in rep['findings'] if f['rule'].startswith(('common.xref', 'common.units', 'common.abbreviations', 'common.floats', 'hust.floats',
+        noisy = [f for f in rep['findings'] if f['rule'].startswith(('common.xref', 'common.units', 'common.abbreviations', 'common.floats', 'hust.floats.numbering.unreferenced', 'hust.floats.numbering.sequence',
                                                                       'hust.citation.order', 'common.citations', 'hust.sections', 'hust.keywords'))]
         self.assertEqual(noisy, [], noisy)
         self.assertTrue(by_rule(rep, 'hust.references.stats.total'))           # counts the 1 cited entry, not the whole .bib
+        caps = by_rule(rep, 'hust.floats.numbering.caption')
+        self.assertEqual(len(caps), 1)                                          # only the table outside paperRelation
         shutil.rmtree(d, ignore_errors=True)
 
 

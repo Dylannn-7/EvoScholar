@@ -710,6 +710,21 @@ def _citation_order(doc: Doc, p: dict, rule: dict) -> list:
     return out
 
 
+STANDARD_ENVS = {'document', 'appendix', 'appendices', 'center', 'flushleft', 'flushright', 'minipage', 'landscape', 'sidewaysfigure',
+                 'sidewaystable', 'multicols', 'small', 'footnotesize', 'scriptsize', 'large', 'subappendices', 'frame', 'adjustwidth'}
+
+
+def _enclosing_env(text: str, offset: int) -> str | None:
+    """Innermost environment that is open at `offset`."""
+    stack: list[str] = []
+    for m in re.finditer(r'\\(begin|end)\s*\{([^}]+)\}', text[:offset]):
+        if m.group(1) == 'begin':
+            stack.append(m.group(2))
+        elif stack and stack[-1] == m.group(2):
+            stack.pop()
+    return stack[-1] if stack else None
+
+
 @check('float_numbering')
 def _float_numbering(doc: Doc, p: dict, rule: dict) -> list:
     """Figures / tables / equations numbered consecutively (overall or per chapter) and referenced in the text."""
@@ -721,6 +736,9 @@ def _float_numbering(doc: Doc, p: dict, rule: dict) -> list:
                 refd |= {f'{m.group(1)}{k}' for k in range(int(m.group(2)), int(m.group(4)) + 1)}
         for f in doc.floats:
             if f['caption'] is None:
+                env = _enclosing_env(doc.text, f.get('offset', 0))
+                if env and env not in STANDARD_ENVS:
+                    continue   # inside a template environment (e.g. paperRelation) that supplies its own heading
                 out.append(finding(rule['id'] + '.caption', 'warning', f['loc'], f'{"图" if f["kind"] == "figure" else "表"}没有 \\caption'))
             elif f['label'] is None:
                 out.append(finding(rule['id'] + '.unreferenced', 'info', f['loc'], f'{"图" if f["kind"] == "figure" else "表"}「{f["caption"][:20]}」没有 \\label，正文无法引用'))
