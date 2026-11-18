@@ -315,10 +315,50 @@ export function initWorkbench () {
   }
 
   // ------------------------------------------------------------ messages
+  // Evolution steps: tool calls of the evolve tools and host events (recall, self-check, learned...).
+  const EVO_TOOL = {
+    reflect: ['反思', (a) => `${a.cause || ''} → ${a.next_action || ''}`],
+    note_lesson: ['调整', (a) => `记经验：${a.trigger || ''} → ${a.advice || ''}`],
+    tune_harness: ['调整', (a) => `本会话：${a.op === 'prompt.note' ? `追加规则「${a.value}」` : a.op === 'tool.note' ? `${a.target} 说明补充「${a.value}」` : `${a.op === 'skill.enable' ? '启用' : '停用'}技能 ${a.target}`}`],
+    recall: ['回忆', (a) => `检索「${a.query || ''}」`],
+    offer_choices: ['选择', (a) => a.question || '']
+  }
+  const EVO_LABEL = { recall: '回忆', reflect: '反思', adjust: '调整', selfcheck: '自检', learned: '学到', preference: '偏好', observe: '观察', credit: '归因', revert: '撤销', choice: '选择' }
+  function evoEl (kind, text, opts = {}) {
+    const d = document.createElement('details')
+    d.className = `step evo k-${kind} done`
+    const items = opts.items || []
+    d.innerHTML = `<summary><i class="dot"></i><span class="lab">${EVO_LABEL[kind] || kind}</span><span class="det">${esc(text)}</span>${opts.refs?.length ? `<span class="ms">${esc(opts.refs.slice(0, 4).join(' '))}</span>` : ''}</summary>${items.length ? `<div class="body">${items.map((x) => `<div><code>${esc(x.id)}</code> ${esc(x.text)}</div>`).join('')}</div>` : ''}`
+    return d
+  }
+  function revertBtn (d, text) {
+    const m = /\b([LP]-\d{4})\b|\b(O-[a-z0-9]+)\b/.exec(text || '')
+    if (!m || $('.undo', d)) return
+    const b = document.createElement('button')
+    b.className = 'btn ghost small undo'
+    b.type = 'button'
+    b.textContent = '撤销'
+    b.onclick = async (e) => {
+      e.preventDefault(); e.stopPropagation()
+      try {
+        if (m[1]) await del(`/api/memory/${m[1]}`)
+        else await post(`/api/overlays/${m[2]}/revert`)
+        b.textContent = '已撤销'; b.disabled = true; d.classList.add('reverted')
+      } catch (err) { toast(err.message, 'err') }
+    }
+    $('summary', d).appendChild(b)
+  }
   function stepEl (kind, name, args, id) {
     const d = document.createElement('details')
     d.className = `step ${kind}`
     if (id) d.dataset.id = id
+    if (kind === 'tool' && EVO_TOOL[name]) {
+      const [lab, fn] = EVO_TOOL[name]
+      d.className = `step evo k-${lab === '调整' ? 'adjust' : name === 'reflect' ? 'reflect' : 'recall'}`
+      d.dataset.evo = name
+      d.innerHTML = `<summary><i class="dot"></i><span class="lab">${lab}</span><span class="det">${esc(fn(args || {}))}</span><span class="ms"></span></summary><div class="body"><pre class="res"></pre></div>`
+      return d
+    }
     if (kind === 'think') {
       d.innerHTML = `<summary><i class="dot"></i><span class="lab">思考</span><span class="det"></span><span class="ms"></span></summary><div class="body"></div>`
     } else {
@@ -331,6 +371,7 @@ export function initWorkbench () {
   function finishStep (d, text, isError) {
     d.classList.add(isError ? 'err' : 'done')
     $('.res', d).textContent = text || ''
+    if (!isError && (d.dataset.evo === 'note_lesson' || d.dataset.evo === 'tune_harness')) revertBtn(d, text)
     if (d.dataset.t0) $('.ms', d).textContent = `${((Date.now() - Number(d.dataset.t0)) / 1000).toFixed(1)}s`
   }
   function feedbackEl () {
@@ -370,12 +411,13 @@ export function initWorkbench () {
     try {
       const r = await api(`/api/library?session=${encodeURIComponent(W.current)}`)
       const fresh = r.files.filter((f) => new Date(f.updated_at).getTime() >= W.turnStart - 2000 && f.kind === 'output')
-      if (!fresh.length || !W.live) return
+      const target = W.live || W.answer
+      if (!fresh.length || !target) return
       const box = document.createElement('div')
       box.className = 'turn-files'
       box.innerHTML = fresh.slice(0, 12).map((f) => `<span class="file-chip ${f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) ? 'thumb' : ''}" data-lib="${f.id}" data-path="${esc(f.path)}">${f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) ? `<img src="/api/library/${f.id}/file" alt="">` : icon('file', 14)}<span>${esc(f.path.split('/').pop())}</span></span>`).join('')
       box.onclick = (e) => { const c = e.target.closest('[data-lib]'); if (c) openFilePreviewModal(W.current, c.dataset.path, `/api/library/${c.dataset.lib}/file`) }
-      W.live.el.appendChild(box)
+      target.el.appendChild(box)
     } catch {}
   }
   function setBusy (b) {
@@ -448,14 +490,46 @@ export function initWorkbench () {
         fx.call('setState', 'thinking')
         break
       }
+      case 'evolve': {
+        // Tool-driven steps (reflect / note_lesson / tune_harness / recall-by-tool / offer_choices) already show as rows.
+        if (['reflect', 'adjust', 'choice'].includes(e.kind) || (e.kind === 'recall' && /^主动检索/.test(e.text))) break
+        if (W.live) W.answer = W.live
+        W.live = null
+        inner.appendChild(evoEl(e.kind, e.text, { refs: e.refs, items: e.data?.items }))
+        if (e.kind === 'learned') fx.call('reform')
+        break
+      }
+      case 'choice': {
+        fx.call('setState', 'approval')
+        const c = document.createElement('div')
+        c.className = 'card-inline choice'
+        c.dataset.id = e.id
+        c.innerHTML = `<div class="head">${icon('brain', 15)}<span>${esc(e.question)}</span></div><div class="opts">${e.options.map((o, i) => `<button type="button" class="opt" data-i="${i}"><b>${esc(o.label)}</b>${o.detail ? `<span>${esc(o.detail)}</span>` : ''}</button>`).join('')}</div><div class="hint">你的选择会记为偏好，以后同类决定会参考它。</div>`
+        c.onclick = async (ev) => {
+          const b = ev.target.closest('[data-i]')
+          if (!b || c.classList.contains('done')) return
+          b.classList.add('on')
+          await post(`/api/sessions/${W.current}/choice/${e.id}`, { index: Number(b.dataset.i) })
+        }
+        inner.appendChild(c)
+        break
+      }
+      case 'choice-resolved': {
+        const c = inner.querySelector(`.card-inline[data-id="${e.id}"]`)
+        if (c) c.classList.add('done')
+        fx.call('setState', 'thinking')
+        break
+      }
       case 'compaction': if (e.status === 'started') banner('上下文较长，正在压缩早期对话……'); else banner(''); break
       case 'warning': banner(e.message); break
       case 'error': inner.insertAdjacentHTML('beforeend', `<div class="error-line">${esc(e.message)}</div>`); break
       case 'status': if (e.status === 'running') setBusy(true); break
       case 'done': {
         if (W.think) { W.think.classList.add('done'); W.think = null }
-        if (W.live) { W.live.el.innerHTML = md(W.live.text); W.live.el.appendChild(feedbackEl()) }
-        turnFiles().finally(() => { W.live = null })
+        const ans = W.live || W.answer
+        if (ans) { ans.el.innerHTML = md(ans.text); ans.el.appendChild(feedbackEl()) }
+        W.answer = ans
+        turnFiles().finally(() => { W.live = null; W.answer = null })
         setBusy(false)
         refresh()
         break
@@ -517,7 +591,24 @@ export function initWorkbench () {
     resetChoices()
     renderHead(); renderBar(); banner('')
     inner.innerHTML = ''
-    for (const m of W.session.messages) renderStored(m)
+    const byTurn = new Map()
+    for (const ev of W.session.evolve || []) {
+      if (['reflect', 'adjust', 'choice'].includes(ev.kind) || (ev.kind === 'recall' && /^主动检索/.test(ev.text))) continue
+      const k = ev.turn_id ?? 0
+      if (!byTurn.has(k)) byTurn.set(k, [])
+      byTurn.get(k).push(ev)
+    }
+    const turns = W.session.turns || []
+    let ti = -1
+    const flush = (tid, phase) => {
+      for (const ev of (byTurn.get(tid) || []).filter((x) => (phase === 'start') === (x.kind === 'recall' || x.kind === 'observe' || (x.kind === 'preference' && /^记住了/.test(x.text))))) inner.appendChild(evoEl(ev.kind, ev.text, { refs: ev.refs, items: ev.data?.items }))
+    }
+    for (const m of W.session.messages) {
+      if (m.role === 'user' && /^【自检】/.test(m.text)) continue
+      if (m.role === 'user') { if (ti >= 0) flush(turns[ti], 'end'); ti++; renderStored(m); flush(turns[ti], 'start'); continue }
+      renderStored(m)
+    }
+    if (ti >= 0) flush(turns[ti], 'end')
     const fresh = !W.session.messages.length && !opts.keepComposer
     if (fresh) inner.innerHTML = '<div class="greet"><h1>今天想研究什么？</h1><p>需要写文件或执行代码时，会按你选的权限模式处理。</p></div>'
     setFresh(fresh)

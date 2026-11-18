@@ -12,7 +12,21 @@ export const $ = (s, el = document) => el.querySelector(s)
 // ---------------------------------------------------------------- particles
 const NOOP = { setState () {}, setDim () {}, setBudgetLevel () {}, reform () {}, setQuality () {}, setMouseStrength () {}, quality: 'off' }
 export const fx = { impl: NOOP, call (m, ...a) { try { this.impl[m]?.(...a) } catch {} } }
-import('./fx/index.js').then((m) => { fx.impl = m.initFx(document.getElementById('bg')) || NOOP; syncFx() }).catch((e) => console.warn('fx disabled:', e))
+let fxMod = null
+import('./fx/index.js').then((m) => { fxMod = m; fx.impl = m.initFx(document.getElementById('bg')) || NOOP; syncFx() }).catch((e) => console.warn('fx disabled:', e))
+/** Switch particle quality in place: dispose the field, swap in a fresh canvas, start again. */
+export function setFxQuality (q) {
+  try { localStorage.setItem('evoscholar.fxQuality', q) } catch {}
+  if (!fxMod) return
+  try { fx.impl.dispose?.() } catch {}
+  const old = document.getElementById('bg')
+  const canvas = document.createElement('canvas')
+  canvas.id = 'bg'
+  canvas.setAttribute('aria-hidden', 'true')
+  old.replaceWith(canvas)
+  fx.impl = fxMod.initFx(canvas) || NOOP
+  syncFx()
+}
 export function syncFx () {
   fx.call('setDim', document.body.classList.contains('in-session') ? 0.4 : view === 'workbench' ? 1 : 0.3)
 }

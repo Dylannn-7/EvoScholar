@@ -18,16 +18,19 @@ import { meterModel } from './metering'
 import { createModel, defaultModelRef, modelInfo } from './providers'
 import { permissionGate } from './permissions'
 import type { PermissionMode } from './config'
-import { buildTools, stopAllProcesses, type ToolEnv } from './tools'
+import { TOOL_FACTORIES, buildTools, stopAllProcesses, type ToolEnv } from './tools'
 import { TrajectoryRecorder, textOf } from './trajectory'
 import { skillIndex } from './skills'
 import { openWorkflow } from './workflow'
+import { installEvolveLoop, type EvolveHooks, type EvolveLoop } from './evolve/loop'
+import { EvolveStore } from './evolve/store'
+import { listSkills, type SkillRef } from './skills'
 
-export type Runtime = { ws: Workspace; db: Db; ledger: Ledger; genomes: GenomeRepo }
+export type Runtime = { ws: Workspace; db: Db; ledger: Ledger; genomes: GenomeRepo; evolve: EvolveStore }
 
 export function openRuntime(ws: Workspace, onAlert?: (m: string) => void): Runtime {
   const db = openDb(ws.dataDir)
-  return { ws, db, ledger: new Ledger(db, ws.config, onAlert), genomes: new GenomeRepo(ws.root) }
+  return { ws, db, ledger: new Ledger(db, ws.config, onAlert), genomes: new GenomeRepo(ws.root), evolve: new EvolveStore(db, ws.dataDir) }
 }
 
 export type ResearchSession = {
@@ -39,6 +42,8 @@ export type ResearchSession = {
   genome: HarnessGenome
   session: AgentSession
   recorder: TrajectoryRecorder
+  /** In-loop evolution handle when enabled. */
+  evolve?: EvolveLoop
   /** Send a user message; resolves with the run status and final assistant text. */
   ask(blocks: ContentBlock[] | string): Promise<{ status: RunStatus; answer: string }>
   dispose(): Promise<void>
@@ -69,6 +74,8 @@ export async function openResearchSession(
     outputDir?: string
     /** Files a tool created or modified (relative to cwd). */
     onFiles?: (paths: string[]) => void
+    /** In-loop self-evolution (memory, reflection, overlays). Off for evaluation runs. */
+    evolve?: { store: EvolveStore; projectId: string | null; emit?: EvolveHooks['emit']; choose?: EvolveHooks['choose'] }
   } = {}
 ): Promise<ResearchSession> {
   const genome = opts.genome ?? rt.genomes.load()
@@ -96,11 +103,39 @@ export async function openResearchSession(
     recorder.hostEvent(row)
   }
   const approve = permissionGate(opts.permission ?? (() => 'ask'), opts.approve)
-  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, skills: genome.skills, approve, trace, model: ref, onFiles: opts.onFiles }
+  let loop: EvolveLoop | undefined
+  const onFiles = (paths: string[]) => { loop?.noteFiles(paths); opts.onFiles?.(paths) }
+  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, skills: genome.skills, approve, trace, model: ref, onFiles }
+  if (opts.evolve) {
+    loop = installEvolveLoop({
+      store: opts.evolve.store, sessionId, projectId: opts.evolve.projectId, stage: opts.stage, cwd,
+      turnId: () => recorder.turn, emit: opts.evolve.emit, choose: opts.evolve.choose,
+      toolNames: genome.tools.enabled, skillNames: listSkills(rt.ws.root).map((x) => x.name)
+    })
+  }
   const platform = process.platform === 'win32' ? 'Windows（命令用 PowerShell 语法）' : process.platform === 'darwin' ? 'macOS' : 'Linux'
   const outputNote = opts.outputDir ? `\n- 交付文件（图、表、文稿、数据结果）写到 ${opts.outputDir}/ 下；用户上传的文件在 evoscholar-in/ 下；不要改动项目里其他已有文件，除非用户明确要求` : ''
-  const tools = buildTools(genome.tools.enabled, env, genome.tools.overrides, (s) => rt.genomes.text(s))
   const workflow = openWorkflow(genome, env, model, opts.stage)
+  const envNote = `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）${outputNote}\n- 系统：${platform}\n- 日期：${new Date().toISOString().slice(0, 10)}`
+  /** Tools and instructions for the current session overlay (tool notes, skill switches, prompt notes). */
+  const assemble = () => {
+    const ov = loop?.overlay()
+    const overrides: Record<string, { description?: string }> = { ...(genome.tools.overrides ?? {}) }
+    for (const [t, note] of Object.entries(ov?.toolNotes ?? {})) {
+      const base = TOOL_FACTORIES[t]?.(env).description ?? ''
+      overrides[t] = { description: `${overrides[t]?.description ? rt.genomes.text(overrides[t].description!) : base}\n补充（本会话试用）：${note}` }
+    }
+    let skills: SkillRef[] = [...(genome.skills ?? [])].filter((x) => !ov?.disable.includes(x.name))
+    for (const name of ov?.enable ?? []) {
+      const meta = listSkills(rt.ws.root).find((x) => x.name === name)
+      if (meta && !skills.some((x) => x.name === name)) skills = [...skills, { name, version: meta.version }]
+    }
+    const tools = [...buildTools(genome.tools.enabled, { ...env, skills }, overrides, (s) => rt.genomes.text(s)), ...(workflow?.tools ?? []), ...(loop?.tools ?? [])]
+    const instructions = rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, skills) + (workflow?.instructions ?? '') + (loop?.instructions ?? '') + (ov?.instructions ?? '') + envNote
+    return { tools, instructions, version: ov?.version ?? '' }
+  }
+  const initial = assemble()
+  let configured = initial.version
   const b = genome.budgets
   const maxOutputTokens = enforceCap
     ? Math.min(b.maxOutputTokens, info.maxOutputTokens ?? b.maxOutputTokens)
@@ -111,8 +146,9 @@ export async function openResearchSession(
   const session = await openAgentSession({
     sessionId,
     model: workflow?.model ?? model,
-    tools: [...tools, ...(workflow?.tools ?? [])],
-    instructions: rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, genome.skills) + (workflow?.instructions ?? '') + `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）${outputNote}\n- 系统：${platform}\n- 日期：${new Date().toISOString().slice(0, 10)}`,
+    tools: initial.tools,
+    instructions: initial.instructions,
+    ...(loop ? { transformContext: loop.transformContext, guards: loop.guards } : {}),
     store: createJournalAgentStore({ directory: join(rt.ws.dataDir, 'sessions') }),
     maxSteps: b.maxSteps,
     maxOutputTokens,
@@ -127,6 +163,7 @@ export async function openResearchSession(
       instructions: rt.genomes.text(genome.instructions.compaction) || undefined
     },
     onEvent: (e) => {
+      loop?.onEvent(e)
       workflow?.onEvent?.(e)
       recorder.onEvent(e)
       opts.onEvent?.(e)
@@ -140,19 +177,30 @@ export async function openResearchSession(
     genome,
     session,
     recorder,
+    evolve: loop,
     async ask(input) {
       const blocks: ContentBlock[] = typeof input === 'string' ? [{ type: 'text', text: input }] : input
       recorder.beginTurn(textOf(blocks))
       let status: RunStatus = 'failed'
       let answer = ''
       try {
+        if (opts.outputDir) try { mkdirSync(join(cwd, opts.outputDir), { recursive: true }) } catch {}
+        loop?.beginTurn(textOf(blocks))
+        const next = assemble()
+        if (next.version !== configured) {
+          session.configure({ model: workflow?.model ?? model, tools: next.tools, instructions: next.instructions })
+          configured = next.version
+        }
         status = await session.prompt(blocks)
+        const check = status === 'complete' ? loop?.selfCheck() : undefined
+        if (check) status = await session.prompt([{ type: 'text', text: check }])
         const snap = await session.snapshot()
         const last = [...snap.messages].reverse().find((m) => m.role === 'assistant')
         answer = textOf(last?.content)
         return { status, answer }
       } finally {
         recorder.endTurn(status, answer)
+        try { loop?.finishTurn(status) } catch {}
       }
     },
     async dispose() {

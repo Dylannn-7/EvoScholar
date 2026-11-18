@@ -1,5 +1,5 @@
 // Settings: model providers (protocol → base URL → key → fetch models → test), defaults & permissions, appearance.
-import { store } from '../app.js'
+import { setFxQuality, store } from '../app.js'
 import { api, del, put, post } from './api.js'
 import { icon } from './icons.js'
 import { confirmDialog, esc, openModal, toast } from './modal.js'
@@ -184,9 +184,12 @@ function appearance (body) {
   let q = 'auto'
   try { q = localStorage.getItem('evoscholar.fxQuality') || 'auto' } catch {}
   const Q = [['auto', '自动', '按设备性能选择'], ['high', '高', '262,144 个粒子'], ['mid', '中', '65,536 个粒子'], ['low', '低', '16,384 个粒子'], ['off', '关闭', '纯色背景，最省电']]
-  body.innerHTML = `<div class="panel"><h3>背景粒子</h3><p class="lede">粒子会随智能体的思考、调用工具、等待确认和自我进化而变化。修改后会刷新页面。</p>
+  body.innerHTML = `<div class="panel"><h3>背景粒子</h3><p class="lede">粒子会随智能体的思考、调用工具、等待确认和自我进化而变化。切换后立即生效。</p>
     ${Q.map(([id, l, d]) => `<div class="opt-row"><div class="t"><b>${l}</b><span>${d}</span></div><button class="switch ${q === id ? 'on' : ''}" data-q="${id}" type="button" aria-label="${l}"></button></div>`).join('')}</div>`
-  body.querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => { try { localStorage.setItem('evoscholar.fxQuality', b.dataset.q) } catch {} ; location.reload() }))
+  body.querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => {
+    setFxQuality(b.dataset.q)
+    body.querySelectorAll('[data-q]').forEach((x) => x.classList.toggle('on', x === b))
+  }))
 }
 
 function about (body) {
