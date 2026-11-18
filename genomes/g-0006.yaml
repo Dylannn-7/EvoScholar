@@ -1,0 +1,68 @@
+id: g-0006
+parent: g-0005
+createdBy: manual
+createdAt: 2026-11-18T07:08:56.073Z
+status: active
+note: 第 5
+  天：启用数据与出图技能（data-tables、figure-style、figure-composer、tikz-diagram、ml-results、ml-curves、optics-spectra、optics-fields、device-curves）和
+  figure_check 工具
+instructions:
+  system: prompts/system@v5.md
+  compaction: prompts/compaction@v1.md
+skills:
+  - name: literature-review
+    version: 1
+  - name: data-tables
+    version: 1
+  - name: figure-style
+    version: 1
+  - name: figure-composer
+    version: 1
+  - name: tikz-diagram
+    version: 1
+  - name: ml-results
+    version: 1
+  - name: ml-curves
+    version: 1
+  - name: optics-spectra
+    version: 1
+  - name: optics-fields
+    version: 1
+  - name: device-curves
+    version: 1
+routing:
+  roles:
+    main: deepseek/deepseek-flash
+    fast: deepseek/deepseek-flash
+    vision: deepseek/deepseek-flash
+    reflector: deepseek/deepseek-flash
+    judge: deepseek/deepseek-flash
+  rules: []
+tools:
+  enabled:
+    - web_search
+    - web_fetch
+    - list_files
+    - read_file
+    - write_file
+    - edit_file
+    - run_python
+    - run_command
+    - start_process
+    - read_process
+    - stop_process
+    - http_get
+    - lit_search
+    - lit_lookup
+    - lit_verify
+    - lit_import
+    - pdf_text
+    - pdf_page_image
+    - read_skill
+    - figure_check
+workflows: {}
+budgets:
+  maxSteps: 24
+  maxOutputTokens: 8192
+  timeoutMs: 600000
+  contextBudgetTokens: 120000

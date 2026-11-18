@@ -1,6 +1,6 @@
 # EvoScholar 交接文档
 
-更新：2026-11-18（第 1–4 天完成；第 4 天由 Claude Code 完成，首个候选 g-0005 已经用户批准上线）
+更新：2026-11-18（第 1–5 天完成；g-0006 已经用户批准上线）
 仓库：https://github.com/Dylannn-7/EvoScholar （main，交接时为本文所在提交）
 本机：`~/doc/EvoScholar`（已是该仓库的 git 工作副本）
 方案文档（claude.ai，可读不可依赖）：https://claude.ai/artifact/7kb1ZdhqaMmFVHeGZLdVHu
@@ -9,17 +9,17 @@
 
 ## 1. 现状一句话
 
-骨架、Web 工作台、文献模块、进化 v1 已完成；**下一步是第 5 天的数据与出图**。累计 API 花费约 ¥6.09（dev ¥0.20、evolution ¥5.89），14 个 TS 测试和 Python 测试全部通过。
+骨架、Web 工作台、文献模块、进化 v1、数据与出图已完成；**下一步是第 6 天的写作规范检查**。累计 API 花费约 ¥6.66（dev ¥0.77、evolution ¥5.89），15 个 TS 测试和 22 个 Python 测试全部通过。
 
-| 天  | 模块                                                   | 状态 | 关卡结果                                                               |
-| --- | ------------------------------------------------------ | ---- | ---------------------------------------------------------------------- |
-| 1   | 骨架：harness、多厂商网关、预算账本、genome、轨迹、CLI | ✅    | deepseek-flash + 1 次联网搜索，¥0.012                                  |
-| 2   | Web 工作台 + 文件/Python/进程工具                      | ✅    | 浏览器端到端（模拟网关）；真实模型读图 + Python 求 FWHM = 0.800 nm     |
-| 3   | 文献模块 + 技能系统                                    | ✅    | 4 篇 MRR 光学神经网络文献小综述，引用全部 verified；评测 L02 判分 pass |
-| 4   | 进化 v1                                                | ✅    | g-0005 开发集 16→17/21、验收集 8→8/9，经用户批准于 11-18 上线          |
-| 5   | 数据与出图                                             | 待做 | 真实数据出符合目标期刊规范的图                                         |
-| 6   | 写作规范检查                                           | 待做 | 一篇真实稿件上误报率可接受                                             |
-| 7   | 进化 v2 + AXON 视觉 + 发布                             | 待做 | README、一键安装、端到端、GitHub 发布                                  |
+| 天  | 模块                                                   | 状态 | 关卡结果                                                                                                                                                                    |
+| --- | ------------------------------------------------------ | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 骨架：harness、多厂商网关、预算账本、genome、轨迹、CLI | ✅    | deepseek-flash + 1 次联网搜索，¥0.012                                                                                                                                       |
+| 2   | Web 工作台 + 文件/Python/进程工具                      | ✅    | 浏览器端到端（模拟网关）；真实模型读图 + Python 求 FWHM = 0.800 nm                                                                                                          |
+| 3   | 文献模块 + 技能系统                                    | ✅    | 4 篇 MRR 光学神经网络文献小综述，引用全部 verified；评测 L02 判分 pass                                                                                                      |
+| 4   | 进化 v1                                                | ✅    | g-0005 开发集 16→17/21、验收集 8→8/9，经用户批准于 11-18 上线                                                                                                               |
+| 5   | 数据与出图                                             | ✅    | g-0006（由 g-0005 手动派生：启用 9 个数据 / 出图技能和 figure_check 工具，经用户批准于 11-18 上线）：D01–D10 全部通过（开发 7/7、验收 3/3）；真实数据出图关卡待用户提供数据 |
+| 6   | 写作规范检查                                           | 待做 | 一篇真实稿件上误报率可接受                                                                                                                                                  |
+| 7   | 进化 v2 + AXON 视觉 + 发布                             | 待做 | README、一键安装、端到端、GitHub 发布                                                                                                                                       |
 
 ## 2. 在 Mac 上跑起来
 
@@ -66,6 +66,9 @@ apps/server (node:http) ─┘        │                    └─ chat-complet
                                   ├─ skills.ts     SKILL.md 加载、技能索引、read_skill
                                   └─ tools/        工具工厂（ToolFactory(env) → AgentTool）
 python/evoscholar_lit.py  确定性文献工具函数（run_python 里 import evoscholar_lit as lit）
+python/evoscholar_data.py 数据分析函数：实验统计 / booktabs、训练曲线、光谱（FWHM、Q、拟合）、场分布、器件曲线（import evoscholar_data as D）
+python/evoscholar_fig.py  出图：规则包、apply_style / figsize / save、check_figure / check_file、预览、TikZ 编译（import evoscholar_fig as F）
+rulepacks/figures/*.yaml  期刊 / 会议出图规则（数值只来自作者指南，带出处）
 ```
 
 ### 关键文件
@@ -135,6 +138,7 @@ budgets: { maxSteps: 24, maxOutputTokens: 8192, timeoutMs: 600000, contextBudget
 | `lit_import`                                         | RIS、BibTeX、EndNote、NoteExpress、GB/T 7714 自动识别（知网 / 万方导出）                                                   |
 | `pdf_text`、`pdf_page_image`                         | 带页码文字；扫描页渲染成图片看图                                                                                           |
 | `read_skill`                                         | 读取 SKILL.md；读取事件会进轨迹（用于归因）                                                                                |
+| `figure_check`（第 5 天，g-0006 起）                 | 已保存的图按规则包检查尺寸、可编辑字体、位图 dpi，并返回渲染预览图供模型看图；字号、单位、配色等在 `F.check_figure` 里查   |
 
 新增工具：在 `tools/` 写 `ToolFactory`，注册到 `TOOL_FACTORIES`，在 genome 的 `tools.enabled` 中启用，并用 mock `fetch` 写测试（参考 `literature.test.ts`）。
 
@@ -217,6 +221,22 @@ python3 evals/bench.py advance <dir>                                   # L10、D
 - TikZ：`run_command` 调 `xelatex`（Mac 需本机装 TeX；Linux 工作环境有 xelatex、没有 latexmk）。
 - 用 D01–D07 冒烟。
 
+**第 5 天实际完成情况（2026-11-18）**
+
+- 规则包 `rulepacks/figures/`：nature、ieee、optica、wiley、neurips、iclr、icml、cvpr，每个文件写明出处 URL 和核对日期；指南没写的项留 null，不猜。
+  - Nature：89 / 183 mm，高 ≤170 mm，字号 5–7 pt，面板标注 8 pt 加粗小写，照片 ≥300 dpi，Type 42 字体，RGB，色盲友好（Wong 配色）。
+  - IEEE：3.5 / 7.16 in，≤7.16×8.8 in，字号约 9–10 pt，彩色 / 灰度 >300 dpi、线稿 >600 dpi。
+  - Optica：只有版心（Word 版式推算 5.25 in）、小图 ≤6.6 cm、图注 8 pt、不能只靠颜色区分；**指南没给字号和 dpi**。
+  - Wiley：通用指南 80–180 mm、图像 300 dpi、线稿 600 dpi。**LPR 期刊页有 Cloudflare 验证，未核实期刊专属要求。**
+  - 会议：ICLR、CVPR 读官方样式文件；NeurIPS、ICML 官方只给 zip，读的是公开镜像（文件里已注明）。
+- `python/evoscholar_fig.py`：`apply_style`、`figsize`、`panel_labels`、`check_figure`（尺寸、字号、坐标轴标签与单位、网格线、色盲冲突、只靠颜色区分）、`check_file`（PDF 字体类型、SVG 可编辑文本、位图 dpi）、`save`（多格式导出 + 检查 + 预览）、`preview`、`compile_tikz`（xelatex → lualatex → pdflatex → tectonic）。
+- `python/evoscholar_data.py`：summarize / summarize_by / compare / holm / booktabs / parse_log_metrics；ema / aggregate_curves；nm↔eV↔THz、find_peaks、fwhm、fit_peak（洛伦兹 / 高斯）、q_factor、fsr、extinction_ratio_db；read_comsol_table、read_lumerical_table、grid_from_points、effective_mode_area、confinement_factor；li_threshold、responsivity、quantum_efficiency、diode_ideality、series_resistance。
+- 工具 `figure_check`：检查已保存的图并把渲染预览交给模型看图。
+- 技能（9 个）：data-tables、figure-style、figure-composer、tikz-diagram、ml-results、ml-curves、optics-spectra、optics-fields、device-curves。
+- genome **g-0006**（manual，父版本 g-0005；11-18 经用户批准上线）：启用上述技能和 `figure_check`。冒烟（`es eval … --category dev`）：D01–D07 7/7（g-0005 为 6/7，D06 失败），验收 D08–D10 3/3（与 g-0005 相同）。
+- **注意**：写 data-tables 技能时我已经知道 D06 的期望表头（第 4 天排查时看过），所以 D06 通过不是独立证据；D08–D10 没有影响过任何技能。
+- `es eval` 新增 `--category dev`，冒烟测试计入开发预算。
+
 ### 第 6 天：写作规范检查
 
 - 解析：LaTeX（跟随 `\input`/`\include`，定位到 `文件:行`），Word（python-docx + lxml，定位到段落 / run）→ 统一文档树 JSON。
@@ -252,6 +272,7 @@ python3 evals/bench.py advance <dir>                                   # L10、D
 ## 10. 待用户确认
 
 1. 顶刊顶会默认名单（第 6 天前）。
+0. 第 5 天关卡需要一份真实数据和目标期刊。
 2. AXON 原说明中的流体 / 粒子参数（第 7 天前）。
 
 ## 11. 约定

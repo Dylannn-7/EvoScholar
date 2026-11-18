@@ -262,7 +262,7 @@ export async function evaluate(
   rt: Runtime,
   genome: HarnessGenome,
   selector: string,
-  opts: { concurrency?: number; useCache?: boolean; capCny?: number; onCase?: (r: CaseResult) => void } = {}
+  opts: { concurrency?: number; useCache?: boolean; capCny?: number; category?: 'evolution' | 'dev'; onCase?: (r: CaseResult) => void } = {}
 ): Promise<CaseResult[]> {
   const bench = new Bench(rt.ws.root)
   if (!bench.available()) throw new Error('找不到 evals/bench.py 和 manifest.json')
@@ -278,7 +278,7 @@ export async function evaluate(
   try {
     return await runSuite(rt, bench, genome, cases, {
       baseDir: join(rt.ws.dataDir, 'runs', `eval-${startedAt.replace(/[-:T]/g, '').slice(0, 12)}`),
-      concurrency: opts.concurrency ?? 2, useCache: opts.useCache, onCase: opts.onCase
+      concurrency: opts.concurrency ?? 2, useCache: opts.useCache, category: opts.category, onCase: opts.onCase
     })
   } finally {
     rt.ledger.roundCap = undefined

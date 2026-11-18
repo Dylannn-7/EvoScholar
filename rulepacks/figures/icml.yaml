@@ -1,0 +1,17 @@
+id: icml
+name: ICML（双栏）
+sources:
+  - url: https://icml.cc/Conferences/2025/AuthorInstructions
+    checked: 2026-11-18
+  - url: https://raw.githubusercontent.com/SakanaAI/AI-Scientist-v2/main/ai_scientist/blank_icml_latex/icml2025.sty
+    checked: 2026-11-18
+    note: 官方样式只提供 zip 下载；这里读取的是 icml2025.sty 的公开镜像：\textwidth 6.75in，\columnsep 0.25in，单栏 (6.75−0.25)/2 = 3.25in
+width_mm: { single: 82.55, double: 171.45 }
+max_height_mm: 228.6
+font: { family: null, min_pt: null, max_pt: null, editable: null }
+panel_label: { style: null }
+raster_min_dpi: null
+line_art_min_dpi: null
+formats: { preferred: [pdf], vector: true }
+color: { space: null, colorblind_safe: null, palette: null }
+axes: { units_required: null, gridlines: null }

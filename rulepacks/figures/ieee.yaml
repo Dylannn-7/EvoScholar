@@ -1,0 +1,27 @@
+id: ieee
+name: IEEE 期刊（JSTQE、JLT、TPAMI 等）
+sources:
+  - url: https://journals.ieeeauthorcenter.ieee.org/create-your-ieee-journal-article/create-graphics-for-your-article/resolution-and-size/
+    checked: 2026-11-18
+  - url: https://journals.ieeeauthorcenter.ieee.org/create-your-ieee-journal-article/create-graphics-for-your-article/file-formatting/
+    checked: 2026-11-18
+width_mm: { single: 88.9, double: 182 }     # 3.5 in / 7.16 in；不建议小于一栏
+max_height_mm: 220                          # 不超过 7.16 × 8.8 in
+font:
+  family: [Helvetica, Times New Roman, Arial, Cambria, Symbol]
+  min_pt: 9                                 # 指南原文：全尺寸下约 9–10 pt
+  max_pt: 10
+  editable: false                           # 嵌入字体或转曲均可
+panel_label: { style: parenthesized }       # IEEE 惯例 (a)、(b)；指南页未规定字号
+raster_min_dpi: 300                         # 彩色 / 灰度 >300 dpi
+line_art_min_dpi: 600                       # 黑白线稿 >600 dpi
+formats: { preferred: [pdf, eps, ps], accepted: [png, tiff], vector: true }
+color:
+  space: null
+  colorblind_safe: null
+  palette: null
+axes:
+  units_required: null
+  gridlines: null
+style_hints:
+  - 折线图每条线用粗线并配不同的数据点符号（指南原文）。

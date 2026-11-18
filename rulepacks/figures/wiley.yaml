@@ -1,0 +1,18 @@
+id: wiley
+name: Wiley 期刊通用（Laser & Photonics Reviews 等）
+sources:
+  - url: https://authorservices.wiley.com/author-resources/Journal-Authors/Prepare/manuscript-preparation-guidelines.html/figure-preparation.html
+    checked: 2026-11-18
+notes: >-
+  Laser & Photonics Reviews 的期刊作者指南页有 Cloudflare 验证，未能核实期刊专属要求；这里是 Wiley 通用要求。
+  通用要求只规定宽度在 80–180 mm 之间，没有给出单栏 / 双栏定值。
+width_mm: { min: 80, max: 180 }
+max_height_mm: null
+font: { family: null, min_pt: null, max_pt: null, editable: null }
+panel_label: { style: null }
+raster_min_dpi: 300         # 图像 300 dpi
+line_art_min_dpi: 600       # 线稿 600 dpi
+formats: { preferred: [pdf, png, tiff], vector: null }
+max_file_mb: 10
+color: { space: null, colorblind_safe: null, palette: null }
+axes: { units_required: null, gridlines: null }

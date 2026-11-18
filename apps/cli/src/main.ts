@@ -156,6 +156,7 @@ async function main() {
       const rs = await evaluate(rt, g, sel, {
         concurrency: Number(flag(args, 'concurrency') ?? 2),
         useCache: !args.includes('--no-cache'),
+        category: flag(args, 'category') === 'dev' ? 'dev' : 'evolution',
         onCase: (r) => console.log(`${r.caseId} ${r.pass ? green('✓') : red('✗')} ${r.cached ? dim('（缓存）') : dim(`${r.steps} 步 ¥${r.costCny.toFixed(3)}`)}${r.error ? yellow(` ${r.error}`) : ''}${!r.pass && r.failures.length ? dim(`  ${r.failures[0].slice(0, 100)}`) : ''}`)
       })
       console.log(`通过 ${rs.filter((r) => r.pass).length}/${rs.length}`)
@@ -203,7 +204,7 @@ async function main() {
   budget                                                        查看 API 花费与预算
   providers                                                     查看模型厂商与 Key 状态
   genome [ID]                                                   查看当前 harness genome
-  eval [development|acceptance|all|L01,D02] [--genome ID] [--no-cache]   跑评测集（计入 evolution 预算）
+  eval [development|acceptance|all|L01,D02] [--genome ID] [--no-cache] [--category dev]   跑评测集（默认计入 evolution 预算）
   evolve [--dry-run] [--force] [--candidates N] [--concurrency N]       跑一轮进化（--force 忽略高峰与每日轮数）
   candidates [ID]                                               候选列表 / 某个候选的 diff 和逐题变化
   promote <ID> · reject <ID> [原因] · rollback [ID]             上线 / 拒绝 / 回滚`)
