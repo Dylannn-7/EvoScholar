@@ -19,7 +19,7 @@ addEventListener('pointermove', (e) => { pointer.x = e.clientX; pointer.y = e.cl
 })()
 addEventListener('scroll', () => { pointer.dirty = true }, { capture: true, passive: true })
 function syncFx () {
-  fx.setDim(current ? 0.4 : 1)
+  fx.setDim(current ? 0.22 : 1)
   if (state?.budget) fx.setBudgetLevel(state.budget.usageTodayCny / Math.max(0.01, state.budget.dailyUsageSoftCny))
 }
 const H = { 'content-type': 'application/json', 'x-evoscholar': '1' }
@@ -111,6 +111,7 @@ async function loadState() {
   renderBudget(state.budget)
   renderStatus()
   syncFx()
+  $('#modelName').textContent = (state.genome.roles.main || '').split('/').pop() || '—'
   const ds = state.providers.find((p) => p.id === state.genome.roles.main.split('/')[0])
   if (ds && !ds.hasKey) banner(`还没有配置 ${ds.label} 的 API Key，请在「模型与密钥」里填写。`)
 }
@@ -203,46 +204,70 @@ $('#tags').addEventListener('click', (e) => {
   document.querySelectorAll('#tags .chip').forEach((x) => x.classList.toggle('on', x === b))
   renderSessions()
 })
+const row = (k, v) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`
 function renderStatus() {
-  const g = state.genome
-  $('#genomeInfo').innerHTML = `<div class="row"><span>${esc(g.id)}</span><span>已上线</span></div>
-    <div class="row"><span>父版本</span><span>${esc(g.parent || '—')}</span></div>
-    <div class="row"><span>待审批</span><span id="pendingCount">${state.pending ?? 0} 个</span></div>`
-  $('#modelInfo').innerHTML = Object.entries({ main: '主力', fast: '轻量', vision: '视觉', reflector: '反思' })
-    .map(([k, n]) => `<div class="row"><span>${n}</span><span>${esc((g.roles[k] || '').split('/').pop())}</span></div>`).join('')
-  $('#exploring').textContent = `${g.id} · ${(g.note || '').slice(0, 90)}`
-  $('#counter').classList.toggle('attn', (state.pending ?? 0) > 0)
-  $('#evoBtn').classList.toggle('attn', (state.pending ?? 0) > 0)
+  const n = state.pending ?? 0
+  $('#counter').classList.toggle('attn', n > 0)
+  $('#evoBtn').classList.toggle('attn', n > 0)
+  if (panelKind === 'overview' && !$('#panel').hidden) renderOverview($('#panelBody'))
 }
-
 function renderBudget(b) {
+  if (state && b) state.budget = { ...state.budget, ...b }
+  fx.setBudgetLevel(b.usageTodayCny / Math.max(0.01, b.dailyUsageSoftCny))
+  if (panelKind === 'overview' && !$('#panel').hidden) renderOverview($('#panelBody'))
+}
+function renderOverview(body) {
+  const g = state.genome
+  const b = state.budget
   const day = b.usageTodayCny / Math.max(0.01, b.dailyUsageSoftCny)
   const cls = day >= 1 ? 'bad' : day >= 0.8 ? 'warn' : ''
-  $('#budget').innerHTML = `<div class="row"><span>今日</span><span>${yuan(b.usageTodayCny)} / ¥${b.dailyUsageSoftCny}</span></div>
-    <div class="bar ${cls}"><i style="width:${Math.min(100, day * 100)}%"></i></div>
-    <div class="row"><span>联网</span><span>${b.webCallsToday} / ${b.webCallsPerDay} 次</span></div>
-    <div class="row"><span>累计</span><span>${yuan(b.totalCny)} / ¥${b.capCny}</span></div>`
-  fx.setBudgetLevel(day)
+  body.innerHTML = `
+    <h3>预算</h3>
+    <div class="group">${row('今日', `${yuan(b.usageTodayCny)} / ¥${b.dailyUsageSoftCny}`)}<div class="bar ${cls}"><i style="width:${Math.min(100, day * 100)}%"></i></div>
+      ${row('联网', `${b.webCallsToday} / ${b.webCallsPerDay} 次`)}${row('累计', `${yuan(b.totalCny)} / ¥${b.capCny}`)}</div>
+    <h3>Genome</h3>
+    <div class="group">${row(esc(g.id), '已上线')}${row('父版本', esc(g.parent || '—'))}${row('待审批', `${state.pending ?? 0} 个`)}</div>
+    <p class="note">${esc(g.note || '')}</p>
+    <h3>模型</h3>
+    <div class="group">${Object.entries({ main: '主力', fast: '轻量', vision: '视觉', reflector: '反思', judge: '评委' }).map(([k, n]) => row(n, esc((g.roles[k] || '—').split('/').pop()))).join('')}</div>
+    <h3>关于</h3>
+    <p class="note">提示词、技能和工具说明都写在一份可审计的 genome 里。系统根据评测提出改进，经你批准才上线，随时可以回滚。</p>`
 }
 
-// ---------- sessions ----------
-async function newSession() {
-  const title = prompt('会话名称（例如：光子神经网络综述）', '新会话')
-  if (title === null) return
-  const r = await post('/api/sessions', { title })
-  await loadState()
-  openSession(r.id)
+const EXAMPLES = [
+  ['文献', '检索 2024 年以来片上光学神经网络的综述，按年份列出 5 篇并附链接'],
+  ['出图', '把 inputs/ 里的透射谱拟合成洛伦兹线型，给出中心波长、FWHM 和 Q 值，按 Optica 规范出图'],
+  ['写作', '按华科博士论文规范检查 inputs/ 里的 main.tex，列出问题和依据']
+]
+function renderSuggest(show) {
+  const box = $('#suggest')
+  box.innerHTML = show ? EXAMPLES.map(([m, t]) => `<button type="button" class="sg"><span>${m}</span>${esc(t)}</button>`).join('') : ''
+  box.querySelectorAll('.sg').forEach((n) => (n.onclick = () => { $('#input').value = n.lastChild.textContent; autosize(); $('#input').focus() }))
 }
-$('#newSession').onclick = (e) => { e.preventDefault(); newSession() }
-$('#counter').onclick = () => showPanel('evolution')
-$('#backHome').onclick = () => {
+function setFresh(on) { document.body.classList.toggle('fresh', on) }
+
+// ---------- sessions ----------
+function newSession() { goHome(); $('#input').focus() }
+function goHome() {
   current = null
   es?.close()
+  closePanel()
   document.body.classList.remove('has-session')
-  $('#title').textContent = '欢迎使用 EvoScholar'
+  setFresh(false)
+  $('#title').textContent = ''
+  $('#subtitle').textContent = ''
+  $('#cwdHint').textContent = '发送后自动新建会话'
+  inner().innerHTML = `<div class="hero-block"><div class="eyebrow">EvoScholar · ${esc(state?.genome.id || '')}</div><h2>会自我进化的科研工作台</h2>
+    <p>文献检索与核验、数据处理与期刊出图、论文与学位论文规范检查。每一次改进都写进可审计的 genome，经你批准才上线。</p></div>`
+  renderSuggest(true)
   renderSessions()
   syncFx()
 }
+$('#counter').onclick = () => showPanel('evolution')
+$('#settingsBtn').onclick = () => (!$('#panel').hidden && panelKind !== 'evolution' ? closePanel() : showPanel('overview'))
+$('#modelChip').onclick = () => showPanel('settings')
+$('#backHome').onclick = goHome
+$('#backHome').onkeydown = (e) => { if (e.key === 'Enter') goHome() }
 
 async function openSession(id) {
   current = id
@@ -258,11 +283,10 @@ async function openSession(id) {
   const el = inner()
   el.innerHTML = ''
   for (const m of s.messages) renderStored(m)
-  if (!s.messages.length) {
-    const ex = ['检索 2024 年以来片上光学神经网络的综述，按年份列出 5 篇并附链接', '把 inputs/ 里的透射谱拟合成洛伦兹线型，给出中心波长、FWHM 和 Q 值，按 Optica 规范出图', '按华科博士论文规范检查 inputs/ 里的 main.tex，列出问题和依据']
-    el.innerHTML = `<div class="empty"><b>今天想研究什么？</b>从一个例子开始，或者直接输入你的问题。${ex.map((x) => `<span class="ex">${esc(x)}</span>`).join('')}<small>文件会放在会话的 inputs/ 目录；需要执行代码时会先请你确认。</small></div>`
-    el.querySelectorAll('.ex').forEach((n) => (n.onclick = () => { $('#input').value = n.textContent; autosize(); $('#input').focus() }))
-  }
+  const fresh = !s.messages.length
+  if (fresh) el.innerHTML = '<div class="empty"><b>今天想研究什么？</b>文件会放在会话的 inputs/ 目录；需要执行代码时会先请你确认。</div>'
+  setFresh(fresh)
+  renderSuggest(fresh)
   setBusy(s.busy)
   connect(id)
   scroll()
@@ -288,7 +312,7 @@ function toolEl(name, args, id) {
   d.className = 'tool'
   if (id) d.dataset.id = id
   const brief = typeof args === 'object' && args ? Object.values(args).map((v) => String(typeof v === 'string' ? v : JSON.stringify(v))).join(' · ').slice(0, 120) : ''
-  d.innerHTML = `<summary><span class="name">${esc(name)}</span> ${esc(brief)} <span class="state">…</span></summary><pre class="args">${esc(JSON.stringify(args, null, 2))}</pre><pre class="result"></pre>`
+  d.innerHTML = `<summary><i class="dot"></i><span class="name">${esc(name)}</span> ${esc(brief)} <span class="state">…</span></summary><pre class="args">${esc(JSON.stringify(args, null, 2))}</pre><pre class="result"></pre>`
   return d
 }
 function fillTool(t, text, isError) {
@@ -443,6 +467,8 @@ $('#composer').onsubmit = async (e) => {
     await openSession(r.id)
   }
   $('.empty', thread)?.remove()
+  setFresh(false)
+  renderSuggest(false)
   inner().insertAdjacentHTML('beforeend', `<div class="msg user">${esc(text)}${pendingImages.length ? ` <span class="muted">[${pendingImages.length} 张图片]</span>` : ''}</div>`)
   const images = pendingImages
   pendingImages = []
@@ -456,16 +482,18 @@ $('#composer').onsubmit = async (e) => {
 
 // ---------- side panel ----------
 let panelKind = null
-document.querySelectorAll('[data-panel]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); panelKind === b.dataset.panel && !$('#panel').hidden ? closePanel() : showPanel(b.dataset.panel) }))
+document.querySelectorAll('[data-panel]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); panelKind === b.dataset.panel && !$('#panel').hidden && !b.closest('#ptabs') ? closePanel() : showPanel(b.dataset.panel) }))
 $('#closePanel').onclick = closePanel
 function closePanel() { $('#panel').hidden = true; panelKind = null; $('#panel').classList.remove('wide-panel'); clearTimeout(evoTimer) }
 async function showPanel(kind) {
   panelKind = kind
   $('#panel').hidden = false
   $('#panel').classList.toggle('wide-panel', kind === 'evolution')
+  document.querySelectorAll('#ptabs button').forEach((b) => b.classList.toggle('on', b.dataset.panel === kind))
   clearTimeout(evoTimer)
   const body = $('#panelBody')
   if (kind === 'evolution') return renderEvolution(body)
+  if (kind === 'overview') { $('#panelTitle').textContent = '概览'; return renderOverview(body) }
   if (kind === 'files') {
     $('#panelTitle').textContent = '会话文件'
     if (!current) return (body.innerHTML = '<p class="muted">先打开一个会话。</p>')
@@ -609,6 +637,7 @@ async function renderCandidate(el, id, body) {
 loadState().then(() => {
   const sid = new URLSearchParams(location.search).get('s')
   if (sid && state.sessions.some((x) => x.id === sid)) openSession(sid)
+  else goHome()
 }).catch((e) => banner(e.message))
 api('/api/evolution').then((r) => {
   const n = r.candidates.filter((c) => c.status === 'pending').length
