@@ -4,7 +4,7 @@ parent: null
 createdBy: manual
 createdAt: 2026-11-18
 status: active
-note: 种子版本：DeepSeek V4.1 Flash 全角色 + 联网搜索
+note: 种子版本：DeepSeek V4.1 Flash 全角色；联网搜索、文件、Python 与进程工具
 instructions:
   system: prompts/system@v1.md
   compaction: prompts/compaction@v1.md
@@ -18,7 +18,7 @@ routing:
     judge: deepseek/deepseek-flash
   rules: []
 tools:
-  enabled: [web_search, web_fetch]
+  enabled: [web_search, web_fetch, list_files, read_file, write_file, edit_file, run_python, run_command, start_process, read_process, stop_process, http_get]
 workflows: {}
 budgets:
   maxSteps: 24

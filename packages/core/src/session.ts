@@ -1,4 +1,5 @@
-import { join } from 'node:path'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
   createJournalAgentStore,
@@ -15,7 +16,7 @@ import { openDb, type Db } from './db'
 import { GenomeRepo, PROTECTED_LIMITS, roleFor, type HarnessGenome } from './genome'
 import { meterModel } from './metering'
 import { createModel, modelInfo } from './providers'
-import { buildTools, type ToolEnv } from './tools'
+import { buildTools, stopAllProcesses, type ToolEnv } from './tools'
 import { TrajectoryRecorder, textOf } from './trajectory'
 
 export type Runtime = { ws: Workspace; db: Db; ledger: Ledger; genomes: GenomeRepo }
@@ -27,6 +28,7 @@ export function openRuntime(ws: Workspace, onAlert?: (m: string) => void): Runti
 
 export type ResearchSession = {
   id: string
+  cwd: string
   genome: HarnessGenome
   session: AgentSession
   recorder: TrajectoryRecorder
@@ -48,20 +50,30 @@ export async function openResearchSession(
     onEvent?: (e: AgentEvent) => void
     onWarning?: (m: string) => void
     approve?: ToolEnv['approve']
+    /** Working directory for file/process tools. Defaults to data/projects/<sessionId>. */
+    cwd?: string
   } = {}
 ): Promise<ResearchSession> {
   const genome = opts.genome ?? rt.genomes.load()
   const sessionId = opts.sessionId ?? `s-${new Date().toISOString().slice(0, 10)}-${randomUUID().slice(0, 8)}`
   const category = opts.category ?? 'usage'
   const ref = roleFor(genome, opts.stage)
+  const recorder = new TrajectoryRecorder(rt.db, sessionId, genome.id, { category, title: opts.title, stage: opts.stage })
   const info = modelInfo(rt.ws.config, ref)
   const model = meterModel(
     createModel(rt.ws.config, ref, { parameters: genome.routing.parameters?.[ref] }),
     { ledger: rt.ledger, modelRef: ref, category: () => category, sessionId, genomeId: genome.id, onWarning: opts.onWarning }
   )
-  const env: ToolEnv = { ws: rt.ws, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, approve: opts.approve }
+  const cwd = resolve(opts.cwd ?? join(rt.ws.dataDir, 'projects', sessionId))
+  mkdirSync(join(cwd, '.evoscholar'), { recursive: true })
+  const traceFile = join(cwd, '.evoscholar', 'trace.jsonl')
+  const trace = (e: Record<string, unknown>) => {
+    const row = { ts: new Date().toISOString(), session: sessionId, genome: genome.id, ...e }
+    appendFileSync(traceFile, JSON.stringify(row) + '\n')
+    recorder.hostEvent(row)
+  }
+  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, approve: opts.approve, trace }
   const tools = buildTools(genome.tools.enabled, env, genome.tools.overrides, (s) => rt.genomes.text(s))
-  const recorder = new TrajectoryRecorder(rt.db, sessionId, genome.id, { category, title: opts.title, stage: opts.stage })
   const b = genome.budgets
   const maxOutputTokens = Math.min(b.maxOutputTokens, info.maxOutputTokens ?? b.maxOutputTokens)
   const inputBudget = Math.min(b.contextBudgetTokens ?? 120_000, PROTECTED_LIMITS.contextBudgetTokens, info.contextWindow - maxOutputTokens)
@@ -69,7 +81,7 @@ export async function openResearchSession(
     sessionId,
     model,
     tools,
-    instructions: rt.genomes.text(genome.instructions.system),
+    instructions: rt.genomes.text(genome.instructions.system) + `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）\n- 日期：${new Date().toISOString().slice(0, 10)}`,
     store: createJournalAgentStore({ directory: join(rt.ws.dataDir, 'sessions') }),
     maxSteps: b.maxSteps,
     maxOutputTokens,
@@ -89,6 +101,7 @@ export async function openResearchSession(
   })
   return {
     id: sessionId,
+    cwd,
     genome,
     session,
     recorder,
@@ -107,6 +120,9 @@ export async function openResearchSession(
         recorder.endTurn(status, answer)
       }
     },
-    dispose: () => session.dispose()
+    async dispose() {
+      await stopAllProcesses(sessionId)
+      await session.dispose()
+    }
   }
 }

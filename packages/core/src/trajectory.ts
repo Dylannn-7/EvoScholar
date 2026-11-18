@@ -71,6 +71,11 @@ export class TrajectoryRecorder {
     this.event('tool.result', { invocationId: m.invocationId, isError: !!m.isError, preview: clip(textOf(m.content), 1500) }, runId)
   }
 
+  /** Host-side trace events (file writes, processes, local HTTP) for evaluation and attribution. */
+  hostEvent(e: Record<string, unknown>): void {
+    this.event(`host.${String(e.kind ?? 'event')}`, e)
+  }
+
   endTurn(outcome: string, answer: string): void {
     if (this.turnId === undefined) return
     const cost = this.db

@@ -1,12 +1,26 @@
 import type { AgentTool } from '@evoscholar/harness'
 import { deepseekFetch, deepseekSearch } from './deepseek'
+import { editFile, listFiles, readFile, writeFile } from './fs'
+import { httpGet, readProcess, runCommand, runPython, startProcess, stopProcess } from './exec'
+export { stopAllProcesses, pythonBin, pyenvDir } from './exec'
+export { inside, checkCommand } from './sandbox'
 import type { ToolEnv, ToolFactory } from './types'
 export * from './types'
 
 /** All tools the host can offer. A genome selects a subset via tools.enabled. */
 export const TOOL_FACTORIES: Record<string, ToolFactory> = {
   web_search: deepseekSearch,
-  web_fetch: deepseekFetch
+  web_fetch: deepseekFetch,
+  list_files: listFiles,
+  read_file: readFile,
+  write_file: writeFile,
+  edit_file: editFile,
+  run_python: runPython,
+  run_command: runCommand,
+  start_process: startProcess,
+  read_process: readProcess,
+  stop_process: stopProcess,
+  http_get: httpGet
 }
 
 export function registerTool(name: string, factory: ToolFactory): void {
