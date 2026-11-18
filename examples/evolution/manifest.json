@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "id": "DEMO-D01",
+      "title": "记录加热阶段的温度均值",
+      "category": "data",
+      "default_split": "development",
+      "phases": 1,
+      "trace": false,
+      "manual_review": false,
+      "samples": [18, 21, 24]
+    },
+    {
+      "id": "DEMO-D02",
+      "title": "记录校准阶段的温度均值",
+      "category": "data",
+      "default_split": "development",
+      "phases": 1,
+      "trace": false,
+      "manual_review": false,
+      "samples": [5, 6, 7, 12]
+    },
+    {
+      "id": "DEMO-A01",
+      "title": "记录冷却阶段的温度均值",
+      "category": "data",
+      "default_split": "acceptance",
+      "phases": 1,
+      "trace": false,
+      "manual_review": false,
+      "samples": [10, 9, 8, 7]
+    }
+  ]
+}

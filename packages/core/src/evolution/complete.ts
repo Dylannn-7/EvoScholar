@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { BudgetCategory } from '../config'
 import { meterModel } from '../metering'
-import { createModel } from '../providers'
+import { createModel, modelInfo } from '../providers'
 import type { Runtime } from '../session'
 
 /** One metered, tool-less model call (used by the reflector). Returns the assistant text. */
@@ -15,6 +15,7 @@ export async function complete(
   const model = meterModel(createModel(rt.ws.config, ref), {
     ledger: rt.ledger,
     modelRef: ref,
+    contextWindow: modelInfo(rt.ws.config, ref).contextWindow,
     category: () => opts.category ?? 'evolution',
     genomeId: opts.genomeId
   })

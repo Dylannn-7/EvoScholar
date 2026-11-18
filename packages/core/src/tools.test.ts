@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import type { AgentTool, Json, ToolContext } from '@evoscholar/harness'
 import { TOOL_FACTORIES, checkCommand, guarded, inside, stopAllProcesses, type ToolEnv } from './tools'
 import { BudgetError } from './budget'
@@ -68,8 +69,9 @@ test('run_python executes and reports changed files', async () => {
   assert.match(text(fail), /75/)
 })
 
-test('background process + localhost http + stop', async () => {
+test('background process + localhost http + stop', async (t) => {
   const { cwd, call, events } = setup()
+  t.after(() => stopAllProcesses('tool-test'))
   writeFileSync(join(cwd, 'srv.py'), `
 import http.server, socketserver
 class H(http.server.BaseHTTPRequestHandler):
@@ -83,15 +85,24 @@ with socketserver.TCPServer(('127.0.0.1', 0), H) as s:
     print(f'http://127.0.0.1:{s.server_address[1]}', flush=True)
     s.serve_forever()
 `)
-  const started = text(await call('start_process', { command: 'python3 srv.py', wait_s: 1.5 }))
-  const id = /进程 (\S+)：/.exec(started)![1]
-  const url = /(http:\/\/127\.0\.0\.1:\d+)/.exec(started)![1]
+  let output = text(await call('start_process', { command: 'python3 srv.py', wait_s: 0 }))
+  const processId = /进程 (\S+)：/.exec(output)
+  assert.ok(processId, output)
+  const [, id] = processId
+  const deadline = Date.now() + 10_000
+  const address = /http:\/\/127\.0\.0\.1:\d+/
+  while (!address.test(output) && Date.now() < deadline) {
+    await delay(50)
+    output += '\n' + text(await call('read_process', { id }))
+    if (/已退出|已终止/.test(output)) break
+  }
+  const url = address.exec(output)?.[0]
+  assert.ok(url, `服务未就绪：${output.slice(-1000)}`)
   assert.match(text(await call('http_get', { url: url + '/primary?q=queue' })), /HTTP 429/)
   assert.match(text(await call('http_get', { url: url + '/backup?q=queue' })), /HTTP 200/)
   await call('stop_process', { id })
   assert.deepEqual(events.filter((e) => e.kind === 'http').map((e) => e.status), [429, 200])
   await assert.rejects(async () => TOOL_FACTORIES.http_get({} as ToolEnv).validate({ url: 'https://example.com' }))
-  await stopAllProcesses('tool-test')
 })
 
 test('tool exceptions become error results; budget errors still propagate', async () => {

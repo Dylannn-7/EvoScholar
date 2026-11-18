@@ -18,8 +18,9 @@
     "start": "node --no-warnings apps/server/dist/main.js",
     "chat": "node --no-warnings apps/cli/dist/main.js chat",
     "es": "node --no-warnings apps/cli/dist/main.js",
+    "demo:evolution": "node scripts/demo-evolution.mjs",
     "setup:python": "node scripts/setup-python.mjs",
-    "test": "node --no-warnings --test packages/core/dist/*.test.js"
+    "test": "node --no-warnings --test packages/core/dist/*.test.js apps/server/dist/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",

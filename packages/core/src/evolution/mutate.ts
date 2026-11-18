@@ -2,7 +2,9 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { HarnessGenome } from '../genome'
 import type { Runtime } from '../session'
+import { readSkillFile, saveSkillRevision, skillNameValid } from '../skills'
 import { TOOL_FACTORIES, type ToolEnv } from '../tools'
+import { mutateWorkflow, type WorkflowOperator } from '../workflow-plan'
 import type { Proposal } from './reflect'
 
 /** prompts/system@v3.md -> next free version path (never overwrites an existing file). */
@@ -53,15 +55,31 @@ export function mutate(rt: Runtime, base: HarnessGenome, p: Proposal, runId: str
     g.instructions.system = ref
   } else if (p.target.startsWith('tool:')) {
     const tool = p.target.slice(5)
+    if (!g.tools.enabled.includes(tool)) throw new Error(`工具未启用：${tool}`)
     const prev = base.tools.overrides?.[tool]?.description ?? `prompts/tools/${tool}@v0.md`
     const ref = nextVersionPath(rt.ws.root, prev)
     write(ref, `${toolDescription(rt, base, tool).trimEnd()}\n使用注意：\n${p.bullets.map((b) => `- ${b}`).join('\n')}\n`)
     g.tools.overrides = { ...(g.tools.overrides ?? {}), [tool]: { ...(g.tools.overrides?.[tool] ?? {}), description: ref } }
+  } else if (p.target.startsWith('skill:')) {
+    const name = p.target.slice(6)
+    const existing = g.skills?.find((skill) => skill.name === name)
+    if (!skillNameValid(name) || (!existing && !name.startsWith('distilled-')) ||
+        !g.tools.enabled.includes('read_skill') || !p.description?.trim() || !p.bullets.length)
+      throw new Error(`无效的技能蒸馏建议：${p.target}`)
+    const previous = existing && readSkillFile(rt.ws.root, name, existing.version)
+    if (existing && !previous) throw new Error(`缺少技能 ${name} v${existing.version}`)
+    const body = addLessons(previous?.body ?? `# ${name}`, p.bullets)
+    const revision = saveSkillRevision(rt.ws.root, name, p.description, body)
+    g.skills = existing ? g.skills!.map((skill) => skill.name === name ? revision : skill) : [...(g.skills ?? []), revision]
+  } else if (p.target.startsWith('workflow:')) {
+    g.workflows = mutateWorkflow(g.workflows, p.target.slice(9) as WorkflowOperator, g.tools.enabled)
   } else {
     throw new Error(`不支持的变异目标：${p.target}`)
   }
   // Protected fields must be untouched by construction; double-check before saving.
-  if (JSON.stringify(g.budgets) !== JSON.stringify(base.budgets) || JSON.stringify(g.routing.roles) !== JSON.stringify(base.routing.roles))
+  if (JSON.stringify(g.budgets) !== JSON.stringify(base.budgets) ||
+      JSON.stringify(g.routing) !== JSON.stringify(base.routing) ||
+      JSON.stringify(g.tools.enabled) !== JSON.stringify(base.tools.enabled))
     throw new Error('变异不得修改受保护字段')
   rt.genomes.save(g)
   return g

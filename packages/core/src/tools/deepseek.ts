@@ -5,24 +5,33 @@ import { objectArgs, textResult, type ToolEnv, type ToolFactory } from './types'
 const BASE = 'https://api.deepseek.com/v1/tools'
 
 async function call(env: ToolEnv, kind: 'search' | 'fetch', body: Record<string, unknown>, signal: AbortSignal) {
-  env.ledger.assertCanSpend(env.category(), toolCostUsd(`deepseek/${kind}`) * env.ledger.rate, { web: true })
   const key = process.env.DEEPSEEK_API_KEY
   if (!key) throw new Error('缺少 DEEPSEEK_API_KEY')
-  const res = await fetch(`${BASE}/${kind}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal
+  signal.throwIfAborted()
+  const costUsd = toolCostUsd(`deepseek/${kind}`)
+  const reservation = env.ledger.reserve({
+    category: env.category(), kind, provider: 'deepseek', sessionId: env.sessionId, genomeId: env.genomeId,
+    units: 1, costUsd
   })
-  if (!res.ok) return { ok: false as const, status: res.status, data: null }
-  const data = (await res.json()) as Record<string, unknown>
-  const billable = kind === 'search' ? Array.isArray(data.results) && data.results.length > 0 : !!data.content
-  if (billable)
-    env.ledger.record({
-      category: env.category(), kind, provider: 'deepseek', sessionId: env.sessionId, genomeId: env.genomeId,
-      units: 1, costUsd: toolCostUsd(`deepseek/${kind}`)
+  let actual: { costUsd: number } | null | undefined
+  try {
+    const res = await fetch(`${BASE}/${kind}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal
     })
-  return { ok: true as const, status: res.status, data }
+    if (!res.ok) {
+      if (res.status < 500) actual = null
+      return { ok: false as const, status: res.status, data: null }
+    }
+    const data = (await res.json()) as Record<string, unknown>
+    const billable = kind === 'search' ? Array.isArray(data.results) && data.results.length > 0 : !!data.content
+    actual = billable ? { costUsd } : null
+    return { ok: true as const, status: res.status, data }
+  } finally {
+    reservation.settle(actual)
+  }
 }
 
 type SearchHit = { title: string; url: string; snippet?: string; summary?: string; content?: string; site_name?: string | null; date?: string | null; rerank_score?: number; authority?: number }

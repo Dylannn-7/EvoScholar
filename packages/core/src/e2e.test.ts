@@ -12,6 +12,7 @@ function workspace() {
   for (const f of ['evoscholar.config.json']) cpSync(join(REPO, f), join(dir, f))
   cpSync(join(REPO, 'genomes'), join(dir, 'genomes'), { recursive: true })
   cpSync(join(REPO, 'prompts'), join(dir, 'prompts'), { recursive: true })
+  cpSync(join(REPO, 'skills'), join(dir, 'skills'), { recursive: true })
   mkdirSync(join(dir, 'data'))
   writeFileSync(join(dir, '.env'), 'DEEPSEEK_API_KEY=sk-test\n')
   delete process.env.DEEPSEEK_API_KEY
@@ -88,4 +89,97 @@ test('hard cap stops calls before they are sent', async () => {
   await assert.rejects(rs.ask('hi'), BudgetError)
   await rs.dispose()
   assert.equal(called, false)
+})
+
+test('the full output limit is reserved across separate ledger connections', async (t) => {
+  const ws = workspace()
+  ws.config.budget.categories.dev = 0.5
+  const rt = openRuntime(ws, () => {})
+  const other = openRuntime(ws, () => {})
+  const realFetch = globalThis.fetch
+  let release!: () => void
+  let sent!: () => void
+  const held = new Promise<void>((resolve) => { release = resolve })
+  const requestSent = new Promise<void>((resolve) => { sent = resolve })
+  let calls = 0
+  globalThis.fetch = async (_url, init) => {
+    assert.equal(JSON.parse(String(init?.body)).max_tokens, 8192)
+    if (++calls === 1) {
+      sent()
+      await held
+    }
+    return sse([
+      { choices: [{ index: 0, delta: { content: '完成' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      { choices: [], usage: { prompt_tokens: 800, completion_tokens: 60 } }
+    ])
+  }
+  const first = await openResearchSession(rt, { category: 'dev' })
+  const second = await openResearchSession(other, { category: 'dev' })
+  const pending = first.ask('第一条')
+  t.after(async () => {
+    release()
+    await pending.catch(() => {})
+    await first.dispose()
+    await second.dispose()
+    rt.db.close()
+    other.db.close()
+    globalThis.fetch = realFetch
+  })
+  await Promise.race([requestSent, pending])
+  const reserved = other.ledger.summary().reservedCny
+  assert.ok(reserved > 0.07 && reserved < 0.5, String(reserved))
+  ws.config.budget.categories.dev = reserved * 1.5
+  await assert.rejects(second.ask('第二条'), { name: 'BudgetError', scope: 'category' })
+  assert.equal(calls, 1)
+  release()
+  assert.equal((await pending).status, 'complete')
+  assert.equal(other.ledger.summary().reservedCny, 0)
+  assert.ok(other.ledger.summary().totalCny < 0.01)
+})
+
+test('official DeepSeek image input fits a small budget without reserving the context window', async (t) => {
+  const ws = workspace()
+  ws.config.budget.categories.dev = 0.3
+  const rt = openRuntime(ws, () => {})
+  const originalFetch = globalThis.fetch
+  let called = false
+  globalThis.fetch = async (_url, init) => {
+    called = true
+    assert.ok(rt.ledger.summary().reservedCny < 0.3)
+    assert.match(String(init?.body), /data:image\/png;base64,/)
+    return sse([
+      { choices: [{ index: 0, delta: { content: '完成' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      { choices: [], usage: { prompt_tokens: 1200, completion_tokens: 8 } }
+    ])
+  }
+  t.after(() => { globalThis.fetch = originalFetch; rt.db.close() })
+  const rs = await openResearchSession(rt, { category: 'dev' })
+  try {
+    const result = await rs.ask([{ type: 'image', mimeType: 'image/png', source: 'data:image/png;base64,' + 'A'.repeat(250_000) }])
+    assert.equal(result.status, 'complete')
+    assert.ok(called)
+    assert.equal(rt.ledger.summary().reservedCny, 0)
+  } finally { await rs.dispose() }
+})
+
+test('web requests reserve the remaining daily slot and release it on rejection', () => {
+  const ws = workspace()
+  ws.config.budget.webCallsPerDay = 1
+  const rt = openRuntime(ws, () => {})
+  const entry = { category: 'dev', kind: 'search', provider: 'deepseek', units: 1, costUsd: 0.00075 } as const
+  try {
+    const first = rt.ledger.reserve(entry)
+    assert.throws(() => rt.ledger.reserve(entry), { name: 'BudgetError', scope: 'web' })
+    first.settle(null)
+    const second = rt.ledger.reserve(entry)
+    second.settle()
+    second.settle()
+    assert.equal(rt.ledger.summary().webCallsToday, 1)
+    assert.equal(rt.ledger.summary().reservedCny, 0)
+    assert.equal((rt.db.prepare('SELECT estimated FROM ledger').get() as { estimated: number }).estimated, 1)
+  } finally {
+    rt.db.close()
+  }
 })

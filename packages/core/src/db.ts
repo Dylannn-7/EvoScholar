@@ -111,26 +111,49 @@ const MIGRATIONS: string[] = [
      status TEXT NOT NULL,          -- evaluating | pending | approved | rejected | discarded
      reason TEXT,
      ts TEXT NOT NULL
-   );`
+   );`,
+  `ALTER TABLE ledger ADD COLUMN round_id TEXT;
+   ALTER TABLE ledger ADD COLUMN estimated INTEGER NOT NULL DEFAULT 0;
+   CREATE INDEX ledger_round ON ledger(round_id);
+   CREATE TABLE budget_reservations (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     category TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     round_id TEXT,
+     cost_cny REAL NOT NULL
+   );`,
+  `ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE eval_runs ADD COLUMN task_hash TEXT;
+   CREATE INDEX eval_runs_cache_key ON eval_runs(genome_hash, case_id, task_hash)
+     WHERE error IS NULL AND task_hash IS NOT NULL;`,
+  `ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;`
 ]
 
 export function openDb(dataDir: string): Db {
   mkdirSync(dataDir, { recursive: true })
   const db = new DatabaseSync(join(dataDir, 'evoscholar.sqlite'))
+  db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;')
   // WAL needs shared memory; network/FUSE mounts reject it. TRUNCATE also avoids deleting files.
   try {
     db.exec('PRAGMA journal_mode = WAL')
   } catch {
     db.exec('PRAGMA journal_mode = TRUNCATE')
   }
-  db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;')
   db.exec('CREATE TABLE IF NOT EXISTS schema_version (v INTEGER NOT NULL)')
-  const row = db.prepare('SELECT v FROM schema_version').get() as { v: number } | undefined
-  let v = row?.v ?? 0
-  if (!row) db.prepare('INSERT INTO schema_version (v) VALUES (0)').run()
-  for (; v < MIGRATIONS.length; v++) {
-    db.exec(MIGRATIONS[v])
-    db.prepare('UPDATE schema_version SET v = ?').run(v + 1)
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const row = db.prepare('SELECT v FROM schema_version').get() as { v: number } | undefined
+    let v = row?.v ?? 0
+    if (!row) db.prepare('INSERT INTO schema_version (v) VALUES (0)').run()
+    for (; v < MIGRATIONS.length; v++) {
+      db.exec(MIGRATIONS[v])
+      db.prepare('UPDATE schema_version SET v = ?').run(v + 1)
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    db.close()
+    throw error
   }
   return db
 }

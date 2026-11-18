@@ -19,6 +19,7 @@ import { createModel, modelInfo } from './providers'
 import { buildTools, stopAllProcesses, type ToolEnv } from './tools'
 import { TrajectoryRecorder, textOf } from './trajectory'
 import { skillIndex } from './skills'
+import { openWorkflow } from './workflow'
 
 export type Runtime = { ws: Workspace; db: Db; ledger: Ledger; genomes: GenomeRepo }
 
@@ -61,9 +62,11 @@ export async function openResearchSession(
   const ref = roleFor(genome, opts.stage)
   const recorder = new TrajectoryRecorder(rt.db, sessionId, genome.id, { category, title: opts.title, stage: opts.stage })
   const info = modelInfo(rt.ws.config, ref)
+  const enforceCap = category !== 'usage' || !!rt.ws.config.budget.enforceUsageCap
   const model = meterModel(
     createModel(rt.ws.config, ref, { parameters: genome.routing.parameters?.[ref] }),
-    { ledger: rt.ledger, modelRef: ref, category: () => category, sessionId, genomeId: genome.id, onWarning: opts.onWarning }
+    { ledger: rt.ledger, modelRef: ref, contextWindow: info.contextWindow, imageInputTokenCap: info.imageInputTokenCap,
+      enforceCap, category: () => category, sessionId, genomeId: genome.id, onWarning: opts.onWarning }
   )
   const cwd = resolve(opts.cwd ?? join(rt.ws.dataDir, 'projects', sessionId))
   mkdirSync(join(cwd, '.evoscholar'), { recursive: true })
@@ -73,19 +76,25 @@ export async function openResearchSession(
     appendFileSync(traceFile, JSON.stringify(row) + '\n')
     recorder.hostEvent(row)
   }
-  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, approve: opts.approve, trace }
+  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, skills: genome.skills, approve: opts.approve, trace }
   const tools = buildTools(genome.tools.enabled, env, genome.tools.overrides, (s) => rt.genomes.text(s))
+  const workflow = openWorkflow(genome, env, model, opts.stage)
   const b = genome.budgets
-  const maxOutputTokens = Math.min(b.maxOutputTokens, info.maxOutputTokens ?? b.maxOutputTokens)
-  const inputBudget = Math.min(b.contextBudgetTokens ?? 120_000, PROTECTED_LIMITS.contextBudgetTokens, info.contextWindow - maxOutputTokens)
+  const maxOutputTokens = enforceCap
+    ? Math.min(b.maxOutputTokens, info.maxOutputTokens ?? b.maxOutputTokens)
+    : (info.maxOutputTokens ?? b.maxOutputTokens)
+  const inputBudget = enforceCap
+    ? Math.min(b.contextBudgetTokens ?? 120_000, PROTECTED_LIMITS.contextBudgetTokens, info.contextWindow - maxOutputTokens)
+    : Math.max(16_384, info.contextWindow - Math.min(maxOutputTokens, Math.floor(info.contextWindow * 0.4)))
   const session = await openAgentSession({
     sessionId,
-    model,
-    tools,
-    instructions: rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, genome.skills) + `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）\n- 日期：${new Date().toISOString().slice(0, 10)}`,
+    model: workflow?.model ?? model,
+    tools: [...tools, ...(workflow?.tools ?? [])],
+    instructions: rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, genome.skills) + (workflow?.instructions ?? '') + `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）\n- 日期：${new Date().toISOString().slice(0, 10)}`,
     store: createJournalAgentStore({ directory: join(rt.ws.dataDir, 'sessions') }),
     maxSteps: b.maxSteps,
     maxOutputTokens,
+    ...(!enforceCap ? { useProviderOutputDefault: true } : {}),
     timeoutMs: b.timeoutMs,
     toolResults: { authorize: async () => true },
     compaction: {
@@ -96,6 +105,7 @@ export async function openResearchSession(
       instructions: rt.genomes.text(genome.instructions.compaction) || undefined
     },
     onEvent: (e) => {
+      workflow?.onEvent?.(e)
       recorder.onEvent(e)
       opts.onEvent?.(e)
     }
@@ -123,7 +133,7 @@ export async function openResearchSession(
     },
     async dispose() {
       await stopAllProcesses(sessionId)
-      await session.dispose()
+      try { await session.dispose() } finally { await workflow?.dispose() }
     }
   }
 }
