@@ -1,0 +1,30 @@
+id: nature
+name: Nature 及 Nature 系列子刊（Nature Photonics 等）
+sources:
+  - url: https://research-figure-guide.nature.com/figures/preparing-figures-our-specifications/
+    checked: 2026-11-18
+  - url: https://research-figure-guide.nature.com/figures/building-and-exporting-figure-panels/
+    checked: 2026-11-18
+notes: >-
+  Light: Science & Applications 属于 Springer Nature，未单独核实，暂可参照本规则包。
+width_mm: { single: 89, double: 183 }
+max_height_mm: 170
+font:
+  family: [Arial, Helvetica]
+  min_pt: 5
+  max_pt: 7
+  editable: true            # 不要把文字转成曲线；嵌入 TrueType（Type 42）
+panel_label: { size_pt: 8, weight: bold, style: lowercase }   # a, b, c（正体加粗小写）
+raster_min_dpi: 300         # 照片类；在线校样最高 450 dpi
+line_art_min_dpi: null
+formats: { preferred: [pdf, eps], vector: true }
+color:
+  space: RGB
+  colorblind_safe: true
+  no_colored_text: true
+  palette: ['#000000', '#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7']   # 指南示例配色（Wong 2011）
+axes:
+  units_required: true
+  units_style: parentheses  # 例如 Data (unit)
+  ticks_required: true
+  gridlines: false

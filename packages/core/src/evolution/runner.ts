@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { BudgetError } from '../budget'
+import type { BudgetCategory } from '../config'
 import type { HarnessGenome } from '../genome'
 import { openResearchSession, type Runtime } from '../session'
 import type { Bench, BenchCase } from './bench'
@@ -45,7 +46,7 @@ export async function runCase(
   bench: Bench,
   genome: HarnessGenome,
   c: BenchCase,
-  opts: { evolutionRun?: string; baseDir: string }
+  opts: { evolutionRun?: string; baseDir: string; category?: BudgetCategory }
 ): Promise<CaseResult> {
   const hash = rt.genomes.hash(genome)
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
@@ -57,7 +58,7 @@ export async function runCase(
   let grade = { machine_status: 'fail', failures: [] as string[], manual_review: [] as string[] }
   try {
     await bench.prepare(c.id, runDir)
-    const rs = await openResearchSession(rt, { sessionId, genome, category: 'evolution', cwd: runDir, stage: c.category, title: `评测 ${c.id}` })
+    const rs = await openResearchSession(rt, { sessionId, genome, category: opts.category ?? 'evolution', cwd: runDir, stage: c.category, title: `评测 ${c.id}` })
     try {
       const r1 = await rs.ask(CASE_PROMPT)
       if (r1.status === 'failed') error = 'run failed'
@@ -104,7 +105,7 @@ export async function runSuite(
   bench: Bench,
   genome: HarnessGenome,
   cases: BenchCase[],
-  opts: { evolutionRun?: string; baseDir: string; concurrency?: number; useCache?: boolean; onCase?: (r: CaseResult) => void }
+  opts: { evolutionRun?: string; baseDir: string; concurrency?: number; useCache?: boolean; category?: BudgetCategory; onCase?: (r: CaseResult) => void }
 ): Promise<CaseResult[]> {
   const hash = rt.genomes.hash(genome)
   const results: CaseResult[] = []

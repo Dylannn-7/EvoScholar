@@ -4,6 +4,7 @@ import { editFile, listFiles, readFile, writeFile } from './fs'
 import { readSkill } from '../skills'
 import { litImport, litLookup, litSearch, litVerify, pdfPageImage, pdfText } from './literature'
 import { httpGet, readProcess, runCommand, runPython, startProcess, stopProcess } from './exec'
+import { figureCheck } from './figures'
 export { stopAllProcesses, pythonBin, pyenvDir } from './exec'
 export { inside, checkCommand } from './sandbox'
 export { mergeWorks, titleSim, normDoi, searchAll, type Work } from './literature'
@@ -31,6 +32,7 @@ export const TOOL_FACTORIES: Record<string, ToolFactory> = {
   lit_import: litImport,
   pdf_text: pdfText,
   pdf_page_image: pdfPageImage,
+  figure_check: figureCheck,
   read_skill: readSkill
 }
 

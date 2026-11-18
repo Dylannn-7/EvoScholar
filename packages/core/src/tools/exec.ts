@@ -26,8 +26,13 @@ export function childEnv(env: ToolEnv): NodeJS.ProcessEnv {
 }
 
 /** Run the bundled literature helper (python/evoscholar_lit.py) and parse its JSON/stdout. */
-export async function runLitHelper(env: ToolEnv, args: string[], signal: AbortSignal): Promise<string> {
-  const r = await run(pythonBin(env), [join(env.ws.root, 'python', 'evoscholar_lit.py'), ...args], env, 120, signal)
+export function runLitHelper(env: ToolEnv, args: string[], signal: AbortSignal): Promise<string> {
+  return runPyHelper(env, 'evoscholar_lit.py', args, signal)
+}
+
+/** Run a bundled helper script from python/ and return the JSON part of its stdout. */
+export async function runPyHelper(env: ToolEnv, script: string, args: string[], signal: AbortSignal, timeoutS = 120): Promise<string> {
+  const r = await run(pythonBin(env), [join(env.ws.root, 'python', script), ...args], env, timeoutS, signal)
   if (r.code !== 0) throw new Error(r.out.trim().split('\n').slice(-3).join(' ') || `helper exit ${r.code}`)
   // JSON goes to stdout; library warnings (stderr or stray stdout lines) are dropped.
   const i = r.stdout.search(/^[[{]/m)

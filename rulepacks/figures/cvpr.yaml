@@ -1,0 +1,15 @@
+id: cvpr
+name: CVPR（双栏）
+sources:
+  - url: https://raw.githubusercontent.com/cvpr-org/author-kit/main/cvpr.sty
+    checked: 2026-11-18
+    note: 官方 author kit；\textwidth 6.875in，\columnsep 0.3125in，单栏 (6.875−0.3125)/2 = 3.28125in；\textheight 8.875in
+width_mm: { single: 83.34, double: 174.63 }
+max_height_mm: 225.43
+font: { family: null, min_pt: null, max_pt: null, editable: null }
+panel_label: { style: null }
+raster_min_dpi: null
+line_art_min_dpi: null
+formats: { preferred: [pdf], vector: true }
+color: { space: null, colorblind_safe: null, palette: null }
+axes: { units_required: null, gridlines: null }

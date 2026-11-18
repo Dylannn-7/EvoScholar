@@ -2,7 +2,7 @@ id: g-0005
 parent: g-0000
 createdBy: evolution/evo-202611180639
 createdAt: 2026-11-18T06:39:37.641Z
-status: active
+status: archived
 note: instructions：智能体习惯把「更有用」的派生量与解释塞进结构化产物，导致 JSON 键集合／CSV 列比规定多出若干项而被整体判不符。
 instructions:
   system: prompts/system@v5.md

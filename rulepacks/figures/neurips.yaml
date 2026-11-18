@@ -1,0 +1,18 @@
+id: neurips
+name: NeurIPS（单栏）
+sources:
+  - url: https://neurips.cc/Conferences/2025/CallForPapers
+    checked: 2026-11-18
+  - url: https://raw.githubusercontent.com/gpleiss/latex_template/main/neurips_2025.sty
+    checked: 2026-11-18
+    note: 官方样式只提供 zip 下载；这里读取的是 neurips_2025.sty（2025/04/02 版）的公开镜像，geometry textwidth=5.5in
+notes: 会议只规定版面（禁止缩小页边距和字号），没有单独的图规范；图宽不超过 \textwidth。
+width_mm: { single: 139.7 }
+max_height_mm: 228.6
+font: { family: null, min_pt: null, max_pt: null, editable: null }
+panel_label: { style: null }
+raster_min_dpi: null
+line_art_min_dpi: null
+formats: { preferred: [pdf], vector: true }
+color: { space: null, colorblind_safe: null, palette: null }
+axes: { units_required: null, gridlines: null }
