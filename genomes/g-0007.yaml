@@ -2,7 +2,7 @@ id: g-0007
 parent: g-0006
 createdBy: manual
 createdAt: 2026-11-18T07:39:33.347Z
-status: candidate
+status: active
 note: 第 6 天：启用写作规范检查（manuscript_check 工具、writing-check 与 research-integrity 技能）
 instructions:
   system: prompts/system@v5.md
