@@ -2,6 +2,22 @@
 const $ = (s, el = document) => el.querySelector(s)
 let fx = { setState () {}, setDim () {}, setBudgetLevel () {}, reform () {}, setQuality () {}, setMouseStrength () {}, quality: 'off' }
 import('./fx/index.js').then((m) => { try { fx = m.initFx(document.getElementById('bg')); syncFx() } catch (e) { console.warn('fx disabled:', e) } }).catch((e) => console.warn('fx disabled:', e))
+// Liquid-glass specular light: every glass surface gets the pointer position in its own coordinates.
+const pointer = { x: -1e4, y: -1e4, dirty: true }
+addEventListener('pointermove', (e) => { pointer.x = e.clientX; pointer.y = e.clientY; pointer.dirty = true }, { passive: true })
+;(function glassLight () {
+  if (pointer.dirty) {
+    pointer.dirty = false
+    for (const el of document.querySelectorAll('.glass')) {
+      const r = el.getBoundingClientRect()
+      if (!r.width) continue
+      el.style.setProperty('--lx', `${pointer.x - r.left}px`)
+      el.style.setProperty('--ly', `${pointer.y - r.top}px`)
+    }
+  }
+  requestAnimationFrame(glassLight)
+})()
+addEventListener('scroll', () => { pointer.dirty = true }, { capture: true, passive: true })
 function syncFx () {
   fx.setDim(current ? 0.4 : 1)
   if (state?.budget) fx.setBudgetLevel(state.budget.usageTodayCny / Math.max(0.01, state.budget.dailyUsageSoftCny))
@@ -165,13 +181,13 @@ function renderSessions() {
   const counts = state.sessions.reduce((m, s) => ((m[s.mode] = (m[s.mode] || 0) + 1), m), {})
   document.querySelectorAll('#tags .chip').forEach((c) => {
     const n = c.dataset.mode === 'all' ? state.sessions.length : counts[c.dataset.mode] || 0
-    c.innerHTML = `${c.textContent.replace(/\s*\d+$/, '')}<span class="n">${n}</span>`
+    c.title = `${n} 个会话`
   })
   const list = state.sessions.filter((s) => modeFilter === 'all' || s.mode === modeFilter)
-  const card = (s) => `<a class="card ${s.id === current ? 'active' : ''}" data-id="${esc(s.id)}">
+  const card = (s) => `<a class="card session glass ${s.id === current ? 'active' : ''}" data-id="${esc(s.id)}">
       <div class="thumb"><img src="${s.thumb ? `/api/sessions/${encodeURIComponent(s.id)}/file?path=${encodeURIComponent(s.thumb)}` : artFor(s)}" alt="" loading="lazy"><span class="tag">${esc(MODES[s.mode] || '对话')}</span></div>
-      <div class="meta"><div class="l">${esc(s.title || s.id)}</div><div class="r">${s.turns} 轮 · ${esc(yuan(s.cost))}\n${esc(ago(s.last || s.created_at))}</div></div></a>`
-  $('#sessions').innerHTML = `<a class="newrow" data-new="1"><span><span class="plus">＋</span>新建会话</span><span class="r">NEW SESSION</span></a>`
+      <div class="meta"><div class="l">${esc(s.title || s.id)}</div><div class="r">${esc(ago(s.last || s.created_at))}</div></div></a>`
+  $('#sessions').innerHTML = `<a class="newrow glass" data-new="1"><span><span class="plus">+</span>新建会话</span><span class="r">NEW</span></a>`
     + (list.length ? list.map(card).join('') : `<div class="none">${state.sessions.length ? '这一类还没有会话' : '还没有会话。新建一个，问点什么吧。'}</div>`)
 }
 $('#sessions').addEventListener('click', (e) => {
@@ -244,8 +260,8 @@ async function openSession(id) {
   for (const m of s.messages) renderStored(m)
   if (!s.messages.length) {
     const ex = ['检索 2024 年以来片上光学神经网络的综述，按年份列出 5 篇并附链接', '把 inputs/ 里的透射谱拟合成洛伦兹线型，给出中心波长、FWHM 和 Q 值，按 Optica 规范出图', '按华科博士论文规范检查 inputs/ 里的 main.tex，列出问题和依据']
-    el.innerHTML = `<div class="empty"><b>[开始]</b> 问点什么吧。也可以点一个例子：${ex.map((x) => `<span class="ex">→ ${esc(x)}</span>`).join('')}<small>文件会放在会话的 inputs/ 目录；需要执行代码时会先请你确认。</small></div>`
-    el.querySelectorAll('.ex').forEach((n) => (n.onclick = () => { $('#input').value = n.textContent.slice(2); $('#input').focus() }))
+    el.innerHTML = `<div class="empty"><b>今天想研究什么？</b>从一个例子开始，或者直接输入你的问题。${ex.map((x) => `<span class="ex">${esc(x)}</span>`).join('')}<small>文件会放在会话的 inputs/ 目录；需要执行代码时会先请你确认。</small></div>`
+    el.querySelectorAll('.ex').forEach((n) => (n.onclick = () => { $('#input').value = n.textContent; autosize(); $('#input').focus() }))
   }
   setBusy(s.busy)
   connect(id)
@@ -387,6 +403,8 @@ function setBusy(b) {
 $('#stopBtn').onclick = () => post(`/api/sessions/${current}/cancel`)
 
 // ---------- composer ----------
+function autosize () { const t = $('#input'); t.style.height = 'auto'; t.style.height = `${Math.min(200, t.scrollHeight)}px` }
+$('#input').addEventListener('input', autosize)
 $('#input').addEventListener('focus', () => fx.setMouseStrength(0.15))
 $('#input').addEventListener('blur', () => fx.setMouseStrength())
 $('#input').addEventListener('keydown', (e) => {
@@ -430,6 +448,7 @@ $('#composer').onsubmit = async (e) => {
   pendingImages = []
   $('#attachments').innerHTML = ''
   $('#input').value = ''
+  autosize()
   setBusy(true)
   try { await post(`/api/sessions/${current}/ask`, { text, images }) } catch (err) { setBusy(false); handle({ type: 'error', message: err.message }) }
   scroll()
