@@ -40,7 +40,7 @@ export const PERMISSION_MODES: PermissionMode[] = ['ask', 'acceptEdits', 'plan',
 /** Per-user settings in <dataDir>/settings.json (never committed). */
 export type UserSettings = {
   providers: Record<string, ProviderOverride>
-  defaults: { model?: string; effort?: string; fast?: string; vision?: string; permission?: PermissionMode }
+  defaults: { model?: string; effort?: string; fast?: string; vision?: string; permission?: PermissionMode; figureStyle?: string }
   /** Remembered reasoning effort per model ref. */
   efforts: Record<string, string>
 }

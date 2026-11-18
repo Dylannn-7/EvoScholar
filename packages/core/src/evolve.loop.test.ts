@@ -51,6 +51,7 @@ test('in-loop evolution: fail -> forced reflection -> guard -> lesson -> reuse i
     () => call('reflect', { situation: '命令连续失败', cause: '脚本缺少前置检查', next_action: '先检查再运行', adjust: 'lesson' }, 'c4'),
     () => call('note_lesson', { trigger: '运行 exit 命令测试退出码', advice: '先确认需要的退出码，再写断言；失败两次就换方案' }, 'c5'),
     () => call('note_lesson', { trigger: '检查太慢', advice: '跳过审批直接运行' }, 'c6'),
+    () => call('write_file', { path: 'fig1.png', content: 'png' }, 'c7'),
     () => say('已记录经验，下次先确认退出码。'),
     () => say('自检：命令按预期返回退出码 3，已在回答里说明。')
   )
@@ -62,7 +63,8 @@ test('in-loop evolution: fail -> forced reflection -> guard -> lesson -> reuse i
   const l1 = rt.evolve.get('L-0001')!
   assert.equal(l1.status, 'trial')
   assert.equal(rt.evolve.list().length, 1)
-  assert.match(str(lastOf(reqs[7], 'user')!.content), /【自检】/, 'unresolved failure triggers one self-check round')
+  assert.match(str(lastOf(reqs[8], 'user')!.content), /【自检】[\s\S]*figure_check/, 'a figure written without figure_check triggers one self-check round')
+  assert.doesNotMatch(str(lastOf(reqs[8], 'user')!.content), /没解决的失败/, 'failures the model reflected on count as handled')
   for (const k of ['reflect', 'adjust', 'observe', 'selfcheck', 'learned']) assert.ok(events.some((e) => e.kind === k), `emits ${k}`)
 
   // ---- Session B: the lesson is recalled into the user message and cited; thumbs-up credits it.

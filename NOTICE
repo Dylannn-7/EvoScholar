@@ -5,3 +5,19 @@ This product includes software developed by aipoch (https://github.com/aipoch/op
 licensed under the Apache License, Version 2.0:
   - packages/harness/src  (from packages/agent-harness/src, unmodified)
   - packages/core/src/presets.json (subset derived from packages/providers/src/providers/data.ts)
+
+This product includes Agent Skills from K-Dense-AI/scientific-agent-skills
+(https://github.com/K-Dense-AI/scientific-agent-skills), Copyright (c) 2025 K-Dense Inc., MIT License
+(per-skill license fields apply; seaborn skill: BSD-3-Clause). Each imported folder keeps the
+upstream license as LICENSE.repo.md and its provenance in .source.json:
+  - skills/scientific-visualization
+  - skills/matplotlib
+  - skills/seaborn
+
+The figure style catalog (python/evoscholar_styles.py) uses these packages, installed from PyPI by
+`npm run setup:python` (not redistributed here):
+  - SciencePlots (https://github.com/garrettj403/SciencePlots), MIT License
+  - tueplots (https://github.com/pnkraemer/tueplots), MIT License
+  - aquarel (https://github.com/lgienapp/aquarel), MIT License
+  - cmcrameri (https://github.com/callumrollo/cmcrameri), MIT License; the Scientific colour maps by
+    Fabio Crameri should be cited when used in publications (doi:10.5281/zenodo.1243862)

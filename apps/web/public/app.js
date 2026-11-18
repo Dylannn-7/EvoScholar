@@ -137,9 +137,9 @@ addEventListener('keydown', (e) => { if (e.key === 'Escape') closePop() })
 // ---------------------------------------------------------------- boot
 store.refresh().then(() => {
   const sid = new URLSearchParams(location.search).get('s')
-  const hash = location.hash.slice(1)
+  const [hash, sub] = location.hash.slice(1).split(':')
   workbench = initWorkbench()
   if (sid) workbench.open(sid)
   else workbench.home()
-  go(RENDER[hash] ? hash : 'workbench')
+  go(RENDER[hash] ? hash : 'workbench', sub)
 }).catch((e) => toast(`无法连接后台：${e.message}`, 'err', 8000))

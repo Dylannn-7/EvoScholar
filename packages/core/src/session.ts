@@ -24,7 +24,8 @@ import { skillIndex } from './skills'
 import { openWorkflow } from './workflow'
 import { installEvolveLoop, type EvolveHooks, type EvolveLoop } from './evolve/loop'
 import { EvolveStore } from './evolve/store'
-import { listSkills, type SkillRef } from './skills'
+import { extraSkills, listSkills, type SkillRef } from './skills'
+import { kernelIndex } from './evolve/kernels'
 
 export type Runtime = { ws: Workspace; db: Db; ledger: Ledger; genomes: GenomeRepo; evolve: EvolveStore }
 
@@ -110,7 +111,7 @@ export async function openResearchSession(
     loop = installEvolveLoop({
       store: opts.evolve.store, sessionId, projectId: opts.evolve.projectId, stage: opts.stage, cwd,
       turnId: () => recorder.turn, emit: opts.evolve.emit, choose: opts.evolve.choose,
-      toolNames: genome.tools.enabled, skillNames: listSkills(rt.ws.root).map((x) => x.name)
+      toolNames: genome.tools.enabled, skillNames: listSkills(rt.ws.root).map((x) => x.name), env
     })
   }
   const platform = process.platform === 'win32' ? 'Windows（命令用 PowerShell 语法）' : process.platform === 'darwin' ? 'macOS' : 'Linux'
@@ -126,12 +127,17 @@ export async function openResearchSession(
       overrides[t] = { description: `${overrides[t]?.description ? rt.genomes.text(overrides[t].description!) : base}\n补充（本会话试用）：${note}` }
     }
     let skills: SkillRef[] = [...(genome.skills ?? [])].filter((x) => !ov?.disable.includes(x.name))
+    for (const [name, version] of Object.entries(ov?.versions ?? {})) {
+      skills = skills.some((x) => x.name === name) ? skills.map((x) => (x.name === name ? { name, version } : x)) : [...skills, { name, version }]
+    }
     for (const name of ov?.enable ?? []) {
       const meta = listSkills(rt.ws.root).find((x) => x.name === name)
       if (meta && !skills.some((x) => x.name === name)) skills = [...skills, { name, version: meta.version }]
     }
     const tools = [...buildTools(genome.tools.enabled, { ...env, skills }, overrides, (s) => rt.genomes.text(s)), ...(workflow?.tools ?? []), ...(loop?.tools ?? [])]
-    const instructions = rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, skills) + (workflow?.instructions ?? '') + (loop?.instructions ?? '') + (ov?.instructions ?? '') + envNote
+    const forged = loop ? kernelIndex(rt.ws.root, extraSkills(rt.ws.root).map((x) => x.name)) : ''
+    const style = rt.ws.settings?.defaults.figureStyle ? `\n- 用户默认出图风格：${rt.ws.settings.defaults.figureStyle}（在 run_python 里 \`import evoscholar_styles as S; S.use('${rt.ws.settings.defaults.figureStyle}', venue=...)\`；用户另有要求时以用户为准）` : ''
+    const instructions = rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, skills) + forged + (workflow?.instructions ?? '') + (loop?.instructions ?? '') + (ov?.instructions ?? '') + envNote + style
     return { tools, instructions, version: ov?.version ?? '' }
   }
   const initial = assemble()

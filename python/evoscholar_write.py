@@ -614,7 +614,7 @@ def check(name: str):
     return deco
 
 
-_COUNTER = re.compile(r'(不可写成|不可写作|不写成|不写作|不要写成|而不是|而非|错误写法|误写为|×)\s*[：:]?\s*$')
+_COUNTER = re.compile(r'(不可写成|不可写作|不写成|不写作|不要写成|而不是|而非|错误写法|误写为|×)\s*[：:]?\s*[「『“"‘\']?\s*$')
 
 
 def _counterexample(text: str, start: int) -> bool:
@@ -1422,6 +1422,37 @@ def _xref_style(doc: Doc, p: dict, rule: dict) -> list:
     return out[: p.get('max', 15)]
 
 
+@check('pattern')
+def _pattern(doc: Doc, p: dict, rule: dict) -> list:
+    """Generic user rule: phrases or a regex in the body (or abstract / captions), with a custom message.
+    Quoted counter-examples (「不可写成…」) and the reference list are skipped."""
+    scope = p.get('scope', 'all')
+    if scope == 'abstract':
+        text = doc.meta.get('abstract', '')
+    elif scope == 'captions':
+        text = '\n'.join(f.get('caption') or '' for f in doc.floats)
+    else:
+        text = _plain(doc)
+        stop = _ref_section_start(doc)
+        if stop:
+            text = text[:stop]
+    pats = [re.escape(x) for x in p.get('phrases', []) or []]
+    if p.get('regex'):
+        pats.append(p['regex'])
+    out = []
+    msg = p.get('message') or '命中自定义规则'
+    for pat in pats:
+        try:
+            rx = re.compile(pat)
+        except re.error as e:
+            return [finding(rule['id'], 'info', '', f'规则的正则表达式无效：{e}')]
+        hits = [m for m in rx.finditer(text) if not _counterexample(text, m.start())]
+        for m in hits[: int(p.get('max_hits', 5))]:
+            loc = doc.meta.get('abstract_loc', '') if scope == 'abstract' else ('图表标题' if scope == 'captions' else doc.loc(m.start()))
+            out.append(finding(rule['id'], p.get('severity', 'warning'), loc, msg, m.group(0)))
+    return out
+
+
 @check('avoid_phrases')
 def _avoid_phrases(doc: Doc, p: dict, rule: dict) -> list:
     scope = p.get('scope', 'all')
@@ -1444,9 +1475,31 @@ def list_packs() -> list[str]:
     return sorted(p.stem for p in RULES_DIR.glob('*.yaml'))
 
 
+def user_pack_file() -> Path | None:
+    """The user's own rules live in the data directory (never in the repo): $EVOSCHOLAR_DATA/rulepacks/user.yaml."""
+    import os
+    d = os.environ.get('EVOSCHOLAR_DATA')
+    return Path(d) / 'rulepacks' / 'user.yaml' if d else None
+
+
 def load_pack(name: str) -> dict:
     if not re.fullmatch(r'[a-z0-9-]+', name):
         raise ValueError(f'无效的规则包名：{name}')
+    if name == 'user' and user_pack_file() is not None:
+        import yaml
+        uf = user_pack_file()
+        pack = (yaml.safe_load(uf.read_text(encoding='utf-8')) if uf.exists() else None) or {}
+        pack.setdefault('id', 'user')
+        pack.setdefault('name', '我的规则')
+        rules = []
+        for r in pack.get('rules') or []:
+            if r.get('status') == 'disabled':
+                continue
+            if r.get('status') == 'trial':  # proposals run as hints until the user accepts them
+                r = {**r, 'params': {**(r.get('params') or {}), 'severity': 'info', 'message': '[试用规则] ' + str((r.get('params') or {}).get('message', ''))}}
+            rules.append(r)
+        pack['rules'] = rules
+        return pack
     f = RULES_DIR / f'{name}.yaml'
     if not f.exists():
         raise ValueError(f'没有规则包 {name}；可用：{", ".join(list_packs())}')
@@ -1490,6 +1543,10 @@ def run(path: str | Path, packs: Iterable[str] = ('common',), variant: str | Non
     if stage not in STAGES:
         raise ValueError(f'stage 只能是 {" / ".join(STAGES)}')
     doc = doc or load(path)
+    packs = list(packs)
+    uf = user_pack_file()
+    if uf is not None and uf.exists() and 'user' not in packs:
+        packs.append('user')
     resolved = resolve_packs(packs)
     findings: list[dict] = []
     verify: list[str] = []

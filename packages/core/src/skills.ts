@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { join, relative, resolve, sep } from 'node:path'
 import YAML from 'yaml'
 import type { Json } from '@evoscholar/harness'
 import { objectArgs, textResult, type ToolFactory } from './tools/types'
@@ -67,17 +67,60 @@ export function skillIndex(root: string, enabled: SkillRef[] = []): string {
 export const readSkill: ToolFactory = (env) => ({
   name: 'read_skill',
   version: '1',
-  description: '读取一个技能（SKILL.md）的完整说明。技能列表见系统指令的「可用技能」。',
-  parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'], additionalProperties: false },
+  description: '读取一个技能（SKILL.md）的完整说明；file 可读取该技能附带的参考文档或脚本（如 references/xxx.md、scripts/yyy.py）。技能列表见系统指令的「可用技能」。',
+  parameters: { type: 'object', properties: { name: { type: 'string' }, file: { type: 'string', description: '技能目录内的相对路径，可选' } }, required: ['name'], additionalProperties: false },
   scheduling: 'parallel',
-  validate: (i) => objectArgs(i, ['name'], ['name']) as Json,
+  validate: (i) => objectArgs(i, ['name', 'file'], ['name']) as Json,
   authorize: async () => true,
   async execute(args) {
-    const { name } = args as { name: string }
-    const ref = env.skills?.find((skill) => skill.name === name)
+    const { name, file } = args as { name: string; file?: string }
+    const ref = env.skills?.find((skill) => skill.name === name) ?? extraSkills(env.ws.root).find((x) => x.name === name)
     const s = ref && readSkillFile(env.ws.root, ref.name, ref.version)
-    if (!s) return textResult(`没有技能 ${(args as { name: string }).name}`, true)
+    if (!s) return textResult(`没有技能 ${name}`, true)
+    const dir = join(env.ws.root, 'skills', name)
+    if (file) {
+      const f = resolve(dir, file)
+      if (!f.startsWith(resolve(dir) + sep) || /(^|[\\/])\./.test(file)) return textResult('只能读取技能目录里的文件', true)
+      if (!existsSync(f) || statSync(f).isDirectory()) return textResult(`技能 ${name} 里没有 ${file}`, true)
+      if (statSync(f).size > 80_000) return textResult(`${file} 太大（超过 80 KB），请只读需要的部分`, true)
+      env.trace?.({ kind: 'skill.read', name, file })
+      return textResult(readFileSync(f, 'utf8'))
+    }
     env.trace?.({ kind: 'skill.read', name: s.meta.name, version: s.meta.version })
-    return textResult(`# 技能 ${s.meta.name} v${s.meta.version}\n${s.body}`)
+    const extras = listSkillFiles(dir)
+    return textResult(`# 技能 ${s.meta.name} v${s.meta.version}\n${s.body}${extras.length ? `\n\n---\n本技能附带文件（用 read_skill 的 file 参数读取）：${extras.join('、')}` : ''}`)
   }
 })
+
+/** Supporting files of a skill (references, scripts, assets), relative to its folder. */
+export function listSkillFiles(dir: string, limit = 60): string[] {
+  const out: string[] = []
+  const walk = (d: string, depth: number) => {
+    let names: string[] = []
+    try { names = readdirSync(d).sort() } catch { return }
+    for (const n of names) {
+      if (n.startsWith('.') || /^SKILL(@v\d+)?\.md$/.test(n) || n === '__pycache__' || out.length >= limit) continue
+      const f = join(d, n)
+      if (statSync(f).isDirectory()) { if (depth > 0) walk(f, depth - 1) } else out.push(relative(dir, f).split(sep).join('/'))
+    }
+  }
+  walk(dir, 3)
+  return out
+}
+
+export type SkillSource = { type: 'builtin' | 'github' | 'zip' | 'folder' | 'forged'; origin?: string; license?: string; importedAt?: string; status?: 'trial' | 'active'; sessions?: string[]; reuses?: string[]; kernel?: boolean }
+export function skillSource(root: string, name: string): SkillSource {
+  const f = join(root, 'skills', name, '.source.json')
+  if (!existsSync(f)) return { type: 'builtin' }
+  try { return JSON.parse(readFileSync(f, 'utf8')) as SkillSource } catch { return { type: 'builtin' } }
+}
+export function writeSkillSource(root: string, name: string, src: SkillSource): void {
+  writeFileSync(join(root, 'skills', name, '.source.json'), JSON.stringify(src, null, 2) + '\n')
+}
+
+/** Host-level skills every session can read even if the genome does not list them: forged kernels. */
+export function extraSkills(root: string): SkillRef[] {
+  const dir = join(root, 'skills')
+  if (!existsSync(dir)) return []
+  return readdirSync(dir).filter((n) => skillSource(root, n).type === 'forged').map((n) => ({ name: n, version: readSkillFile(root, n)?.meta.version ?? 1 }))
+}

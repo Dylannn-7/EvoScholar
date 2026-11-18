@@ -321,7 +321,11 @@ export function initWorkbench () {
     note_lesson: ['调整', (a) => `记经验：${a.trigger || ''} → ${a.advice || ''}`],
     tune_harness: ['调整', (a) => `本会话：${a.op === 'prompt.note' ? `追加规则「${a.value}」` : a.op === 'tool.note' ? `${a.target} 说明补充「${a.value}」` : `${a.op === 'skill.enable' ? '启用' : '停用'}技能 ${a.target}`}`],
     recall: ['回忆', (a) => `检索「${a.query || ''}」`],
-    offer_choices: ['选择', (a) => a.question || '']
+    offer_choices: ['选择', (a) => a.question || ''],
+    forge_skill: ['调整', (a) => `锻造可执行技能 ${a.name || ''}：${a.description || ''}`],
+    patch_skill: ['调整', (a) => `补丁技能 ${a.skill || ''}：${a.addition || ''}`],
+    propose_rule: ['调整', (a) => `提出写作规则 ${a.id || ''}：${a.description || ''}`],
+    run_skill: ['技能', (a) => `调用 ${a.name || ''}`]
   }
   const EVO_LABEL = { recall: '回忆', reflect: '反思', adjust: '调整', selfcheck: '自检', learned: '学到', preference: '偏好', observe: '观察', credit: '归因', revert: '撤销', choice: '选择' }
   function evoEl (kind, text, opts = {}) {
@@ -332,7 +336,7 @@ export function initWorkbench () {
     return d
   }
   function revertBtn (d, text) {
-    const m = /\b([LP]-\d{4})\b|\b(O-[a-z0-9]+)\b/.exec(text || '')
+    const m = /\b([LP]-\d{4})\b|\b(O-[a-z0-9]+)\b|\b(user\.[a-z0-9-]+)\b/.exec(text || '')
     if (!m || $('.undo', d)) return
     const b = document.createElement('button')
     b.className = 'btn ghost small undo'
@@ -342,7 +346,8 @@ export function initWorkbench () {
       e.preventDefault(); e.stopPropagation()
       try {
         if (m[1]) await del(`/api/memory/${m[1]}`)
-        else await post(`/api/overlays/${m[2]}/revert`)
+        else if (m[2]) await post(`/api/overlays/${m[2]}/revert`)
+        else await del(`/api/plugins/rules/${m[3]}`)
         b.textContent = '已撤销'; b.disabled = true; d.classList.add('reverted')
       } catch (err) { toast(err.message, 'err') }
     }
@@ -371,7 +376,7 @@ export function initWorkbench () {
   function finishStep (d, text, isError) {
     d.classList.add(isError ? 'err' : 'done')
     $('.res', d).textContent = text || ''
-    if (!isError && (d.dataset.evo === 'note_lesson' || d.dataset.evo === 'tune_harness')) revertBtn(d, text)
+    if (!isError && ['note_lesson', 'tune_harness', 'patch_skill', 'propose_rule'].includes(d.dataset.evo)) revertBtn(d, text)
     if (d.dataset.t0) $('.ms', d).textContent = `${((Date.now() - Number(d.dataset.t0)) / 1000).toFixed(1)}s`
   }
   function feedbackEl () {
