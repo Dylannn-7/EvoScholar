@@ -258,7 +258,7 @@ python3 evals/bench.py advance <dir>                                   # L10、D
   - 第一版 common 包报 29 条，其中 22 条是规则实现的误报：`\vspace{-2mm}` 当成数值单位、`\ref{a-1}-\ref{a-3}` 范围引用没识别、`\textit{全称} (缩写)` / `(CDB; \cite…)` 的定义没识别、Preferred-FT / PPO-GT / GPT-4 / TL;DR / CNN/DailyMail 当成缩写、导言区 `\newcommand` 当成使用、不是定义的「(DPO)」当成冲突定义。全部修复并补了回归测试，降到 7 条。
   - 新增：没有 .bib 时读取 .bbl；PDF 只做页数 / 元数据 / 章节检查（PDF 抽取的文字做内容检查噪声太大）；`stage`（submission / camera-ready）：终稿不查匿名，页数上限按会议说明 +1（NeurIPS 10、ICML 9、ICLR 10）。
   - 报告：`check-tex-camera-ready/`、`check-tex-submission/`、`check-pdf-*/`（各含 report.json / report.md，tex 的含批注副本）。
-  - **用户标记结果（同意初判）**：有效 3（图未引用、表无标题、LLM 未定义）、误报 3（KL、MLE、GPT 未定义）、不确定 2（2025 checklist 不适用于 2023 稿件；缩写在摘要中先用）。总误报率 50%，但误报全部来自提示级规则 `common.abbreviations.undefined`（75%）；错误 / 提醒级规则 0 误报。下一步可以考虑：公知缩写默认不报，或把这条规则默认关闭。
+  - **用户标记结果（同意初判）**：有效 3（图未引用、表无标题、LLM 未定义）、误报 3（KL、MLE、GPT 未定义）、不确定 2（2025 checklist 不适用于 2023 稿件；缩写在摘要中先用）。总误报率 50%，但误报全部来自提示级规则 `common.abbreviations.undefined`（75%）；错误 / 提醒级规则 0 误报。**用户决定公知缩写不报**：`common.yaml` 的 `common.abbreviations` 规则加了可编辑的 `well_known` 列表（数学 / 统计 / 信号处理记号与模型、数据集名；LLM 不在其中，因为用户判为有效）。重跑后 DPO 终稿报告剩 6 条，KL、MLE、GPT 不再报。
   - 还没测：中文学位论文 / 中文期刊 / GB/T 7714 规则需要一篇中文稿件。
 - 「有效 / 误报」标记：工具 `check_feedback`（用户在对话里说「F003 是误报」时由智能体记录）、CLI `es mark <report.json> F001,F003 fp [原因]`、`es check-stats`（各规则误报率）。数据存在 events 表，type 为 `host.check.feedback`。
 - 注意：技能是看过 W01–W10 的任务说明（不含答案）后写的；W07 计页口径没有写死。

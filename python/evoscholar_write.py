@@ -818,6 +818,7 @@ def _abbreviations(doc: Doc, p: dict, rule: dict) -> list:
     if stop:
         text = text[:stop]
     allow = COMMON_ACRONYMS | set(p.get('allow', []))
+    well_known = set(p.get('well_known', []))
     text = re.sub(r'\bTL;DR\b', lambda m: ' ' * len(m.group(0)), text)
     norm = lambda a: a[:-1] if a.endswith('s') and sum(ch.isupper() for ch in a[:-1]) >= 2 else a
     defs: dict[str, tuple[int, str]] = {}
@@ -851,7 +852,7 @@ def _abbreviations(doc: Doc, p: dict, rule: dict) -> list:
         if ab in defs:
             if pos < defs[ab][0] - 1:
                 out.append(finding(rule['id'] + '.before_definition', 'warning', doc.loc(pos), f'缩写 {ab} 在定义（{doc.loc(defs[ab][0])}）之前就已使用', ab))
-        elif counts[ab] >= min_uses:
+        elif counts[ab] >= min_uses and ab not in well_known:
             out.append(finding(rule['id'] + '.undefined', 'info', doc.loc(pos), f'缩写 {ab} 出现 {counts[ab]} 次，未见首次出现时的全称定义（如果是公知缩写可忽略）', ab))
         reported += 1
         if reported > 40:
