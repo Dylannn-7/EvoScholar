@@ -6,7 +6,7 @@ import { CONFIG } from './config.js'
 import { Fluid } from './fluid.js'
 import { Particles } from './particles.js'
 
-const NOOP = { setState () {}, setDim () {}, setBudgetLevel () {}, reform () {}, setQuality () {}, setMouseStrength () {}, quality: 'off', dispose () {} }
+const NOOP = { setState () {}, setDim () {}, setBudgetLevel () {}, reform () {}, setQuality () {}, setMouseStrength () {}, setPaused () {}, quality: 'off', dispose () {} }
 const QKEY = 'evoscholar.fxQuality'
 
 function autoQuality () {
@@ -104,6 +104,7 @@ export function initFx (canvas) {
   // ---- loop
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
   let running = true
+  let userPaused = false
   let raf = 0
   let hiddenSince = 0
   let lastT = performance.now()
@@ -161,7 +162,7 @@ export function initFx (canvas) {
     if (document.hidden) {
       hiddenSince = performance.now()
       setTimeout(() => { if (document.hidden && performance.now() - hiddenSince >= C.pauseAfterHiddenMs) { running = false; cancelAnimationFrame(raf) } }, C.pauseAfterHiddenMs + 50)
-    } else if (!running) {
+    } else if (!running && !userPaused) {
       running = true
       lastT = performance.now()
       raf = requestAnimationFrame(frame)
@@ -174,6 +175,17 @@ export function initFx (canvas) {
     setDim (v) { dimTarget = Math.max(0, Math.min(1, v)) },
     setBudgetLevel (v) { budget = Math.max(0, v || 0) },
     setMouseStrength (v) { mouseTarget = v ?? C.particles.mouseStrength },
+    setPaused (p) {
+      userPaused = !!p
+      if (userPaused) {
+        running = false
+        cancelAnimationFrame(raf)
+      } else if (!running && !reduced && !document.hidden) {
+        running = true
+        lastT = performance.now()
+        raf = requestAnimationFrame(frame)
+      }
+    },
     reform () { particles.reform() },
     setQuality (q) { try { localStorage.setItem(QKEY, q) } catch {} ; location.reload() },
     dispose () { running = false; cancelAnimationFrame(raf); particles.dispose(); fluid.dispose(); renderer.dispose() }

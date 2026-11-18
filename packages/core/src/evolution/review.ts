@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import YAML from 'yaml'
 import type { HarnessGenome } from '../genome'
 import type { Runtime } from '../session'
+import { readSkillFile } from '../skills'
 
 export type CandidateRow = {
   genome_id: string
@@ -24,6 +25,7 @@ export type CandidateRow = {
 }
 
 export type DiffLine = { op: ' ' | '+' | '-'; text: string }
+export type ArtifactDiff = { key: string; from?: string; to?: string; diff: DiffLine[] }
 export type CaseDelta = { caseId: string; split: string; base?: boolean; cand?: boolean; baseCost?: number; candCost?: number; failures: string[] }
 
 /** Line diff (LCS); inputs are small (genome YAML, prompts), so O(n·m) is fine. */
@@ -91,6 +93,8 @@ export type CandidateDetail = {
   parent?: HarnessGenome
   genomeDiff: DiffLine[]
   promptDiffs: { key: string; from?: string; to: string; diff: DiffLine[] }[]
+  skillDiffs: ArtifactDiff[]
+  workflowDiff: DiffLine[]
   cases: CaseDelta[]
   report?: string
 }
@@ -115,8 +119,27 @@ export function candidateDetail(rt: Runtime, genomeId: string): CandidateDetail 
     const before = from ? rt.genomes.text(from) : ''
     promptDiffs.push({ key, from, to, diff: compactDiff(lineDiff(before, rt.genomes.text(to))) })
   }
+  const skillDiffs: ArtifactDiff[] = []
+  const previousSkills = new Map((parent?.skills ?? []).map((skill) => [skill.name, skill.version]))
+  const currentSkills = new Map((genome.skills ?? []).map((skill) => [skill.name, skill.version]))
+  for (const name of new Set([...previousSkills.keys(), ...currentSkills.keys()])) {
+    const fromVersion = previousSkills.get(name)
+    const toVersion = currentSkills.get(name)
+    if (fromVersion === toVersion) continue
+    const from = fromVersion === undefined ? null : readSkillFile(rt.ws.root, name, fromVersion)
+    const to = toVersion === undefined ? null : readSkillFile(rt.ws.root, name, toVersion)
+    skillDiffs.push({
+      key: name, from: from ? relative(rt.ws.root, from.meta.path) : undefined,
+      to: to ? relative(rt.ws.root, to.meta.path) : undefined,
+      diff: compactDiff(lineDiff(from?.raw ?? '', to?.raw ?? ''))
+    })
+  }
+  const workflowDiff = compactDiff(lineDiff(YAML.stringify(parent?.workflows ?? {}), YAML.stringify(genome.workflows ?? {})))
   const base = parent ? latestByCase(rt, rt.genomes.hash(parent)) : new Map()
-  const cand = latestByCase(rt, rt.genomes.hash(genome))
+  const assessed = candidate && rt.db.prepare(`SELECT genome_hash FROM eval_runs
+    WHERE genome_id = ? AND evolution_run = ? ORDER BY id DESC LIMIT 1`)
+    .get(genome.id, candidate.evolution_run) as { genome_hash: string } | undefined
+  const cand = latestByCase(rt, assessed?.genome_hash ?? rt.genomes.hash(genome))
   const ids = [...new Set([...base.keys(), ...cand.keys()])].sort()
   const cases: CaseDelta[] = ids.map((id) => {
     const x = base.get(id)
@@ -128,14 +151,20 @@ export function candidateDetail(rt: Runtime, genomeId: string): CandidateDetail 
     const row = rt.db.prepare(`SELECT report_path FROM evolution_runs WHERE id = ?`).get(candidate.evolution_run) as { report_path?: string } | undefined
     if (row?.report_path && existsSync(row.report_path)) report = readFileSync(row.report_path, 'utf8')
   }
-  return { candidate, genome, parent, genomeDiff, promptDiffs, cases, report }
+  return { candidate, genome, parent, genomeDiff, promptDiffs, skillDiffs, workflowDiff, cases, report }
 }
 
 /** Genome lineage for the panel: id, parent, status, note. */
-export function lineage(rt: Runtime): { id: string; parent: string | null; status: string; createdBy: string; note: string }[] {
+export function lineage(rt: Runtime) {
+  const rows = rt.db.prepare('SELECT genome_id, target, status FROM candidates').all() as Pick<CandidateRow, 'genome_id' | 'target' | 'status'>[]
+  const candidates = new Map(rows.map((row) => [row.genome_id, row]))
   return rt.genomes.list().map((id) => {
     const g = rt.genomes.load(id)
-    return { id, parent: g.parent ?? null, status: g.status, createdBy: g.createdBy, note: g.note ?? '' }
+    const candidate = candidates.get(id)
+    return {
+      id, parent: g.parent ?? null, status: g.status, createdBy: g.createdBy, note: g.note ?? '',
+      target: candidate?.target ?? null, candidateStatus: candidate?.status ?? null
+    }
   })
 }
 

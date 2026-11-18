@@ -222,10 +222,13 @@ export const litSearch: ToolFactory = (env) => ({
     const a = args as { query: string; sources?: string[]; year_from?: number; year_to?: number; limit?: number }
     const { works, errors } = await searchAll({ env, signal: c.signal }, a.query, a.sources ?? DEFAULT_SOURCES, a.limit ?? 8, a.year_from, a.year_to)
     works.sort((x, y) => y.sources.length - x.sources.length || (y.citations ?? 0) - (x.citations ?? 0))
-    const dir = join(env.cwd, '.evoscholar')
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, 'last_search.json'), JSON.stringify({ query: a, works }, null, 2))
-    const head = `共 ${works.length} 条（已合并去重；完整结果存于 .evoscholar/last_search.json）${errors.length ? `\n部分来源失败：${errors.join('；')}` : ''}`
+    if (!env.readOnly) {
+      const dir = join(env.cwd, '.evoscholar')
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'last_search.json'), JSON.stringify({ query: a, works }, null, 2))
+    }
+    const saved = env.readOnly ? '' : '；完整结果存于 .evoscholar/last_search.json'
+    const head = `共 ${works.length} 条（已合并去重${saved}）${errors.length ? `\n部分来源失败：${errors.join('；')}` : ''}`
     return textResult(`${head}\n\n${works.slice(0, 25).map(formatWork).join('\n\n')}`)
   }
 })

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BudgetError } from '../budget'
@@ -13,6 +14,10 @@ export type EvolveOptions = {
   maxCandidates?: number
   capCny?: number
   force?: boolean
+  /** Resume the baseline of an interrupted round with the same ledger and cache. */
+  resumeBaselineRunId?: string
+  /** Compare one candidate even if every development case already passes. */
+  testCandidateOnPerfectBaseline?: boolean
   concurrency?: number
   dryRun?: boolean
   /** Re-run flipped cases once more on both genomes before judging (default true). */
@@ -85,24 +90,35 @@ export function judge(base: CaseResult[], cand: CaseResult[]): { better: boolean
 export async function evolveRound(rt: Runtime, opts: EvolveOptions = {}): Promise<EvolveReport> {
   const log = opts.onProgress ?? (() => {})
   const bench = new Bench(rt.ws.root)
-  if (!bench.available()) throw new Error('找不到 evals/bench.py 和 manifest.json')
+  bench.checkAvailable()
   const cfg = rt.ws.config
   if (cfg.evolution?.offPeakOnly !== false && isDeepSeekPeak() && !opts.force)
     throw new Error('现在是 DeepSeek 高峰时段（北京时间工作日 9–12、14–18 点），进化只在非高峰运行')
-  if (roundsToday(rt) >= cfg.budget.evolutionRoundsPerDay && !opts.force)
+  if (!opts.resumeBaselineRunId && roundsToday(rt) >= cfg.budget.evolutionRoundsPerDay && !opts.force)
     throw new Error(`今天已经跑过 ${cfg.budget.evolutionRoundsPerDay} 轮进化`)
 
   const base = rt.genomes.load()
-  const runId = `evo-${now().replace(/[-:T]/g, '').slice(0, 12)}`
+  const startedAt = now()
+  const runId = opts.resumeBaselineRunId ?? `evo-${startedAt.replace(/[-:T]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`
+  if (!/^evo-\d{14}-[0-9a-f]{8}$/.test(runId)) throw new Error('进化轮次 ID 无效')
+  rt = { ...rt, ledger: rt.ledger.forRound(runId, opts.capCny) }
   const dir = join(rt.ws.dataDir, 'evolution', runId)
   const runsDir = join(rt.ws.dataDir, 'runs', runId)
-  mkdirSync(dir, { recursive: true })
-  const startedAt = now()
-  rt.db.prepare(`INSERT INTO evolution_runs (id, ts_start, base_genome, status) VALUES (?,?,?, 'running')`).run(runId, startedAt, base.id)
-  rt.ledger.roundCap = { startedAt, capCny: Math.min(opts.capCny ?? cfg.budget.evolutionPerRoundCny, cfg.budget.evolutionPerRoundCny) }
-
   const dev = bench.cases('development')
   const acc = bench.cases('acceptance')
+  mkdirSync(dir, { recursive: true })
+  if (opts.resumeBaselineRunId) {
+    const cost = rt.ledger.summary().roundCny
+    const updated = rt.db.prepare(`UPDATE evolution_runs SET status='running', ts_end=NULL, note=?
+      WHERE id=? AND base_genome=? AND status IN ('budget','failed') AND ABS(cost_cny-?) < 0.000001
+      AND NOT EXISTS (SELECT 1 FROM candidates WHERE evolution_run=?)
+      AND NOT EXISTS (SELECT 1 FROM budget_reservations WHERE round_id=?)`)
+      .run('从已记账的中断基线续跑', runId, base.id, cost, runId, runId)
+    if (!updated.changes) throw new Error('该轮无法安全续跑基线')
+    log(`续跑同一轮 ${runId}，已记账 ¥${cost.toFixed(4)}`)
+  } else {
+    rt.db.prepare(`INSERT INTO evolution_runs (id, ts_start, base_genome, status) VALUES (?,?,?, 'running')`).run(runId, startedAt, base.id)
+  }
   const byId = new Map([...dev, ...acc].map((c) => [c.id, c]))
   const suite = (g: HarnessGenome, cases: BenchCase[], useCache = true) =>
     runSuite(rt, bench, g, cases, {
@@ -114,19 +130,21 @@ export async function evolveRound(rt: Runtime, opts: EvolveOptions = {}): Promis
   let baseline: CaseResult[] = []
   const candidates: CandidateSummary[] = []
   try {
-    log(`基线 ${base.id}：开发集 ${dev.length} 题`)
+    log(`${bench.label} · 基线 ${base.id}：开发集 ${dev.length} 题`)
     baseline = await suite(base, dev)
     const failed = baseline.filter((r) => !r.pass).map((r) => ({ c: byId.get(r.caseId)!, r }))
     log(`基线通过 ${passCount(baseline)}/${dev.length}`)
-    if (!failed.length) status = 'nothing-to-do'
+    if (!failed.length && !opts.testCandidateOnPerfectBaseline) status = 'nothing-to-do'
     else {
       const tried = rt.db
         .prepare(`SELECT target, diagnosis, change, reason FROM candidates WHERE parent = ? AND status IN ('discarded','rejected') ORDER BY ts DESC LIMIT 8`)
         .all(base.id) as { target: string; diagnosis: string; change: string; reason: string }[]
-      const proposals: Proposal[] = await reflect(rt, base, failed, opts.signal, tried, dir)
+      const passed = baseline.filter((r) => r.pass).map((r) => ({ c: byId.get(r.caseId)!, r }))
+      const proposals: Proposal[] = await reflect(rt, base, failed, opts.signal, tried, dir, passed)
       log(`反思器提出 ${proposals.length} 条建议`)
       let baseAcc: CaseResult[] | undefined
-      for (const p of proposals.slice(0, opts.maxCandidates ?? 2)) {
+      const limit = failed.length ? opts.maxCandidates ?? 2 : 1
+      for (const p of proposals.slice(0, limit)) {
         if (opts.dryRun) {
           candidates.push({ genome: '(dry-run)', target: p.target, diagnosis: p.diagnosis, bullets: p.bullets, devPass: 0, basePass: passCount(baseline), devTotal: dev.length, regressions: [], fixes: [], status: 'discarded', reason: 'dry-run 未评测' })
           continue
@@ -176,7 +194,6 @@ export async function evolveRound(rt: Runtime, opts: EvolveOptions = {}): Promis
     if (e instanceof BudgetError) { status = 'budget'; log(`预算用尽，本轮提前结束：${e.message}`) }
     else { status = 'failed'; log(`本轮失败：${(e as Error).message}`) }
   } finally {
-    rt.ledger.roundCap = undefined
     // A candidate interrupted mid-evaluation (budget, error) cannot be judged: discard it.
     for (const row of rt.db.prepare(`SELECT genome_id FROM candidates WHERE evolution_run = ? AND status = 'evaluating'`).all(runId) as { genome_id: string }[]) {
       const why = status === 'budget' ? '本轮预算用尽，评测未完成' : '评测中断'
@@ -185,7 +202,7 @@ export async function evolveRound(rt: Runtime, opts: EvolveOptions = {}): Promis
       candidates.push({ genome: row.genome_id, target: '', diagnosis: '', bullets: [], devPass: 0, basePass: passCount(baseline), devTotal: dev.length, regressions: [], fixes: [], status: 'discarded', reason: why })
     }
   }
-  const costCny = (rt.db.prepare(`SELECT COALESCE(SUM(cost_cny),0) c FROM ledger WHERE category='evolution' AND ts >= ?`).get(startedAt) as { c: number }).c
+  const costCny = rt.ledger.summary().roundCny
   const reportPath = join(dir, 'report.md')
   writeFileSync(reportPath, renderReport(runId, base.id, status, baseline, candidates, costCny, byId))
   rt.db.prepare(`UPDATE evolution_runs SET ts_end=?, status=?, cost_cny=?, report_path=? WHERE id=?`).run(now(), status, costCny, reportPath, runId)
@@ -223,7 +240,9 @@ export function promote(rt: Runtime, genomeId: string): HarnessGenome {
   const row = rt.db.prepare(`SELECT status FROM candidates WHERE genome_id = ?`).get(genomeId) as { status: string } | undefined
   const g = rt.genomes.load(genomeId)
   if (row && row.status !== 'pending') throw new Error(`${genomeId} 当前状态为 ${row.status}，不能上线`)
-  if (!row && g.status !== 'candidate') throw new Error(`${genomeId} 不是候选版本`)
+  if (!row && g.createdBy.startsWith('evolution/')) throw new Error(`${genomeId} 缺少评测记录，不能上线`)
+  if (g.status !== 'candidate') throw new Error(`${genomeId} 不是候选版本`)
+  rt.genomes.hash(g)
   const prev = rt.genomes.load()
   prev.status = 'archived'
   rt.genomes.save(prev)
@@ -247,8 +266,10 @@ export function rollback(rt: Runtime, to?: string): HarnessGenome {
   const cur = rt.genomes.load()
   const targetId = to ?? cur.parent
   if (!targetId) throw new Error('当前版本没有父版本，无法回滚')
+  if (targetId === cur.id) return cur
   const target = rt.genomes.load(targetId)
-  if (target.status === 'rejected') throw new Error('不能回滚到被拒绝的版本')
+  if (target.status !== 'archived') throw new Error('只能回滚到已归档的上线版本')
+  rt.genomes.hash(target)
   cur.status = 'archived'
   rt.genomes.save(cur)
   target.status = 'active'
@@ -265,22 +286,16 @@ export async function evaluate(
   opts: { concurrency?: number; useCache?: boolean; capCny?: number; category?: 'evolution' | 'dev'; onCase?: (r: CaseResult) => void } = {}
 ): Promise<CaseResult[]> {
   const bench = new Bench(rt.ws.root)
-  if (!bench.available()) throw new Error('找不到 evals/bench.py 和 manifest.json')
+  bench.checkAvailable()
   const all = bench.cases()
   const ids = selector.split(',').map((s) => s.trim()).filter(Boolean)
   const cases = selector === 'all' ? all
     : selector === 'development' || selector === 'acceptance' ? bench.cases(selector)
     : all.filter((c) => ids.includes(c.id))
   if (!cases.length) throw new Error(`没有匹配的评测任务：${selector}`)
-  const cfg = rt.ws.config.budget
-  const startedAt = now()
-  rt.ledger.roundCap = { startedAt, capCny: Math.min(opts.capCny ?? cfg.evolutionPerRoundCny, cfg.evolutionPerRoundCny) }
-  try {
-    return await runSuite(rt, bench, genome, cases, {
-      baseDir: join(rt.ws.dataDir, 'runs', `eval-${startedAt.replace(/[-:T]/g, '').slice(0, 12)}`),
-      concurrency: opts.concurrency ?? 2, useCache: opts.useCache, category: opts.category, onCase: opts.onCase
-    })
-  } finally {
-    rt.ledger.roundCap = undefined
-  }
+  const id = `eval-${now().replace(/[-:T]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`
+  return runSuite({ ...rt, ledger: rt.ledger.forRound(id, opts.capCny) }, bench, genome, cases, {
+    baseDir: join(rt.ws.dataDir, 'runs', id),
+    concurrency: opts.concurrency ?? 2, useCache: opts.useCache, category: opts.category, onCase: opts.onCase
+  })
 }

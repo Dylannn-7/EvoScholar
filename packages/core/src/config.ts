@@ -9,16 +9,21 @@ export type BudgetConfig = {
   evolutionRoundsPerDay: number
   webCallsPerDay: number
   alertAt: number[]
+  /** When false/unset, daily user usage (`category: 'usage'`) is recorded without hard budget blocking. */
+  enforceUsageCap?: boolean
 }
 export type BudgetCategory = 'usage' | 'evolution' | 'dev' | 'reserve'
+export type ReasoningCapability = { supported: boolean; values?: string[] }
 export type ProviderOverride = {
   protocol?: 'chat-completions' | 'messages' | 'responses'
   baseUrl?: string
   apiKeyEnv?: string
   /** Custom gateway: full endpoint URL. */
   endpoint?: string
+  modelsListUrl?: string
+  reasoningEffort?: ReasoningCapability
   label?: string
-  models?: { id: string; contextWindow?: number; maxOutputTokens?: number; vision?: boolean }[]
+  models?: { id: string; contextWindow?: number; maxOutputTokens?: number; vision?: boolean; reasoningEffort?: ReasoningCapability }[]
 }
 export type EvoConfig = {
   dataDir: string
@@ -27,6 +32,7 @@ export type EvoConfig = {
   budget: BudgetConfig
   evolution: { offPeakOnly: boolean }
   providers: Record<string, ProviderOverride>
+  reasoningEffort?: Record<string, string>
 }
 export type Workspace = { root: string; config: EvoConfig; dataDir: string }
 

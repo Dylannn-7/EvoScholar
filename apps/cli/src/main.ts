@@ -37,6 +37,7 @@ function flag(args: string[], name: string): string | undefined {
 function printBudget(rt: Runtime) {
   const s = rt.ledger.summary()
   console.log(`总花费  ¥${s.totalCny.toFixed(4)} / ¥${s.capCny}`)
+  if (s.reservedCny > 0) console.log(`待结算预留 ¥${s.reservedCny.toFixed(4)}`)
   for (const [k, v] of Object.entries(s.byCategory)) console.log(`  ${k.padEnd(10)} ¥${v.toFixed(4)} / ¥${s.categoryCaps[k as BudgetCategory]}`)
   console.log(`今日使用 ¥${s.usageTodayCny.toFixed(4)}（软上限 ¥${s.dailyUsageSoftCny}）  今日联网 ${s.webCallsToday}/${s.webCallsPerDay} 次`)
 }
@@ -120,6 +121,14 @@ function showCandidate(rt: Runtime, id: string) {
   for (const p of d.promptDiffs) {
     console.log(cyan(`\n── ${p.key}: ${p.from ?? '(默认)'} → ${p.to}`))
     for (const l of p.diff) console.log(l.op === '+' ? green(`+ ${l.text}`) : l.op === '-' ? red(`- ${l.text}`) : dim(`  ${l.text}`))
+  }
+  for (const s of d.skillDiffs) {
+    console.log(cyan(`\n── 技能 ${s.key}: ${s.from ?? '新增'} → ${s.to ?? '移除'}`))
+    console.log(renderDiff(s.diff))
+  }
+  if (d.workflowDiff.some((line) => line.op !== ' ')) {
+    console.log(cyan('\n── 工作流'))
+    console.log(renderDiff(d.workflowDiff))
   }
   console.log(cyan('\n── genome diff'))
   console.log(renderDiff(d.genomeDiff))

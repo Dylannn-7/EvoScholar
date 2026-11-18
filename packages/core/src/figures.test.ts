@@ -1,24 +1,26 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { TOOL_FACTORIES, type ToolEnv } from './tools'
+import { TOOL_FACTORIES, pythonBin, type ToolEnv } from './tools'
 import { checkFeedbackStats, feedbackEvents, openRuntime, openWorkspace, readCheckReport, recordCheckFeedback } from './index'
 
 const REPO = resolve(__dirname, '../../..')
+const config = JSON.parse(readFileSync(join(REPO, 'evoscholar.config.json'), 'utf8'))
+const workspace = { root: REPO, dataDir: resolve(REPO, config.dataDir ?? 'data'), config }
 
 test('figure_check measures a saved figure, applies the rule pack and returns a preview image', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'fig-'))
+  const events: Record<string, unknown>[] = []
+  const env = { ws: workspace, cwd, sessionId: 't', trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
   // A 6-inch-wide PDF: too wide for a Nature column; and a 150-dpi PNG: below IEEE's line-art 600 dpi.
-  execFileSync('python3', ['-c', `
+  execFileSync(pythonBin(env), ['-c', `
 import matplotlib; matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 fig, ax = plt.subplots(figsize=(8, 3)); ax.plot([0, 1], [0, 1]); fig.savefig('wide.pdf'); fig.savefig('low.png', dpi=150)
 `], { cwd })
-  const events: Record<string, unknown>[] = []
-  const env = { ws: { root: REPO, dataDir: join(cwd, 'nodata'), config: {} }, cwd, sessionId: 't', trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
   const tool = TOOL_FACTORIES.figure_check(env)
   const signal = new AbortController().signal
   const r = (await tool.execute(tool.validate!({ path: 'wide.pdf', venue: 'nature' }) as never, { signal } as never)) as { content: { type: string; text?: string; mimeType?: string }[] }
@@ -39,7 +41,7 @@ test('manuscript_check runs rule packs on a LaTeX project and writes reports', a
   mkdirSync(join(cwd, 'paper'))
   writeFileSync(join(cwd, 'paper', 'main.tex'), '\\documentclass{article}\\begin{document}\n\\section{A}\\label{s}\nSee \\ref{s} and \\ref{nope}.\n\\end{document}\n')
   const events: Record<string, unknown>[] = []
-  const env = { ws: { root: REPO, dataDir: join(cwd, 'nodata'), config: {} }, cwd, sessionId: 't', trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
+  const env = { ws: workspace, cwd, sessionId: 't', trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
   const tool = TOOL_FACTORIES.manuscript_check(env)
   const r = (await tool.execute(tool.validate!({ path: 'paper/main.tex', annotate: true }) as never, { signal: new AbortController().signal } as never)) as { content: { text: string }[] }
   const text = r.content[0].text

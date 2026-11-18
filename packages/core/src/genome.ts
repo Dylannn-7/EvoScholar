@@ -3,6 +3,8 @@ import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import YAML from 'yaml'
 import type { Json } from '@evoscholar/harness'
+import { readSkillFile, skillNameValid, type SkillRef } from './skills'
+import { validateWorkflows, type WorkflowPlan } from './workflow-plan'
 
 export type Role = 'main' | 'fast' | 'vision' | 'reflector' | 'judge'
 export type HarnessGenome = {
@@ -13,14 +15,14 @@ export type HarnessGenome = {
   status: 'candidate' | 'active' | 'archived' | 'rejected'
   note?: string
   instructions: { system: string; stages?: Record<string, string>; compaction?: string }
-  skills?: { name: string; version: number }[]
+  skills?: SkillRef[]
   routing: {
     roles: Record<Role, string>
     rules?: { when: { stage?: string }; use: Role }[]
     parameters?: Record<string, Record<string, Json>>
   }
   tools: { enabled: string[]; overrides?: Record<string, { description?: string; defaults?: Record<string, Json> }> }
-  workflows?: Record<string, string>
+  workflows?: WorkflowPlan
   budgets: { maxSteps: number; maxOutputTokens: number; timeoutMs?: number; contextBudgetTokens?: number }
 }
 
@@ -90,11 +92,13 @@ export class GenomeRepo {
     const h = createHash('sha256')
     const { instructions, skills, routing, tools, workflows, budgets } = g
     h.update(JSON.stringify({ instructions, skills, routing, tools, workflows, budgets }))
+    if (workflows?.review === 'before-final') h.update('workflow-review:v2')
     for (const ref of [instructions.system, instructions.compaction, ...Object.values(instructions.stages ?? {}), ...Object.values(tools.overrides ?? {}).map((o) => o.description)])
       if (ref) h.update(this.text(ref))
     for (const s of skills ?? []) {
-      const f = join(this.root, 'skills', s.name, 'SKILL.md')
-      if (existsSync(f)) h.update(readFileSync(f))
+      const skill = readSkillFile(this.root, s.name, s.version)
+      if (!skill) throw new Error(`缺少已启用的技能 ${s.name} v${s.version}`)
+      h.update(skill.raw)
     }
     return h.digest('hex').slice(0, 12)
   }
@@ -105,6 +109,10 @@ export function validateGenome(g: HarnessGenome): void {
   if (!g.instructions?.system) throw new Error(`${g.id}: instructions.system is required`)
   if (!g.routing?.roles?.main) throw new Error(`${g.id}: routing.roles.main is required`)
   if (!Array.isArray(g.tools?.enabled)) throw new Error(`${g.id}: tools.enabled must be a list`)
+  if (g.skills && (!Array.isArray(g.skills) || g.skills.some((s) =>
+    !s || typeof s.name !== 'string' || !skillNameValid(s.name) || !Number.isSafeInteger(s.version) || s.version < 1
+  ) || new Set(g.skills.map((s) => s.name)).size !== g.skills.length)) throw new Error(`${g.id}: invalid skill references`)
+  validateWorkflows(g.workflows, g.tools.enabled)
   const b = g.budgets
   if (!b) throw new Error(`${g.id}: budgets missing`)
   for (const k of Object.keys(PROTECTED_LIMITS) as (keyof typeof PROTECTED_LIMITS)[]) {

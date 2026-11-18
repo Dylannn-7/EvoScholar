@@ -100,6 +100,15 @@ class FigureChecks(unittest.TestCase):
         self.assertNotIn('axes.label', self.rules(r['issues']))
         self.assertNotIn('axes.units', self.rules(r['issues']))
 
+    def test_training_epoch_needs_no_unit(self):
+        F.apply_style('nature')
+        fig, ax = plt.subplots(figsize=F.figsize('nature', 'single'))
+        ax.plot([1, 2], [13.89, 94.81])
+        ax.set(xlabel='Epoch', ylabel='Training accuracy (%)')
+        self.assertNotIn('axes.units', self.rules(F.check_figure(fig, 'nature')['issues']))
+        ax.set_xlabel('Training time')
+        self.assertIn('axes.units', self.rules(F.check_figure(fig, 'nature')['issues']))
+
     def test_optica_color_only(self):
         fig, ax = plt.subplots(figsize=F.figsize('optica', 'single'))
         x = np.linspace(0, 1, 5)

@@ -1,6 +1,7 @@
 import type { AgentTool } from '@evoscholar/harness'
 import type { Ledger } from '../budget'
 import type { BudgetCategory, Workspace } from '../config'
+import type { SkillRef } from '../skills'
 
 export type ToolEnv = {
   ws: Workspace
@@ -10,6 +11,9 @@ export type ToolEnv = {
   category: () => BudgetCategory
   sessionId?: string
   genomeId?: string
+  skills?: readonly SkillRef[]
+  /** Read-only workflow children do not save shared scratch outputs. */
+  readOnly?: boolean
   /**
    * Called for tools with side effects outside plain file edits (code execution, processes).
    * Undefined means unattended mode (evaluation runs in an isolated directory): auto-approve.

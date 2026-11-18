@@ -220,6 +220,7 @@ def colorblind_conflicts(colors: Iterable, min_delta_e: float = 12.0) -> list[di
 # ---------------------------------------------------------------- figure checks
 
 _UNIT = re.compile(r'\(([^()]+)\)\s*$|\[([^\[\]]+)\]\s*$|（[^（）]+）\s*$|/\s*\S+\s*$')
+_TRAINING_COUNT = re.compile(r'(?:training\s+)?(?:epochs?|steps?|iterations?)', re.IGNORECASE)
 
 
 def _issue(level: str, rule: str, message: str) -> dict:
@@ -313,7 +314,8 @@ def check_figure(fig, venue: str | dict | None = None, columns: str | None = Non
                 if _is_numeric_axis(axis) and axis.get_visible() and any(t.get_text() for t in axis.get_ticklabels()):
                     issues.append(_issue('error', 'axes.label', f'{name} 的 {which} 轴没有标签'))
                 continue
-            if units_required and _is_numeric_axis(axis) and not _UNIT.search(label):
+            if (units_required and _is_numeric_axis(axis)
+                    and not _UNIT.search(label) and not _TRAINING_COUNT.fullmatch(label.strip())):
                 issues.append(_issue('warning', 'axes.units', f'{name} 的 {which} 轴标签「{label}」没有单位（应写成「量 (单位)」；无量纲量写 (a.u.) 或说明）'))
         if _get(rules, 'axes', 'gridlines') is False and any(gl.get_visible() for gl in ax.get_xgridlines() + ax.get_ygridlines()):
             issues.append(_issue('warning', 'axes.gridlines', f'{name} 有背景网格线，该期刊要求去掉'))

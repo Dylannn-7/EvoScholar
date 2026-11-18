@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { BudgetError } from '../budget'
@@ -34,10 +35,11 @@ const toResult = (r: Row): CaseResult => ({
   sessionId: String(r.session_id), runDir: String(r.run_dir), error: (r.error as string) ?? undefined, cached: true
 })
 
-export function cachedResult(rt: Runtime, hash: string, caseId: string): CaseResult | undefined {
+export function cachedResult(rt: Runtime, hash: string, caseId: string, taskHash: string): CaseResult | undefined {
   const r = rt.db
-    .prepare(`SELECT * FROM eval_runs WHERE genome_hash = ? AND case_id = ? AND error IS NULL ORDER BY id DESC LIMIT 1`)
-    .get(hash, caseId) as Row | undefined
+    .prepare(`SELECT * FROM eval_runs WHERE genome_hash = ? AND case_id = ? AND task_hash = ?
+              AND error IS NULL ORDER BY id DESC LIMIT 1`)
+    .get(hash, caseId, taskHash) as Row | undefined
   return r ? toResult(r) : undefined
 }
 
@@ -46,15 +48,21 @@ export async function runCase(
   bench: Bench,
   genome: HarnessGenome,
   c: BenchCase,
-  opts: { evolutionRun?: string; baseDir: string; category?: BudgetCategory }
+  opts: { evolutionRun?: string; baseDir: string; category?: BudgetCategory; useCache?: boolean }
 ): Promise<CaseResult> {
   const hash = rt.genomes.hash(genome)
-  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+  const taskHash = bench.taskHash(c.id)
+  if (opts.useCache && taskHash) {
+    const hit = cachedResult(rt, hash, c.id, taskHash)
+    if (hit) return hit
+  }
+  const stamp = `${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`
   const runDir = join(opts.baseDir, genome.id, `${c.id}-${stamp}`)
   mkdirSync(join(opts.baseDir, genome.id), { recursive: true })
   const sessionId = `eval-${genome.id}-${c.id}-${stamp}`
   const t0 = Date.now()
   let error: string | undefined
+  let budgetError: BudgetError | undefined
   let grade = { machine_status: 'fail', failures: [] as string[], manual_review: [] as string[] }
   try {
     await bench.prepare(c.id, runDir)
@@ -72,7 +80,8 @@ export async function runCase(
     }
     grade = await bench.grade(runDir)
   } catch (e) {
-    error = e instanceof BudgetError ? `budget: ${e.message}` : (e as Error).message
+    if (e instanceof BudgetError) budgetError = e
+    error = budgetError ? `budget: ${budgetError.message}` : (e as Error).message
     try { grade = await bench.grade(runDir) } catch { /* nothing to grade */ }
   }
   const agg = rt.db
@@ -84,20 +93,22 @@ export async function runCase(
     failures: grade.failures, manualReview: grade.manual_review, steps: agg.s, toolCalls: agg.t, toolErrors: agg.e,
     costCny: cost, durationMs: Date.now() - t0, sessionId, runDir, error
   }
+  // An edit during evaluation can make prepare, advance and grade read different revisions.
+  const stableTaskHash = taskHash && bench.taskHash(c.id) === taskHash ? taskHash : null
   rt.db
     .prepare(
       `INSERT INTO eval_runs (evolution_run, genome_id, genome_hash, case_id, split, pass, failures, manual_review, steps, tool_calls,
-        tool_errors, cost_cny, duration_ms, session_id, run_dir, error, ts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        tool_errors, cost_cny, duration_ms, session_id, run_dir, error, ts, task_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(opts.evolutionRun ?? null, genome.id, hash, c.id, c.default_split, result.pass ? 1 : 0, JSON.stringify(result.failures),
       JSON.stringify(result.manualReview), result.steps, result.toolCalls, result.toolErrors, result.costCny, result.durationMs,
-      sessionId, runDir, error ?? null, new Date().toISOString())
-  if (error?.startsWith('budget')) throw new BudgetError(error.slice(8), 'round')
+      sessionId, runDir, error ?? null, new Date().toISOString(), stableTaskHash)
+  if (budgetError) throw budgetError
   return result
 }
 
 /**
- * Evaluate a genome on a set of cases. Results for an identical genome hash are reused.
+ * Evaluate a genome on a set of cases. Reuse results for the same genome and task revision.
  * Stops (rethrows) on budget exhaustion so partial results are kept.
  */
 export async function runSuite(
@@ -107,16 +118,14 @@ export async function runSuite(
   cases: BenchCase[],
   opts: { evolutionRun?: string; baseDir: string; concurrency?: number; useCache?: boolean; category?: BudgetCategory; onCase?: (r: CaseResult) => void }
 ): Promise<CaseResult[]> {
-  const hash = rt.genomes.hash(genome)
+  const caseOpts = { ...opts, useCache: opts.useCache !== false }
   const results: CaseResult[] = []
   const queue = [...cases]
   let stop: unknown
   const worker = async () => {
     for (let c = queue.shift(); c && !stop; c = queue.shift()) {
-      const hit = opts.useCache !== false ? cachedResult(rt, hash, c.id) : undefined
-      if (hit) { results.push(hit); opts.onCase?.(hit); continue }
       try {
-        const r = await runCase(rt, bench, genome, c, opts)
+        const r = await runCase(rt, bench, genome, c, caseOpts)
         results.push(r)
         opts.onCase?.(r)
       } catch (e) {
