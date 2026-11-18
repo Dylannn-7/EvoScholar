@@ -68,7 +68,7 @@ See Section~\ref{sec:nope} and Eq.~\eqref{eq:1}.
         self.assertEqual([f['loc'] for f in by_rule(rep, 'common.xref.unresolved_ref')], ['sections/results.tex:2'])
         self.assertEqual([f['evidence'] for f in by_rule(rep, 'common.xref.missing_figure')], ['missing'])
         self.assertEqual([f['evidence'] for f in by_rule(rep, 'common.citations.undefined')], ['zz'])
-        self.assertEqual([f['evidence'] for f in by_rule(rep, 'common.citations.uncited')], ['c'])
+        self.assertEqual(by_rule(rep, 'common.citations.uncited'), [])   # BibTeX prints only cited .bib entries
         self.assertEqual([f['loc'] for f in by_rule(rep, 'common.units')], ['main.tex:9'])
         before = by_rule(rep, 'common.abbreviations.before_definition')
         self.assertEqual([(f['evidence'], f['loc']) for f in before], [('MZI', 'sections/methods.tex:2')])
@@ -117,6 +117,10 @@ See Tables~\ref{tab:x-1}-\ref{tab:x-3}.
 \end{document}
 ''', encoding='utf-8')
         (d / 'f.pdf').write_bytes(b'%PDF-1.4')
+        (d / 'c.tex').write_text('\\documentclass{article}\\begin{document}\n\\begin{figure}\\caption{F}\\label{fig:a}\\end{figure}\nSee \\ref{fig:a} \\cite{a}.\n\\bibliography{refs}\n\\end{document}\n', encoding='utf-8')
+        (d / 'c.bbl').write_text('\\begin{thebibliography}{1}\n\\bibitem[A(2020)]{a} A. Title. 2020.\n\\end{thebibliography}\n', encoding='utf-8')
+        bbl_doc = Wr.load(d / 'c.tex')                                  # floats before \bibliography, only a .bbl
+        self.assertEqual([b['key'] for b in bbl_doc.bib], ['a'])
         rep = Wr.run(d / 'main.tex', ['common'])
         got = [(f['rule'], f['evidence']) for f in rep['findings']]
         self.assertFalse([g for g in got if g[0] == 'common.units'], got)                       # \vspace{-2mm}
@@ -127,6 +131,44 @@ See Tables~\ref{tab:x-1}-\ref{tab:x-3}.
         undefined = [f['evidence'] for f in by_rule(Wr.run(d / 'b.tex', ['common']), 'common.abbreviations.undefined')]
         self.assertEqual(undefined, ['LLM'])                     # well-known KL / MLE are skipped, LLM is not
         self.assertFalse(Wr._initials_match('using the lowest temperature', 'DPO'))
+        shutil.rmtree(d, ignore_errors=True)
+
+
+class ChineseLatexThesis(unittest.TestCase):
+    def test_thesis_class_patterns(self):
+        d = Path(tempfile.mkdtemp())
+        (d / 'main.tex').write_text(r'''\documentclass{HUSTthesis}
+\newcommand*\secref[1]{\ref{#1}节}
+\begin{document}
+\ctitle{基于随机映射的预测建模技术}
+\cabstract{本文研究预测。}
+\ckeywords{时间序列预测；深度学习；随机映射}
+\eabstract{This thesis studies DNN models.}
+\ekeywords{forecasting; deep learning; mapping}
+\makecover
+\tableofcontents
+\chapter{绪论}
+以卷积神经网络（Convolutional neural network，CNN）和多层感知机（Multilayer perceptron，MLP）为代表的深度神经网络（Deep neural network，DNN）。
+基于卷积结构的卷积神经网络（CNN）与 BI-LSTM、GA-MLP。实验使用 Intel 8700K CPU。CNN、MLP、DNN 再次出现。
+\begin{table}\begin{tabular}{|P{0.9cm}|P{1.8cm}|}a&b\end{tabular}\caption{表}\label{tab:a}\end{table}
+\begin{figure}\subcaptionbox{\label{fig:sub}子图}{x}\caption{图}\label{fig:main}\end{figure}
+见\ref{tab:a}和\ref{fig:main}\cite{k1}。
+\begin{ack}感谢。\end{ack}
+\bibliographystyle{gbt7714-2025}
+\bibliography{refs}
+\end{document}
+''', encoding='utf-8')
+        (d / 'refs.bib').write_text('@article{k1,\n  title={A},\n  year={2022}\n}\n@article{k2,\n  title={B},\n  year={2020}\n}\n', encoding='utf-8')
+        doc = Wr.load(d / 'main.tex')
+        self.assertEqual(doc.meta['title'], '基于随机映射的预测建模技术')
+        self.assertEqual(doc.meta['keywords'], ['时间序列预测', '深度学习', '随机映射'])
+        self.assertEqual(doc.meta['keywords_sep'], '；')
+        self.assertEqual([x['title'] for x in doc.sections if x.get('virtual')], ['摘要', 'Abstract', '目录', '致谢', '参考文献'])
+        rep = Wr.run(d / 'main.tex', ['hust-thesis'], 'doctor')
+        noisy = [f for f in rep['findings'] if f['rule'].startswith(('common.xref', 'common.units', 'common.abbreviations', 'common.floats', 'hust.floats',
+                                                                      'hust.citation.order', 'common.citations', 'hust.sections', 'hust.keywords'))]
+        self.assertEqual(noisy, [], noisy)
+        self.assertTrue(by_rule(rep, 'hust.references.stats.total'))           # counts the 1 cited entry, not the whole .bib
         shutil.rmtree(d, ignore_errors=True)
 
 
