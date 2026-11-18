@@ -109,16 +109,73 @@ function ago(ts) {
   if (s < 86400) return `${Math.round(s / 3600)} 小时前`
   return `${Math.round(s / 86400)} 天前`
 }
+// Deterministic generative thumbnail (same id → same image), drawn in the particle style:
+// grey dots on black with a few lavender accents; the motif follows the session mode.
+const artCache = new Map()
+function artFor(s) {
+  const key = `${s.id}|${s.mode}`
+  if (artCache.has(key)) return artCache.get(key)
+  let h = 2166136261
+  for (const ch of s.id) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) }
+  const rnd = () => { h += 0x6D2B79F5; let t = h; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+  const W = 640, H = 300
+  const cv = document.createElement('canvas')
+  cv.width = W; cv.height = H
+  const g = cv.getContext('2d')
+  g.fillStyle = '#0a0a0a'; g.fillRect(0, 0, W, H)
+  const dot = (x, y, r = 1, a = 0.7, accent = false) => { g.fillStyle = accent ? `rgba(170,136,255,${a})` : `rgba(225,225,225,${a})`; g.fillRect(x, y, r, r) }
+  const mode = s.mode || 'chat'
+  if (mode === 'literature') {            // a page of references: dashed lines, one highlighted citation
+    const rows = 14, hi = Math.floor(rnd() * rows)
+    for (let i = 0; i < rows; i++) {
+      const y = 28 + i * 18, len = 220 + rnd() * 340
+      for (let x = 40; x < 40 + len; x += 3) if (rnd() > 0.18) dot(x, y + rnd() * 2, 1.4, i === hi ? 0.95 : 0.25 + rnd() * 0.35, i === hi)
+      dot(24, y, 3, 0.6, i === hi)
+    }
+  } else if (mode === 'data') {           // scatter with a fitted curve
+    const a = 0.5 + rnd(), b = rnd() * 3
+    for (let i = 0; i < 1400; i++) { const x = rnd(); const y = 0.5 + 0.32 * Math.sin(a * 6 * x + b) + (rnd() - 0.5) * 0.22; dot(30 + x * (W - 60), y * H, 1.6, 0.2 + rnd() * 0.5) }
+    for (let x = 0; x < 1; x += 0.002) dot(30 + x * (W - 60), (0.5 + 0.32 * Math.sin(a * 6 * x + b)) * H, 2, 0.9, true)
+  } else if (mode === 'figure') {         // spectra: a few resonance dips / peaks
+    for (let c = 0; c < 3; c++) {
+      const x0 = 0.2 + rnd() * 0.6, w = 0.01 + rnd() * 0.04, base = 0.25 + c * 0.25
+      for (let x = 0; x < 1; x += 0.0012) { const y = base + 0.18 * (w * w) / ((x - x0) ** 2 + w * w); dot(20 + x * (W - 40), H - y * H, 1.6, 0.35 + 0.4 * (c === 1), c === 1) }
+    }
+    for (let i = 0; i < 300; i++) dot(rnd() * W, rnd() * H, 1, 0.12)
+  } else if (mode === 'writing') {        // paragraphs of text blocks, one flagged span
+    let y = 30
+    for (let p = 0; p < 3; p++) {
+      const lines = 3 + Math.floor(rnd() * 3)
+      for (let l = 0; l < lines; l++) {
+        const len = l === lines - 1 ? 180 + rnd() * 200 : 520 + rnd() * 60, flag = rnd() < 0.12
+        for (let x = 40; x < 40 + len; x += 2.5) if (rnd() > 0.08) dot(x, y, 1.6, flag ? 0.9 : 0.32, flag)
+        y += 13
+      }
+      y += 14
+    }
+  } else {                                 // conversation: concentric rings of dots
+    const cx = W * (0.35 + rnd() * 0.3), cy = H * 0.5
+    for (let r = 12; r < 280; r += 9 + rnd() * 6) for (let t = 0; t < Math.PI * 2; t += 0.04 + rnd() * 0.05) dot(cx + Math.cos(t) * r * 1.4, cy + Math.sin(t) * r * 0.75, 1.4, Math.max(0.05, 0.75 - r / 320), rnd() < 0.02)
+  }
+  const url = cv.toDataURL('image/png')
+  artCache.set(key, url)
+  return url
+}
 function renderSessions() {
+  const counts = state.sessions.reduce((m, s) => ((m[s.mode] = (m[s.mode] || 0) + 1), m), {})
+  document.querySelectorAll('#tags .chip').forEach((c) => {
+    const n = c.dataset.mode === 'all' ? state.sessions.length : counts[c.dataset.mode] || 0
+    c.innerHTML = `${c.textContent.replace(/\s*\d+$/, '')}<span class="n">${n}</span>`
+  })
   const list = state.sessions.filter((s) => modeFilter === 'all' || s.mode === modeFilter)
   const card = (s) => `<a class="card ${s.id === current ? 'active' : ''}" data-id="${esc(s.id)}">
-      <div class="thumb">${s.thumb ? `<img src="/api/sessions/${encodeURIComponent(s.id)}/file?path=${encodeURIComponent(s.thumb)}" alt="" loading="lazy">` : `<div class="preview">${esc((s.preview || '（还没有提问）').slice(0, 220))}</div>`}</div>
-      <div class="meta"><div class="l">${esc(s.title || s.id)}</div><div class="r">${esc(MODES[s.mode] || '对话')}\n${esc(ago(s.last || s.created_at))}</div></div></a>`
-  $('#sessions').innerHTML = `<a class="card" data-new="1"><div class="thumb"><span class="plus">＋</span></div><div class="meta"><div class="l">新建会话</div><div class="r">${state.sessions.length} 个会话</div></div></a>`
-    + (list.length ? list.map(card).join('') : '<div class="muted" style="padding:18px 0;border-top:1px solid var(--line)">这一类还没有会话</div>')
+      <div class="thumb"><img src="${s.thumb ? `/api/sessions/${encodeURIComponent(s.id)}/file?path=${encodeURIComponent(s.thumb)}` : artFor(s)}" alt="" loading="lazy"><span class="tag">${esc(MODES[s.mode] || '对话')}</span></div>
+      <div class="meta"><div class="l">${esc(s.title || s.id)}</div><div class="r">${s.turns} 轮 · ${esc(yuan(s.cost))}\n${esc(ago(s.last || s.created_at))}</div></div></a>`
+  $('#sessions').innerHTML = `<a class="newrow" data-new="1"><span><span class="plus">＋</span>新建会话</span><span class="r">NEW SESSION</span></a>`
+    + (list.length ? list.map(card).join('') : `<div class="none">${state.sessions.length ? '这一类还没有会话' : '还没有会话。新建一个，问点什么吧。'}</div>`)
 }
 $('#sessions').addEventListener('click', (e) => {
-  const a = e.target.closest('.card')
+  const a = e.target.closest('.card, .newrow')
   if (!a) return
   if (a.dataset.new) return newSession()
   openSession(a.dataset.id)
@@ -179,12 +236,17 @@ async function openSession(id) {
   const s = await api(`/api/sessions/${id}`)
   const meta = state.sessions.find((x) => x.id === id)
   $('#title').textContent = meta?.title || id
-  $('#subtitle').textContent = `工作目录：${s.cwd} · genome ${s.genome}`
+  $('#subtitle').textContent = `…/${s.cwd.split(/[\\/]/).slice(-2).join('/')} · ${s.genome}`
+  $('#subtitle').title = `工作目录：${s.cwd}`
   $('#cwdHint').textContent = `文件会放在 inputs/`
   const el = inner()
   el.innerHTML = ''
   for (const m of s.messages) renderStored(m)
-  if (!s.messages.length) el.innerHTML = '<div class="empty">问点什么吧<small>例如：检索 2024 年以来片上光学神经网络的综述，按年份列出 5 篇并附链接</small></div>'
+  if (!s.messages.length) {
+    const ex = ['检索 2024 年以来片上光学神经网络的综述，按年份列出 5 篇并附链接', '把 inputs/ 里的透射谱拟合成洛伦兹线型，给出中心波长、FWHM 和 Q 值，按 Optica 规范出图', '按华科博士论文规范检查 inputs/ 里的 main.tex，列出问题和依据']
+    el.innerHTML = `<div class="empty"><b>[开始]</b> 问点什么吧。也可以点一个例子：${ex.map((x) => `<span class="ex">→ ${esc(x)}</span>`).join('')}<small>文件会放在会话的 inputs/ 目录；需要执行代码时会先请你确认。</small></div>`
+    el.querySelectorAll('.ex').forEach((n) => (n.onclick = () => { $('#input').value = n.textContent.slice(2); $('#input').focus() }))
+  }
   setBusy(s.busy)
   connect(id)
   scroll()
@@ -525,7 +587,10 @@ async function renderCandidate(el, id, body) {
   }))
 }
 
-loadState().catch((e) => banner(e.message))
+loadState().then(() => {
+  const sid = new URLSearchParams(location.search).get('s')
+  if (sid && state.sessions.some((x) => x.id === sid)) openSession(sid)
+}).catch((e) => banner(e.message))
 api('/api/evolution').then((r) => {
   const n = r.candidates.filter((c) => c.status === 'pending').length
   if (state) { state.pending = n; renderStatus() }
