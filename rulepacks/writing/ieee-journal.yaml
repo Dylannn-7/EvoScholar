@@ -1,0 +1,46 @@
+id: ieee-journal
+name: IEEE 期刊（JSTQE、JLT、TPAMI、TNNLS、TIP）
+extends: [common]
+sources:
+  - id: structure
+    title: IEEE Author Center — Structure Your Article
+    url: https://journals.ieeeauthorcenter.ieee.org/create-your-ieee-journal-article/create-the-text-of-your-article/structure-your-article/
+    checked: 2026-11-18
+  - id: refguide
+    title: IEEE Reference Style Guide for Authors（V 3.28.2025）
+    url: https://docs.google.com/document/d/e/2PACX-1vSBoV_hTIURPZKtQkxI6bAONJtjyDLxQIUvCHi-XPzD8NKLcxRfZrpvQLFrjWZ3M6FFR_Obau3R-t63/pub
+    checked: 2026-11-18
+rules:
+  - id: ieee.abstract.length
+    check: abstract_length
+    params: { lang: en, max: 250 }
+    source: structure
+    note: Consist of a single paragraph up to 250 words
+  - id: ieee.abstract.content
+    check: abstract_content
+    params: { no_citations: true, no_math: true }
+    source: structure
+    note: 摘要自成一体，不含缩写、脚注、参考文献或数学公式；题名和摘要中不要放数学符号
+  - id: ieee.keywords
+    check: keywords
+    params: { lang: en, min: 3, max: 5 }
+    source: structure
+    note: Include 3-5 keywords or phrases, with any abbreviations clearly defined
+  - id: ieee.title
+    check: title_terms
+    params: { avoid_words: [new, novel] }
+    source: structure
+  - id: ieee.citation.grouping
+    check: citation_grouping
+    params: { style: ieee }
+    source: refguide
+    note: 引用写作 [2], [4], [5]；范围不再用短横线，“[1]–[4]” 写成 “[1], [2], [3], [4]”
+  - id: ieee.references.format
+    check: reference_format
+    params: { style: ieee, max_authors: 6, bst: IEEEtran.bst }
+    source: refguide
+    note: 列出全部作者（最多 6 个），超过 6 个写第一作者加 et al.；文章题名放在引号里
+verify:
+  - 各刊页数上限与超页费（TPAMI、TNNLS、TIP、JSTQE、JLT）不同，请查目标期刊的 Information for Authors。
+  - 首页脚注（收稿日期、基金、作者单位）的格式见 Structure Your Article 的 First Footnote 部分，本工具未检查。
+  - 图的版面要求见出图规则包 rulepacks/figures/ieee.yaml。

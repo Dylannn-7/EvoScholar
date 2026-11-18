@@ -1,0 +1,9 @@
+id: science
+name: Science 系列（Science Advances）
+extends:
+- common
+status: stub
+sources: []
+rules: []
+verify:
+- 本规则包尚未核实作者指南（依据应为：AAAS 作者指南）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。

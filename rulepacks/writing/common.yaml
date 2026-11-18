@@ -1,0 +1,39 @@
+id: common
+name: 通用检查（所有规则包都会继承）
+description: >-
+  与具体期刊无关的检查：交叉引用、引用与文献表对应、缩写前后一致、数值与单位、中英文标点。
+  其中「内部一致性」类规则以稿件自身为准（比如标签是否存在、缩写是否与首次定义一致），不依赖外部规范。
+sources:
+  - id: internal
+    title: 稿件内部一致性（LaTeX 编译器对未定义引用、重复标签、缺失图形会报警告或错误；引用必须在文献表中存在）
+    checked: 2026-11-18
+  - id: nist-sp811
+    title: NIST Special Publication 811, §7.2 Space between numerical value and unit symbol
+    url: https://www.nist.gov/pml/special-publication-811/nist-guide-si-chapter-7-rules-and-style-conventions-expressing-values
+    checked: 2026-11-18
+  - id: hust-template-notes
+    title: 华中科技大学学位论文参考模板（理工科硕士）注释体例：「中文使用中文状态下标点符号，英文使用英文状态下标点符号，切忌混用」
+    file: 理工科-硕士-华中科技大学学位论文参考模板.docx
+    checked: 2026-11-18
+rules:
+  - id: common.xref
+    check: latex_labels_refs
+    source: internal
+    note: 重复标签（报告后一次定义）、未定义引用、不存在的图形文件；只检查从主文件经 \input / \include 实际到达的文件
+  - id: common.citations
+    check: citations_resolve
+    source: internal
+  - id: common.floats
+    check: float_numbering
+    source: internal
+    note: 图表有标题、有标签且在正文中被引用；Word / Markdown 稿件还检查编号是否连续、格式是否统一
+  - id: common.abbreviations
+    check: abbreviations
+    source: internal
+    note: 以稿件里第一次出现的「全称 (缩写)」为准，检查定义前就使用、同一缩写两种全称；未定义的只作提示
+  - id: common.units
+    check: number_unit_space
+    source: nist-sp811
+  - id: common.punctuation
+    check: cjk_punctuation
+    source: hust-template-notes

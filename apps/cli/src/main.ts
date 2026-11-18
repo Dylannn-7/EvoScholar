@@ -4,6 +4,11 @@ import { stdin, stdout } from 'node:process'
 import {
   BudgetError,
   candidateDetail,
+  checkFeedbackStats,
+  feedbackEvents,
+  readCheckReport,
+  recordCheckFeedback,
+  VERDICTS,
   evaluate,
   evolveRound,
   listCandidates,
@@ -157,6 +162,7 @@ async function main() {
         concurrency: Number(flag(args, 'concurrency') ?? 2),
         useCache: !args.includes('--no-cache'),
         category: flag(args, 'category') === 'dev' ? 'dev' : 'evolution',
+        capCny: flag(args, 'cap') ? Number(flag(args, 'cap')) : undefined,
         onCase: (r) => console.log(`${r.caseId} ${r.pass ? green('✓') : red('✗')} ${r.cached ? dim('（缓存）') : dim(`${r.steps} 步 ¥${r.costCny.toFixed(3)}`)}${r.error ? yellow(` ${r.error}`) : ''}${!r.pass && r.failures.length ? dim(`  ${r.failures[0].slice(0, 100)}`) : ''}`)
       })
       console.log(`通过 ${rs.filter((r) => r.pass).length}/${rs.length}`)
@@ -183,6 +189,22 @@ async function main() {
         console.log(`${c.genome_id}  ${c.status.padEnd(9)} ${c.target.padEnd(22)} 开发 ${c.base_dev_pass}→${c.dev_pass ?? '?'}/${c.dev_total}  ${c.acc_total ? `验收 ${c.base_acc_pass}→${c.acc_pass}/${c.acc_total}  ` : ''}${dim(c.reason ?? '')}`)
       return
     }
+    case 'mark': {
+      const [file, ids, verdict, ...note] = args
+      if (!file || !ids || !VERDICTS[verdict ?? '']) throw new Error('用法：es mark <report.json> <F001,F003> <valid|fp|unsure> [原因]')
+      const { events, missing } = feedbackEvents(readCheckReport(file), ids.split(','), VERDICTS[verdict], note.join(' ') || undefined)
+      recordCheckFeedback(rt, events)
+      console.log(`已记录 ${events.length} 条${missing.length ? `；报告里没有：${missing.join(', ')}` : ''}`)
+      return
+    }
+    case 'check-stats': {
+      const rows = checkFeedbackStats(rt)
+      if (!rows.length) return console.log('还没有标记过稿件检查结果')
+      const tot = rows.reduce((a, r) => ({ v: a.v + r.valid, f: a.f + r.false_positive }), { v: 0, f: 0 })
+      console.log(`总计：有效 ${tot.v}，误报 ${tot.f}，误报率 ${tot.v + tot.f ? ((tot.f / (tot.v + tot.f)) * 100).toFixed(1) : '-'}%`)
+      for (const r of rows) console.log(`  ${r.rule.padEnd(40)} 有效 ${String(r.valid).padStart(3)}  误报 ${String(r.false_positive).padStart(3)}  不确定 ${String(r.unsure).padStart(3)}  误报率 ${r.fp_rate === null ? '  -' : `${(r.fp_rate * 100).toFixed(0)}%`}`)
+      return
+    }
     case 'promote': {
       if (!args[0]) throw new Error('用法：es promote <genome-id>')
       const g = promote(rt, args[0])
@@ -204,10 +226,12 @@ async function main() {
   budget                                                        查看 API 花费与预算
   providers                                                     查看模型厂商与 Key 状态
   genome [ID]                                                   查看当前 harness genome
-  eval [development|acceptance|all|L01,D02] [--genome ID] [--no-cache] [--category dev]   跑评测集（默认计入 evolution 预算）
+  eval [development|acceptance|all|L01,D02] [--genome ID] [--no-cache] [--category dev] [--cap 元]   跑评测集（默认计入 evolution 预算，每次 ≤ 每轮上限）
   evolve [--dry-run] [--force] [--candidates N] [--concurrency N]       跑一轮进化（--force 忽略高峰与每日轮数）
   candidates [ID]                                               候选列表 / 某个候选的 diff 和逐题变化
-  promote <ID> · reject <ID> [原因] · rollback [ID]             上线 / 拒绝 / 回滚`)
+  promote <ID> · reject <ID> [原因] · rollback [ID]             上线 / 拒绝 / 回滚
+  mark <report.json> <F001,F003> <valid|fp|unsure> [原因]          标记稿件检查结果有效 / 误报
+  check-stats                                                   各规则的误报率`)
   }
 }
 

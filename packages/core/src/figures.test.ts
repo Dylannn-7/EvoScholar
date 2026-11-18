@@ -5,6 +5,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { TOOL_FACTORIES, type ToolEnv } from './tools'
+import { checkFeedbackStats, feedbackEvents, openRuntime, openWorkspace, readCheckReport, recordCheckFeedback } from './index'
 
 const REPO = resolve(__dirname, '../../..')
 
@@ -30,4 +31,54 @@ fig, ax = plt.subplots(figsize=(8, 3)); ax.plot([0, 1], [0, 1]); fig.savefig('wi
   assert.deepEqual(events.map((e) => e.kind), ['figure.check', 'figure.check'])
   assert.throws(() => tool.validate!({ path: 'x', venue: '../etc' }))
   await assert.rejects(tool.execute({ path: '../outside.pdf' } as never, { signal } as never))
+})
+
+test('manuscript_check runs rule packs on a LaTeX project and writes reports', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'ms-'))
+  const { mkdirSync, writeFileSync, existsSync } = await import('node:fs')
+  mkdirSync(join(cwd, 'paper'))
+  writeFileSync(join(cwd, 'paper', 'main.tex'), '\\documentclass{article}\\begin{document}\n\\section{A}\\label{s}\nSee \\ref{s} and \\ref{nope}.\n\\end{document}\n')
+  const events: Record<string, unknown>[] = []
+  const env = { ws: { root: REPO, dataDir: join(cwd, 'nodata'), config: {} }, cwd, sessionId: 't', trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
+  const tool = TOOL_FACTORIES.manuscript_check(env)
+  const r = (await tool.execute(tool.validate!({ path: 'paper/main.tex', annotate: true }) as never, { signal: new AbortController().signal } as never)) as { content: { text: string }[] }
+  const text = r.content[0].text
+  assert.match(text, /稿件检查报告：main\.tex/)
+  assert.match(text, /main\.tex:3 · \\ref\{nope\} 引用了不存在的标签/)
+  assert.ok(existsSync(join(cwd, '.evoscholar', 'checks', 'main', 'report.json')))
+  assert.ok(existsSync(join(cwd, '.evoscholar', 'checks', 'main', 'annotated', 'main.tex')))
+  assert.equal(events[0].kind, 'manuscript.check')
+  assert.throws(() => tool.validate!({ path: 'x', packs: ['../etc'] }))
+  assert.throws(() => tool.validate!({ path: 'x', variant: 'a b' }))
+})
+
+test('check_feedback records verdicts from a manuscript_check report; stats compute per-rule false-positive rates', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')
+  const cwd = mkdtempSync(join(tmpdir(), 'fb-'))
+  mkdirSync(join(cwd, '.evoscholar', 'checks', 'main'), { recursive: true })
+  writeFileSync(join(cwd, '.evoscholar', 'checks', 'main', 'report.json'), JSON.stringify({
+    summary: { file: 'main.tex', packs: ['common'] },
+    findings: [{ id: 'F001', rule: 'common.units', pack: 'common', loc: 'main.tex:3', message: 'm' }, { id: 'F002', rule: 'common.units', pack: 'common', loc: 'main.tex:4', message: 'm' }]
+  }))
+  const events: Record<string, unknown>[] = []
+  const env = { ws: { root: REPO }, cwd, trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
+  const tool = TOOL_FACTORIES.check_feedback(env)
+  const r = (await tool.execute(tool.validate!({ ids: ['F002', 'F009'], verdict: 'false_positive', note: '单位是变量名' }) as never, {} as never)) as { content: { text: string }[] }
+  assert.match(r.content[0].text, /已记录 1 条为「误报」：F002（common\.units）/)
+  assert.match(r.content[0].text, /没有这些编号：F009/)
+  assert.equal(events[0].verdict, 'false_positive')
+  assert.throws(() => tool.validate!({ ids: ['x'], verdict: 'valid' }))
+  // stats over the events table (CLI path)
+  const ws = mkdtempSync(join(tmpdir(), 'fbws-'))
+  const { cpSync } = await import('node:fs')
+  cpSync(join(REPO, 'evoscholar.config.json'), join(ws, 'evoscholar.config.json'))
+  mkdirSync(join(ws, 'genomes'))
+  cpSync(join(REPO, 'genomes', 'g-0000.yaml'), join(ws, 'genomes', 'g-0000.yaml'))
+  writeFileSync(join(ws, 'genomes', 'ACTIVE'), 'g-0000\n')
+  const rt = openRuntime(openWorkspace(ws), () => {})
+  const rep = readCheckReport(join(cwd, '.evoscholar', 'checks', 'main', 'report.json'))
+  recordCheckFeedback(rt, feedbackEvents(rep, ['F001'], 'valid').events)
+  recordCheckFeedback(rt, feedbackEvents(rep, ['F002'], 'false_positive').events)
+  const stats = checkFeedbackStats(rt)
+  assert.deepEqual(stats.map((s) => [s.rule, s.valid, s.false_positive, s.fp_rate]), [['common.units', 1, 1, 0.5]])
 })

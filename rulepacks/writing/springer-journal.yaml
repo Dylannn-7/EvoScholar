@@ -1,0 +1,9 @@
+id: springer-journal
+name: Springer 期刊（sn-jnl 模板）（IJCV）
+extends:
+- common
+status: stub
+sources: []
+rules: []
+verify:
+- 本规则包尚未核实作者指南（依据应为：Springer 期刊模板）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。

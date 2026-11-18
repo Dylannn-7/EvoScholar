@@ -1,0 +1,9 @@
+id: ijcai
+name: IJCAI（IJCAI）
+extends:
+- common
+status: stub
+sources: []
+rules: []
+verify:
+- 本规则包尚未核实作者指南（依据应为：IJCAI 作者工具包）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
