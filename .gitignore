@@ -7,6 +7,8 @@ dist/
 data/
 .evoscholar/
 .DS_Store
+# Claude Code local configuration
+.claude/
 .sync/
 # Private, local-only material (never published)
 evals/
