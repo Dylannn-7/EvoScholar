@@ -111,6 +111,13 @@
 
 阶段测试的真实花费合计预计 ≤ ¥3.5，硬上限 ¥20。基线：当前累计 ¥8.5336，超出部分按阶段汇报。
 
+## 5.1 进度
+
+| 阶段 | 状态 | 真实 API 花费 |
+|------|------|---------------|
+| P0 | 已提交（603aaba） | ¥0 |
+| P1 | 完成，等待确认提交。新增 `gemini.ts`、`projects.ts`、`library.ts`、`usage.ts`、`permissions.ts`、`routes-v2.ts`、`http.ts`；用户设置存放在 `data/settings.json`；41 个 TS 测试 + 38 个 Python 测试通过；DeepSeek 两种协议实测连通 | ¥0.0083 |
+
 ## 6. 不变的硬规则
 
 - `packages/harness/src` 与上游逐字节一致，扩展只通过它的公开选项。

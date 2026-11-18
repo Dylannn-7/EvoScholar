@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createReadStream, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, extname, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { IMG, body, httpError, send, serveFile } from './http'
+import { createV2Routes } from './routes-v2'
 import {
   Bench,
   BudgetError,
@@ -15,27 +17,36 @@ import {
   isDeepSeekPeak,
   lineage,
   listCandidates,
+  listProjects,
   listProviders,
   modelInfo,
   openResearchSession,
   promote,
   readCheckReport,
   recordCheckFeedback,
-  refreshProviderModels,
+  IN_DIR,
+  OUT_DIR,
+  PERMISSION_MODES,
+  PLAN_MODE_NOTE,
+  getProject,
+  indexFiles,
+  sessionCwd,
+  type PermissionMode,
   reject,
   rollback,
   textOf,
   type CheckVerdict,
   type ResearchSession,
-  type Role,
   type Runtime
 } from '@evoscholar/core'
 import { createJournalAgentStore, type AgentEvent, type AgentMessage, type ContentBlock } from '@evoscholar/harness'
 
 type ApprovalEntry = { id: string; tool: string; summary: string; resolve: (ok: boolean) => void }
 
+type SessionMeta = { projectId: string | null; cwd: string; model: string | null; effort: string | null; permission: PermissionMode }
 type Live = {
   rs: ResearchSession
+  meta: SessionMeta
   clients: Set<ServerResponse>
   busy: boolean
   approvals: Map<string, ApprovalEntry>
@@ -55,51 +66,6 @@ const SKILL_MODE: Record<string, string> = {
   'optics-spectra': 'data',
   'optics-fields': 'data',
   'device-curves': 'data'
-}
-
-const IMG = /\.(png|jpe?g|gif|webp|svg)$/i
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.pdf': 'application/pdf',
-  '.json': 'application/json; charset=utf-8',
-  '.csv': 'text/plain; charset=utf-8',
-  '.txt': 'text/plain; charset=utf-8',
-  '.md': 'text/plain; charset=utf-8',
-  '.py': 'text/plain; charset=utf-8',
-  '.tex': 'text/plain; charset=utf-8',
-  '.bib': 'text/plain; charset=utf-8',
-  '.yaml': 'text/plain; charset=utf-8',
-  '.yml': 'text/plain; charset=utf-8'
-}
-
-function send(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-  res.end(JSON.stringify(body))
-}
-
-function serveFile(res: ServerResponse, file: string) {
-  res.writeHead(200, { 'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-store' })
-  createReadStream(file).pipe(res)
-}
-
-async function body(req: IncomingMessage, limit = 30 * 1024 * 1024): Promise<any> {
-  const chunks: Buffer[] = []
-  let n = 0
-  for await (const c of req) {
-    n += (c as Buffer).length
-    if (n > limit) throw Object.assign(new Error('请求体过大'), { status: 413 })
-    chunks.push(c as Buffer)
-  }
-  const raw = Buffer.concat(chunks).toString('utf8')
-  return raw ? JSON.parse(raw) : {}
 }
 
 function displayMessages(messages: readonly AgentMessage[]) {
@@ -159,19 +125,6 @@ function listCwd(cwd: string) {
   return out
 }
 
-function setEnvKey(root: string, name: string, value: string) {
-  if (!/^[A-Z][A-Z0-9_]*$/.test(name)) throw new Error('无效的环境变量名')
-  const file = join(root, '.env')
-  const lines = existsSync(file) ? readFileSync(file, 'utf8').split(/\r?\n/) : []
-  const i = lines.findIndex((l) => l.startsWith(`${name}=`) || l.startsWith(`# ${name}=`))
-  const line = `${name}=${value}`
-  if (i >= 0) lines[i] = line
-  else lines.push(line)
-  writeFileSync(file, lines.join('\n').replace(/\n*$/, '\n'), { mode: 0o600 })
-  if (value) process.env[name] = value
-  else delete process.env[name]
-}
-
 export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: string[] }) {
   const ws = rt.ws
   const WEB = resolve(opts.webDir)
@@ -195,6 +148,27 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     }
   }
 
+  /** After a turn: index everything under the session's output folder (scripts may write files we did not see). */
+  const indexOutputs = (l: Live) => {
+    const outRoot = l.meta.projectId ? join(l.meta.cwd, OUT_DIR, l.rs.id) : l.meta.cwd
+    if (!existsSync(outRoot)) return
+    const files: string[] = []
+    const walk = (d: string, depth: number) => {
+      let names: string[] = []
+      try { names = readdirSync(d) } catch { return }
+      for (const n of names) {
+        if (n.startsWith('.') || n === 'node_modules' || n === IN_DIR || files.length > 500) continue
+        const f = join(d, n)
+        let st
+        try { st = statSync(f) } catch { continue }
+        if (st.isDirectory()) { if (depth > 0) walk(f, depth - 1) } else files.push(relative(l.meta.cwd, f))
+      }
+    }
+    walk(outRoot, 4)
+    indexFiles(rt.db, { root: l.meta.cwd, projectId: l.meta.projectId, sessionId: l.rs.id }, files, 'output')
+  }
+  const v2 = createV2Routes(rt, { resetIdleSessions: () => resetIdleSessions() })
+
   const requireSessionRow = (id: string) => {
     if (!/^[\w-]+$/.test(id)) throw Object.assign(new Error('无效的会话 ID'), { status: 400 })
     const row = rt.db.prepare('SELECT id, title, created_at, genome_id, COALESCE(pinned, 0) AS pinned, COALESCE(archived, 0) AS archived FROM sessions WHERE id = ?').get(id) as
@@ -204,13 +178,32 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     return row
   }
 
-  async function getLive(id: string, create?: { title?: string; cwd?: string }): Promise<Live> {
+  type CreateOpts = { title?: string; projectId?: string | null; model?: string | null; effort?: string | null; permission?: PermissionMode }
+  const metaFor = (id: string, row: Record<string, unknown> | undefined, create?: CreateOpts): SessionMeta => {
+    const projectId = (create?.projectId ?? row?.project_id ?? null) as string | null
+    const project = projectId ? getProject(rt.db, projectId) : undefined
+    if (projectId && !project) throw httpError(404, '项目不存在')
+    const cwd = (row?.cwd as string | null) ?? sessionCwd(ws, project, id)
+    const permission = (create?.permission ?? row?.permission ?? ws.settings.defaults.permission ?? 'ask') as PermissionMode
+    return {
+      projectId,
+      cwd,
+      model: (create?.model ?? row?.model ?? null) as string | null,
+      effort: (create?.effort ?? row?.effort ?? null) as string | null,
+      permission: PERMISSION_MODES.includes(permission) ? permission : 'ask'
+    }
+  }
+  const saveMeta = (id: string, m: SessionMeta) =>
+    rt.db.prepare('UPDATE sessions SET project_id = ?, cwd = ?, model = ?, effort = ?, permission = ? WHERE id = ?').run(m.projectId, m.cwd, m.model, m.effort, m.permission, id)
+
+  async function getLive(id: string, create?: CreateOpts): Promise<Live> {
     if (!/^[\w-]+$/.test(id)) throw Object.assign(new Error('无效的会话 ID'), { status: 400 })
     const existing = live.get(id)
     if (existing) return existing
-    const row = rt.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as { title?: string } | undefined
+    const row = rt.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown> | undefined
     if (!row && !create) throw Object.assign(new Error('会话不存在'), { status: 404 })
     const l = { clients: new Set(), busy: false, approvals: new Map(), seenTool: new Set() } as unknown as Live
+    l.meta = metaFor(id, row, create)
     const onEvent = (e: AgentEvent) => {
       if (e.type === 'model' && e.purpose !== 'compaction') {
         const ev = e.event
@@ -226,20 +219,27 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
           }
       } else if (e.type === 'compaction') broadcast(l, { type: 'compaction', status: e.status })
     }
+    const outputDir = l.meta.projectId ? `${OUT_DIR}/${id}` : OUT_DIR
     l.rs = await openResearchSession(rt, {
       sessionId: id,
-      title: create?.title ?? row?.title,
-      cwd: create?.cwd,
+      title: create?.title ?? (row?.title as string | undefined),
+      cwd: l.meta.cwd,
+      model: l.meta.model ?? undefined,
+      effort: l.meta.effort ?? undefined,
+      permission: () => l.meta.permission,
+      outputDir,
+      onFiles: (paths) => indexFiles(rt.db, { root: l.meta.cwd, projectId: l.meta.projectId, sessionId: id }, paths, 'output'),
       category: 'usage',
       onEvent,
       onWarning: (m) => broadcast(l, { type: 'warning', message: m }),
-      approve: (tool, summary) =>
+      approve: (tool, summary, kind) =>
         new Promise<boolean>((resolveApproval) => {
           const aid = randomUUID().slice(0, 8)
           l.approvals.set(aid, { id: aid, tool, summary, resolve: resolveApproval })
-          broadcast(l, { type: 'approval', id: aid, tool, summary })
+          broadcast(l, { type: 'approval', id: aid, tool, summary, kind: kind ?? 'exec' })
         })
     })
+    saveMeta(id, { ...l.meta, model: l.meta.model ?? l.rs.model })
     const snap = await l.rs.session.snapshot()
     for (const m of snap.messages) if (m.role === 'tool') l.seenTool.add(m.id)
     live.set(id, l)
@@ -250,6 +250,9 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     const rows = rt.db
       .prepare(
         `SELECT s.id, s.title, s.created_at, s.genome_id, COALESCE(s.pinned, 0) AS pinned, COALESCE(s.archived, 0) AS archived,
+                s.project_id AS projectId, s.model, s.effort, s.permission,
+                (SELECT root || char(1) || path FROM library WHERE session_id = s.id AND kind = 'output'
+                   AND lower(path) GLOB '*.[pjsgw][npvie][gfgb]*' ORDER BY updated_at DESC LIMIT 1) AS libThumb,
                 COUNT(t.id) AS turns, COALESCE(SUM(t.cost_cny),0) AS cost,
                 MAX(t.ts_start) AS last,
                 (SELECT prompt FROM turns WHERE session_id = s.id ORDER BY id LIMIT 1) AS preview,
@@ -270,9 +273,10 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         else if (SKILL_MODE[name]) modes.add(SKILL_MODE[name])
       }
       const mode = ['writing', 'figure', 'literature', 'data'].find((m) => modes.has(m)) ?? 'chat'
-      const thumb = !archived && i < 60 ? latestImage(join(ws.dataDir, 'projects', id)) : undefined
+      const lib = r.libThumb ? String(r.libThumb).split('\u0001') : undefined
+      const thumb = lib && IMG.test(lib[1]) ? lib[1] : !archived && i < 60 && !r.projectId ? latestImage(join(ws.dataDir, 'projects', id)) : undefined
       const l = live.get(id)
-      const { signals: _s, ...rest } = r
+      const { signals: _s, libThumb: _t, ...rest } = r
       return {
         ...rest,
         pinned: !!r.pinned,
@@ -374,18 +378,19 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     const m = (re: RegExp) => re.exec(p)
     // Mutations require a custom header, which browsers cannot send cross-site without CORS approval.
     if (req.method !== 'GET' && req.headers['x-evoscholar'] !== '1') return send(res, 403, { error: 'missing x-evoscholar header' })
+    // DNS-rebinding guard: the API only answers to loopback host names.
+    const host = String(req.headers.host ?? '').replace(/:\d+$/, '')
+    if (p.startsWith('/api/') && host && !['127.0.0.1', 'localhost', '[::1]'].includes(host)) return send(res, 403, { error: 'bad host' })
+    if (p.startsWith('/api/') && (await v2(req, res, url))) return
 
     if (p === '/api/state' && req.method === 'GET') {
       const g = rt.genomes.load()
       return send(res, 200, {
-        genome: { id: g.id, note: g.note, roles: g.routing.roles, tools: g.tools.enabled, budgets: g.budgets, parent: g.parent },
-        genomes: rt.genomes.list(),
-        providers: listProviders(ws.config),
-        reasoningEffort: ws.config.reasoningEffort ?? {},
-        budget: rt.ledger.summary(),
-        protectedLimits: PROTECTED_LIMITS,
-        evolutionConfig: ws.config.evolution,
-        peak: isDeepSeekPeak(),
+        genome: { id: g.id, note: g.note, tools: g.tools.enabled, parent: g.parent },
+        providers: listProviders(ws.config).map(({ models, ...pv }) => ({ ...pv, models: pv.hasKey ? models : [] })),
+        defaults: ws.settings.defaults,
+        efforts: ws.settings.efforts,
+        projects: listProjects(rt.db),
         sessions: listSessions(),
         pending: (rt.db.prepare(`SELECT COUNT(*) n FROM candidates WHERE status = 'pending'`).get() as { n: number }).n,
         alerts
@@ -408,8 +413,14 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     if (p === '/api/sessions' && req.method === 'POST') {
       const b = await body(req)
       const id = `s-${new Date().toISOString().slice(0, 10)}-${randomUUID().slice(0, 8)}`
-      const l = await getLive(id, { title: String(b.title ?? '新会话').slice(0, 80) })
-      return send(res, 200, { id, cwd: l.rs.cwd })
+      const l = await getLive(id, {
+        title: String(b.title ?? '新会话').slice(0, 80),
+        projectId: b.projectId ? String(b.projectId) : null,
+        model: b.model ? String(b.model) : null,
+        effort: b.effort ? String(b.effort) : null,
+        permission: PERMISSION_MODES.includes(b.permission) ? b.permission : undefined
+      })
+      return send(res, 200, { id, cwd: l.rs.cwd, projectId: l.meta.projectId })
     }
 
     let mm = m(/^\/api\/sessions\/([\w-]+)$/)
@@ -423,6 +434,10 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         pinned: !!row.pinned,
         archived: !!row.archived,
         cwd: l.rs.cwd,
+        projectId: l.meta.projectId,
+        model: l.rs.model,
+        effort: l.rs.effort ?? null,
+        permission: l.meta.permission,
         busy: l.busy,
         genome: l.rs.genome.id,
         messages: displayMessages(snap.messages),
@@ -459,6 +474,9 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         rt.db.exec('ROLLBACK')
         throw err
       }
+      rt.db.prepare('DELETE FROM library WHERE session_id = ? AND project_id IS NULL').run(id)
+      rt.db.prepare('UPDATE library SET session_id = NULL WHERE session_id = ?').run(id)
+      // Only the private drafts folder is removed; a project folder belongs to the user.
       const projectsRoot = join(ws.dataDir, 'projects')
       const projDir = inside(projectsRoot, id)
       if (existsSync(projDir)) rmSync(projDir, { recursive: true, force: true })
@@ -542,26 +560,75 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/ask$/)
     if (mm && req.method === 'POST') {
-      const l = await getLive(mm[1])
+      const id = mm[1]
+      let l = await getLive(id)
       if (l.busy) return send(res, 409, { error: '上一轮还在运行' })
       const b = await body(req)
-      const blocks: ContentBlock[] = [{ type: 'text', text: String(b.text ?? '') }]
+      // Model / effort chosen in the composer: reopen the session (journal store keeps history).
+      const wantModel = b.model ? String(b.model) : l.rs.model
+      const wantEffort = b.effort !== undefined ? (String(b.effort) || null) : l.meta.effort
+      if (b.permission !== undefined && PERMISSION_MODES.includes(b.permission)) l.meta.permission = b.permission
+      if (wantModel !== l.rs.model || (wantEffort ?? null) !== (l.rs.effort ?? null)) {
+        const meta = { ...l.meta, model: wantModel, effort: wantEffort }
+        saveMeta(id, meta)
+        const clients = l.clients
+        await l.rs.dispose().catch(() => {})
+        live.delete(id)
+        l = await getLive(id)
+        for (const c of clients) l.clients.add(c)
+      }
+      saveMeta(id, l.meta)
+      let text = String(b.text ?? '')
+      const blocks: ContentBlock[] = []
+      // Attachments: files already uploaded into evoscholar-in/. Images also go to the model when it can see.
+      const attachments = (Array.isArray(b.attachments) ? b.attachments : []).map(String).slice(0, 20)
+      const refs = (Array.isArray(b.refs) ? b.refs : []).map(String).slice(0, 20)
+      const vision = modelInfo(ws.config, l.rs.model).vision
+      const notes: string[] = []
+      for (const rel of [...attachments, ...refs]) {
+        const f = inside(l.rs.cwd, rel)
+        if (!existsSync(f) || statSync(f).isDirectory()) continue
+        const ext = extname(f).toLowerCase()
+        const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : ''
+        if (mime && vision && statSync(f).size < 8 * 1024 * 1024) {
+          blocks.push({ type: 'image', mimeType: mime, source: `data:${mime};base64,${readFileSync(f).toString('base64')}`, filename: basename(f) })
+          notes.push(`${rel}（图片，已附在消息里）`)
+        } else notes.push(rel)
+      }
+      if (notes.length) text += `\n\n[${attachments.length ? '附件' : '引用文件'}] ${notes.join('；')}`
       for (const img of (b.images ?? []) as { mimeType: string; data: string }[])
         if (/^image\/(png|jpeg|gif|webp)$/.test(img.mimeType)) blocks.push({ type: 'image', mimeType: img.mimeType, source: `data:${img.mimeType};base64,${img.data}` })
-      l.busy = true
-      broadcast(l, { type: 'status', status: 'running' })
+      if (l.meta.permission === 'plan') text = `${PLAN_MODE_NOTE}\n\n${text}`
+      blocks.unshift({ type: 'text', text })
+      const live0 = l
+      live0.busy = true
+      broadcast(live0, { type: 'status', status: 'running', model: live0.rs.model, effort: live0.rs.effort ?? null, permission: live0.meta.permission })
       send(res, 202, { ok: true })
-      l.rs
+      live0.rs
         .ask(blocks)
-        .then(({ status }) => broadcast(l, { type: 'status', status }))
-        .catch((e) => broadcast(l, { type: 'error', message: (e instanceof BudgetError ? '预算拦截：' : '') + (e as Error).message }))
+        .then(({ status }) => broadcast(live0, { type: 'status', status }))
+        .catch((e) => broadcast(live0, { type: 'error', message: (e as Error).message }))
         .finally(() => {
-          l.busy = false
-          for (const entry of l.approvals.values()) entry.resolve(false)
-          l.approvals.clear()
-          broadcast(l, { type: 'done', budget: rt.ledger.summary() })
+          live0.busy = false
+          for (const entry of live0.approvals.values()) entry.resolve(false)
+          live0.approvals.clear()
+          indexOutputs(live0)
+          broadcast(live0, { type: 'done' })
         })
       return
+    }
+    mm = m(/^\/api\/sessions\/([\w-]+)\/settings$/)
+    if (mm && req.method === 'PATCH') {
+      const l = await getLive(mm[1])
+      const b = await body(req)
+      if (b.permission !== undefined) {
+        if (!PERMISSION_MODES.includes(b.permission)) throw httpError(400, '未知权限模式')
+        l.meta.permission = b.permission
+      }
+      if (b.model !== undefined && !l.busy) l.meta.model = String(b.model) || null
+      if (b.effort !== undefined && !l.busy) l.meta.effort = String(b.effort) || null
+      saveMeta(mm[1], l.meta)
+      return send(res, 200, { ok: true, ...l.meta })
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/cancel$/)
     if (mm && req.method === 'POST') {
@@ -608,80 +675,15 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       const b = await body(req)
       const name = basename(String(b.name ?? '').replace(/[\\/]/g, '_'))
       if (!name || name === '.' || name === '..') return send(res, 400, { error: 'name' })
-      const f = inside(l.rs.cwd, join('inputs', name))
-      mkdirSync(join(l.rs.cwd, 'inputs'), { recursive: true })
+      const dir = join(l.rs.cwd, IN_DIR)
+      mkdirSync(dir, { recursive: true })
+      let f = inside(l.rs.cwd, join(IN_DIR, name))
+      for (let i = 2; existsSync(f) && i < 100; i++) f = inside(l.rs.cwd, join(IN_DIR, name.replace(/(\.[^.]*)?$/, `-${i}$1`)))
       writeFileSync(f, Buffer.from(String(b.data ?? ''), 'base64'))
-      return send(res, 200, { path: relative(l.rs.cwd, f) })
+      const rel = relative(l.rs.cwd, f).split(/[\\/]/).join('/')
+      indexFiles(rt.db, { root: l.meta.cwd, projectId: l.meta.projectId, sessionId: l.rs.id }, [rel], 'upload')
+      return send(res, 200, { path: rel, image: IMG.test(name) })
     }
-    if (p === '/api/keys' && req.method === 'POST') {
-      const b = await body(req)
-      const prov = listProviders(ws.config).find((x) => x.id === b.provider)
-      if (!prov) return send(res, 404, { error: '未知厂商' })
-      setEnvKey(ws.root, prov.apiKeyEnv, String(b.key ?? '').trim())
-      if (process.env[prov.apiKeyEnv] && prov.modelsListUrl) {
-        await refreshProviderModels(ws.config, prov.id).catch(() => {})
-      }
-      return send(res, 200, { ok: true, hasKey: !!process.env[prov.apiKeyEnv] })
-    }
-    if (p === '/api/providers/refresh' && req.method === 'POST') {
-      const b = await body(req)
-      const targets = b.provider
-        ? [String(b.provider)]
-        : listProviders(ws.config).filter((x) => x.hasKey && x.modelsListUrl).map((x) => x.id)
-      const results: Record<string, unknown> = {}
-      for (const id of targets) results[id] = await refreshProviderModels(ws.config, id)
-      return send(res, 200, { ok: true, results, providers: listProviders(ws.config) })
-    }
-    if (p === '/api/providers/effort' && req.method === 'POST') {
-      const b = await body(req)
-      const model = String(b.model ?? '')
-      const effort = String(b.effort ?? '').trim()
-      const known = new Set(listProviders(ws.config).flatMap((pv) => pv.models.map((md) => `${pv.id}/${md.id}`)))
-      if (!known.has(model)) return send(res, 400, { error: `未知模型 ${model}` })
-      const cap = modelInfo(ws.config, model).reasoningEffort
-      if (effort && effort !== 'default') {
-        if (!cap?.supported) return send(res, 400, { error: `模型 ${model} 不支持思考程度设置` })
-        if (cap.values?.length && !cap.values.includes(effort)) return send(res, 400, { error: `不支持的思考程度：${effort}` })
-      }
-      const cfgFile = join(ws.root, 'evoscholar.config.json')
-      const cfg = JSON.parse(readFileSync(cfgFile, 'utf8'))
-      cfg.reasoningEffort = cfg.reasoningEffort ?? {}
-      if (!effort || effort === 'default') delete cfg.reasoningEffort[model]
-      else cfg.reasoningEffort[model] = effort
-      writeFileSync(cfgFile, JSON.stringify(cfg, null, 2) + '\n')
-      ws.config.reasoningEffort = cfg.reasoningEffort
-      await resetIdleSessions()
-      return send(res, 200, { ok: true, reasoningEffort: ws.config.reasoningEffort })
-    }
-    if (p === '/api/providers/custom' && req.method === 'POST') {
-      const b = await body(req)
-      const id = String(b.id ?? '').toLowerCase()
-      if (!/^[a-z][a-z0-9-]{1,30}$/.test(id)) return send(res, 400, { error: 'id 只能用小写字母、数字和 -' })
-      const endpoint = new URL(String(b.endpoint))
-      if (endpoint.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname))
-        return send(res, 400, { error: '远程网关必须使用 https' })
-      const protocol = ['chat-completions', 'messages', 'responses'].includes(b.protocol) ? b.protocol : 'chat-completions'
-      const models = String(b.models ?? '').split(/[\s,]+/).filter(Boolean).map((x: string) => ({ id: x }))
-      const cfgFile = join(ws.root, 'evoscholar.config.json')
-      const cfg = JSON.parse(readFileSync(cfgFile, 'utf8'))
-      cfg.providers = cfg.providers ?? {}
-      cfg.providers[id] = { label: String(b.label || id), endpoint: endpoint.toString(), protocol, apiKeyEnv: `${id.toUpperCase().replace(/-/g, '_')}_API_KEY`, models }
-      writeFileSync(cfgFile, JSON.stringify(cfg, null, 2) + '\n')
-      ws.config.providers = cfg.providers
-      if (b.key) setEnvKey(ws.root, cfg.providers[id].apiKeyEnv, String(b.key).trim())
-      return send(res, 200, { ok: true })
-    }
-    if (p === '/api/genome/roles' && req.method === 'POST') {
-      const b = await body(req)
-      const roles = b.roles as Partial<Record<Role, string>>
-      const known = new Set(listProviders(ws.config).flatMap((pv) => pv.models.map((md) => `${pv.id}/${md.id}`)))
-      for (const v of Object.values(roles ?? {})) if (!known.has(String(v))) return send(res, 400, { error: `未知模型 ${v}` })
-      const changed = Object.entries(roles).map(([k, v]) => `${k}=${v}`).join(', ')
-      const g = rt.genomes.deriveManual((x) => Object.assign(x.routing.roles, roles), `手动切换模型：${changed}`)
-      await resetIdleSessions()
-      return send(res, 200, { genome: g.id })
-    }
-
     if (p === '/api/evolution' && req.method === 'GET') {
       const g = rt.genomes.load()
       const bench = new Bench(rt.ws.root)

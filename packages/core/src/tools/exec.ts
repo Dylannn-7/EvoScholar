@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'nod
 import { join, relative } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { checkCommand, inside } from './sandbox'
-import { objectArgs, textResult, type ToolEnv, type ToolFactory } from './types'
+import { objectArgs, shellFor, textResult, type ToolEnv, type ToolFactory } from './types'
 
 const OUT_LIMIT = 20_000
 const clip = (s: string, n = OUT_LIMIT) => (s.length > n ? s.slice(0, n / 2) + `\n…（省略 ${s.length - n} 字符）…\n` + s.slice(-n / 2) : s)
@@ -40,7 +40,7 @@ export async function runPyHelper(env: ToolEnv, script: string, args: string[], 
 }
 
 async function approve(env: ToolEnv, tool: string, summary: string): Promise<boolean> {
-  return env.approve ? env.approve(tool, summary) : true
+  return env.approve ? env.approve(tool, summary, 'exec') : true
 }
 
 function snapshot(dir: string, depth = 3): Map<string, number> {
@@ -66,7 +66,7 @@ function changedFiles(before: Map<string, number>, after: Map<string, number>, c
 
 function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal: AbortSignal) {
   return new Promise<{ code: number | null; signal: string | null; out: string; stdout: string; timedOut: boolean }>((resolveP) => {
-    const child = spawn(cmd, args, { cwd: env.cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(cmd, args, { cwd: env.cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     let out = ''
     let stdout = ''
     let timedOut = false
@@ -81,7 +81,8 @@ function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal
   })
 }
 
-function report(r: { code: number | null; signal: string | null; out: string; timedOut: boolean }, changed: string[]) {
+function report(r: { code: number | null; signal: string | null; out: string; timedOut: boolean }, changed: string[], env?: ToolEnv) {
+  if (changed.length) env?.onFiles?.(changed)
   const status = r.timedOut ? '超时被终止' : r.code === 0 ? '退出码 0' : `退出码 ${r.code ?? r.signal}`
   const files = changed.length ? `\n新建或修改的文件：${changed.join(', ')}` : ''
   return textResult(`[${status}]${files}\n${clip(r.out.trim()) || '（无输出）'}`, !r.timedOut && r.code !== 0 ? true : r.timedOut)
@@ -127,14 +128,14 @@ export const runPython: ToolFactory = (env) => ({
     env.trace?.({ kind: 'exec', tool: 'run_python', file: relative(env.cwd, script) })
     const r = await run(pythonBin(env), [script, ...(a.args ?? [])], env, a.timeout_s ?? 120, ctx.signal)
     env.trace?.({ kind: 'exec.exit', tool: 'run_python', code: r.code, timedOut: r.timedOut })
-    return report(r, changedFiles(before, snapshot(env.cwd), env.cwd))
+    return report(r, changedFiles(before, snapshot(env.cwd), env.cwd), env)
   }
 })
 
 export const runCommand: ToolFactory = (env) => ({
   name: 'run_command',
   version: '1',
-  description: '在工作目录中运行一条短 shell 命令并等待结束（如 ls、python3 x.py、xelatex main.tex）。需要长时间运行的服务请用 start_process。',
+  description: `在工作目录中运行一条短命令并等待结束（${process.platform === 'win32' ? 'Windows PowerShell 语法，如 Get-ChildItem、python x.py' : 'POSIX shell 语法，如 ls、python3 x.py'}、xelatex main.tex）。需要长时间运行的服务请用 start_process。`,
   parameters: {
     type: 'object',
     properties: { command: { type: 'string' }, timeout_s: { type: 'integer', minimum: 1, maximum: 900, description: '默认 120' } },
@@ -153,10 +154,10 @@ export const runCommand: ToolFactory = (env) => ({
     const a = args as { command: string; timeout_s?: number }
     const before = snapshot(env.cwd)
     env.trace?.({ kind: 'exec', tool: 'run_command', command: a.command })
-    const shell = process.platform === 'win32' ? ['cmd', ['/c', a.command]] as const : ['/bin/sh', ['-c', a.command]] as const
-    const r = await run(shell[0], [...shell[1]], env, a.timeout_s ?? 120, ctx.signal)
+    const [cmd, cmdArgs] = shellFor(a.command)
+    const r = await run(cmd, cmdArgs, env, a.timeout_s ?? 120, ctx.signal)
     env.trace?.({ kind: 'exec.exit', tool: 'run_command', code: r.code, timedOut: r.timedOut })
-    return report(r, changedFiles(before, snapshot(env.cwd), env.cwd))
+    return report(r, changedFiles(before, snapshot(env.cwd), env.cwd), env)
   }
 })
 
@@ -215,7 +216,8 @@ export const startProcess: ToolFactory = (env) => ({
     const a = args as { command: string; wait_s?: number }
     const procs = procsFor(env)
     if (procs.size >= 4) return textResult('后台进程已有 4 个，请先 stop_process', true)
-    const child = spawn('/bin/sh', ['-c', `exec ${a.command}`], { cwd: env.cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'] })
+    const [cmd, cmdArgs] = shellFor(process.platform === 'win32' ? a.command : `exec ${a.command}`)
+    const child = spawn(cmd, cmdArgs, { cwd: env.cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     const id = `p${Date.now().toString(36)}`
     const p: Proc = { id, command: a.command, child, out: '', read: 0, startedAt: Date.now() }
     const add = (b: Buffer) => { p.out += b.toString('utf8'); if (p.out.length > 200_000) { p.out = p.out.slice(-100_000); p.read = 0 } }

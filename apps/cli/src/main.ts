@@ -68,12 +68,14 @@ async function chat(rt: Runtime, args: string[], oneShot?: string) {
     approve,
     cwd: flag(args, 'cwd'),
     sessionId: flag(args, 'session'),
+    model: flag(args, 'model'),
+    effort: flag(args, 'effort'),
     category,
     stage: flag(args, 'stage'),
     onEvent: streamPrinter(),
-    onWarning: (m) => console.log(yellow(`\n⚠ ${m}`))
+    onWarning: (m) => console.log(yellow(`\n[提示] ${m}`))
   })
-  console.log(dim(`会话 ${rs.id} · genome ${rs.genome.id} · ${rs.genome.routing.roles.main} · 预算分类 ${category}`))
+  console.log(dim(`会话 ${rs.id} · genome ${rs.genome.id} · ${rs.model} · 分类 ${category}`))
   const run = async (text: string) => {
     try {
       const { status } = await rs.ask(text)
@@ -155,7 +157,7 @@ async function main() {
       return printBudget(rt)
     case 'providers':
       for (const p of listProviders(ws.config))
-        console.log(`${p.hasKey ? '✓' : '·'} ${p.id.padEnd(12)} ${p.label.padEnd(18)} ${p.protocols.join(',').padEnd(34)} ${p.apiKeyEnv}  ${p.models.map((m) => m.id + (m.vision ? '👁' : '')).slice(0, 4).join(' ')}`)
+        console.log(`${p.hasKey ? '[key]' : '     '} ${p.id.padEnd(12)} ${p.label.padEnd(22)} ${p.protocol.padEnd(17)} ${p.baseUrl.padEnd(48)} ${p.apiKeyEnv}  ${p.models.map((m) => m.id + (m.vision ? ' (vision)' : '')).slice(0, 3).join(', ')}`)
       return
     case 'genome': {
       const g = rt.genomes.load(args[0])
@@ -230,7 +232,7 @@ async function main() {
     }
     default:
       console.log(`用法：evoscholar <命令>
-  chat [--category usage|dev] [--session ID] [--cwd DIR] [--yes]   交互式对话
+  chat [--category usage|dev] [--session ID] [--cwd DIR] [--model P/M] [--effort E] [--yes]   交互式对话
   ask  <问题> [--category dev] [--cwd DIR] [--yes]                  单轮提问（--yes 自动允许执行代码）
   budget                                                        查看 API 花费与预算
   providers                                                     查看模型厂商与 Key 状态

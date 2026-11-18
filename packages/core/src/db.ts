@@ -126,7 +126,36 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE eval_runs ADD COLUMN task_hash TEXT;
    CREATE INDEX eval_runs_cache_key ON eval_runs(genome_hash, case_id, task_hash)
      WHERE error IS NULL AND task_hash IS NOT NULL;`,
-  `ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;`
+  `ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;`,
+  // v2: projects (local folders), per-session model / effort / permission, library index.
+  `CREATE TABLE projects (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     path TEXT NOT NULL UNIQUE,
+     created_at TEXT NOT NULL,
+     archived INTEGER NOT NULL DEFAULT 0
+   );
+   ALTER TABLE sessions ADD COLUMN project_id TEXT;
+   ALTER TABLE sessions ADD COLUMN cwd TEXT;
+   ALTER TABLE sessions ADD COLUMN model TEXT;
+   ALTER TABLE sessions ADD COLUMN effort TEXT;
+   ALTER TABLE sessions ADD COLUMN permission TEXT;
+   CREATE TABLE library (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     project_id TEXT,
+     session_id TEXT,
+     root TEXT NOT NULL,            -- absolute folder the path is relative to (session cwd)
+     path TEXT NOT NULL,
+     kind TEXT NOT NULL,            -- output | upload
+     size INTEGER NOT NULL DEFAULT 0,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL,
+     deliverable INTEGER NOT NULL DEFAULT 0,
+     UNIQUE(root, path)
+   );
+   CREATE INDEX library_session ON library(session_id);
+   CREATE INDEX library_project ON library(project_id);
+   CREATE INDEX ledger_session ON ledger(session_id);`
 ]
 
 export function openDb(dataDir: string): Db {

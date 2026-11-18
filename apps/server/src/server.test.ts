@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createServer } from 'node:http'
+import { createServer, request } from 'node:http'
 import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -70,7 +70,6 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   assert.equal(st.sessions[0].id, s1.id)
   assert.equal(st.sessions[0].title, 'Renamed First')
   assert.equal(st.sessions[0].pinned, true)
-  assert.ok(st.protectedLimits.maxSteps > 0)
 
   // Place a mock manuscript check report and record feedback through the endpoint
   const checkDir = join(s1.cwd, '.evoscholar', 'checks', 'draft')
@@ -96,22 +95,14 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   assert.equal(sum.reports.length, 1)
   assert.equal(sum.reports[0].findings[0].verdict, 'false_positive')
 
-  // Provider reasoning effort endpoint: valid effort vs unsupported effort
-  const badEff = await fetch(`${base}/api/providers/effort`, {
-    method: 'POST',
-    headers: H,
-    body: JSON.stringify({ model: 'deepseek/deepseek-flash', effort: 'ultra' })
-  })
-  assert.equal(badEff.status, 400)
-
-  const okEff = await fetch(`${base}/api/providers/effort`, {
-    method: 'POST',
-    headers: H,
-    body: JSON.stringify({ model: 'deepseek/deepseek-flash', effort: 'max' })
-  })
+  // Remembered reasoning effort per model: unsupported values are ignored, supported ones persist.
+  await fetch(`${base}/api/settings/defaults`, { method: 'PUT', headers: H, body: JSON.stringify({ efforts: { 'deepseek/deepseek-flash': 'ultra' } }) })
+  let stEff = (await (await fetch(`${base}/api/state`)).json()) as { efforts: Record<string, string> }
+  assert.equal(stEff.efforts['deepseek/deepseek-flash'], undefined)
+  const okEff = await fetch(`${base}/api/settings/defaults`, { method: 'PUT', headers: H, body: JSON.stringify({ efforts: { 'deepseek/deepseek-flash': 'max' } }) })
   assert.equal(okEff.status, 200)
-  const stEff = (await (await fetch(`${base}/api/state`)).json()) as { reasoningEffort: Record<string, string> }
-  assert.equal(stEff.reasoningEffort['deepseek/deepseek-flash'], 'max')
+  stEff = (await (await fetch(`${base}/api/state`)).json()) as { efforts: Record<string, string> }
+  assert.equal(stEff.efforts['deepseek/deepseek-flash'], 'max')
 
   // Fork s1 -> creates a new session referencing the same workspace branch
   const forkRes = await fetch(`${base}/api/sessions/${s1.id}/fork`, { method: 'POST', headers: H, body: '{}' })
@@ -147,4 +138,86 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   assert.equal(existsSync(s2.cwd), false)
   const afterGet = await fetch(`${base}/api/sessions/${s2.id}`)
   assert.equal(afterGet.status, 404)
+})
+
+test('v2 endpoints: model settings, projects, uploads into the library, usage, host guard', async (t) => {
+  const dir = tempWorkspace()
+  const proj = mkdtempSync(join(tmpdir(), 'evo-srv-proj-'))
+  writeFileSync(join(proj, 'notes.md'), '# 笔记')
+  const ws = openWorkspace(dir)
+  const rt = openRuntime(ws, () => {})
+  const app = createServerApp(rt, { webDir: WEB })
+  const srv = createServer(app.handler)
+  await new Promise<void>((res) => srv.listen(0, '127.0.0.1', () => res()))
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+  const H = { 'content-type': 'application/json', 'x-evoscholar': '1' }
+  const json = async (r: Response) => ({ status: r.status, body: (await r.json()) as any })
+  t.after(async () => {
+    await app.dispose()
+    await new Promise<void>((res) => srv.close(() => res()))
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(proj, { recursive: true, force: true })
+  })
+
+  // Model settings: presets list every protocol; switching protocol prefills that protocol's URL.
+  const models = await json(await fetch(`${base}/api/models`))
+  assert.deepEqual(models.body.protocols.map((p: { id: string }) => p.id), ['chat-completions', 'responses', 'messages', 'gemini'])
+  assert.ok(models.body.providers.some((p: { id: string }) => p.id === 'gemini'))
+  const put = await json(await fetch(`${base}/api/providers/deepseek`, { method: 'PUT', headers: H, body: JSON.stringify({ protocol: 'messages', key: 'sk-test-x' }) }))
+  assert.equal(put.body.provider.baseUrl, 'https://api.deepseek.com/anthropic')
+  assert.equal(put.body.provider.hasKey, true)
+  const bad = await fetch(`${base}/api/providers/deepseek`, { method: 'PUT', headers: H, body: JSON.stringify({ baseUrl: 'http://evil.example.com/v1' }) })
+  assert.equal(bad.status, 400)
+  const custom = await json(await fetch(`${base}/api/providers/lab-gw`, { method: 'PUT', headers: H, body: JSON.stringify({ custom: true, label: '实验室网关', protocol: 'responses', baseUrl: 'http://localhost:8080/v1', models: 'm-a, m-b' }) }))
+  assert.equal(custom.body.provider.custom, true)
+  assert.deepEqual(custom.body.provider.models.map((m: { id: string }) => m.id), ['m-a', 'm-b'])
+  const defs = await json(await fetch(`${base}/api/settings/defaults`, { method: 'PUT', headers: H, body: JSON.stringify({ model: 'lab-gw/m-a', permission: 'acceptEdits' }) }))
+  assert.equal(defs.body.defaults.model, 'lab-gw/m-a')
+  assert.equal(openWorkspace(dir).settings.defaults.permission, 'acceptEdits', 'settings persist to data/settings.json')
+
+  // Projects: add a folder, create a session inside it.
+  const created = await json(await fetch(`${base}/api/projects`, { method: 'POST', headers: H, body: JSON.stringify({ path: proj }) }))
+  const pid = created.body.project.id
+  assert.ok(pid.startsWith('p-'))
+  const files = await json(await fetch(`${base}/api/projects/${pid}/files?q=note`))
+  assert.deepEqual(files.body.files.map((f: { path: string }) => f.path), ['notes.md'])
+  const sess = await json(await fetch(`${base}/api/sessions`, { method: 'POST', headers: H, body: JSON.stringify({ title: '项目会话', projectId: pid, model: 'deepseek/deepseek-flash', permission: 'plan' }) }))
+  assert.equal(sess.body.projectId, pid)
+  const detail = await json(await fetch(`${base}/api/sessions/${sess.body.id}`))
+  assert.equal(detail.body.cwd, created.body.project.path)
+  assert.equal(detail.body.permission, 'plan')
+  assert.equal(detail.body.model, 'deepseek/deepseek-flash')
+
+  // Uploads land in evoscholar-in/ and in the library; names never collide.
+  const up1 = await json(await fetch(`${base}/api/sessions/${sess.body.id}/upload`, { method: 'POST', headers: H, body: JSON.stringify({ name: 'spec.csv', data: Buffer.from('a,b').toString('base64') }) }))
+  const up2 = await json(await fetch(`${base}/api/sessions/${sess.body.id}/upload`, { method: 'POST', headers: H, body: JSON.stringify({ name: 'spec.csv', data: Buffer.from('c,d').toString('base64') }) }))
+  assert.equal(up1.body.path, 'evoscholar-in/spec.csv')
+  assert.equal(up2.body.path, 'evoscholar-in/spec-2.csv')
+  const lib = await json(await fetch(`${base}/api/library?project=${pid}`))
+  assert.equal(lib.body.files.length, 2)
+  const fileRes = await fetch(`${base}/api/library/${lib.body.files[0].id}/file`)
+  assert.equal(fileRes.status, 200)
+  await fetch(`${base}/api/library/${lib.body.files[0].id}`, { method: 'PATCH', headers: H, body: JSON.stringify({ deliverable: true }) })
+  assert.equal((await json(await fetch(`${base}/api/library?deliverable=1`))).body.files.length, 1)
+
+  // Session settings switch without reopening; usage and folder picker answer.
+  const sw = await json(await fetch(`${base}/api/sessions/${sess.body.id}/settings`, { method: 'PATCH', headers: H, body: JSON.stringify({ permission: 'bypass' }) }))
+  assert.equal(sw.body.permission, 'bypass')
+  assert.equal((await fetch(`${base}/api/usage?group=model&days=30`)).status, 200)
+  assert.ok(Array.isArray((await json(await fetch(`${base}/api/fs/dirs?path=${encodeURIComponent(proj)}`))).body.dirs))
+
+  // Deleting a project session never touches the user's folder.
+  await fetch(`${base}/api/sessions/${sess.body.id}`, { method: 'DELETE', headers: H })
+  assert.ok(existsSync(join(proj, 'notes.md')))
+  assert.ok(existsSync(join(proj, 'evoscholar-in', 'spec.csv')))
+
+  // DNS-rebinding guard.
+  const port = (srv.address() as { port: number }).port
+  const status = await new Promise<number>((res, rej) => {
+    const r = request({ host: '127.0.0.1', port, path: '/api/state', headers: { host: 'attacker.example' } }, (resp) => { resp.resume(); res(resp.statusCode ?? 0) })
+    r.on('error', rej)
+    r.end()
+  })
+  assert.equal(status, 403)
 })
