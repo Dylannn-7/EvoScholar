@@ -4,12 +4,19 @@ import type { BudgetCategory, Workspace } from '../config'
 
 export type ToolEnv = {
   ws: Workspace
+  /** Session working directory; file and process tools cannot leave it. */
+  cwd: string
   ledger: Ledger
   category: () => BudgetCategory
   sessionId?: string
   genomeId?: string
-  /** Called for tools that need the user's approval (e.g. code execution). */
+  /**
+   * Called for tools with side effects outside plain file edits (code execution, processes).
+   * Undefined means unattended mode (evaluation runs in an isolated directory): auto-approve.
+   */
   approve?: (tool: string, summary: string) => Promise<boolean>
+  /** Optional sink for host-level trace events (exported with evaluation runs). */
+  trace?: (event: Record<string, unknown>) => void
 }
 export type ToolFactory = (env: ToolEnv) => AgentTool
 

@@ -53,6 +53,27 @@ export class GenomeRepo {
     validateGenome(g)
     writeFileSync(join(this.dir, `${g.id}.yaml`), YAML.stringify(g))
   }
+  nextId(): string {
+    const nums = this.list().map((id) => Number(/^g-(\d+)$/.exec(id)?.[1] ?? -1))
+    return `g-${String(Math.max(-1, ...nums) + 1).padStart(4, '0')}`
+  }
+  /** Manual edit (e.g. switching models in Settings) recorded as a child genome, then activated. */
+  deriveManual(patch: (g: HarnessGenome) => void, note: string): HarnessGenome {
+    const parent = this.load()
+    const child: HarnessGenome = JSON.parse(JSON.stringify(parent))
+    child.id = this.nextId()
+    child.parent = parent.id
+    child.createdBy = 'manual'
+    child.createdAt = new Date().toISOString()
+    child.status = 'active'
+    child.note = note
+    patch(child)
+    this.save(child)
+    parent.status = 'archived'
+    this.save(parent)
+    this.setActive(child.id)
+    return child
+  }
   /** Read a prompt reference like "prompts/system@v1.md" (or inline text). */
   text(ref: string | undefined): string {
     if (!ref) return ''

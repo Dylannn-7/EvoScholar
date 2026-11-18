@@ -8,3 +8,9 @@ data/
 .evoscholar/
 .DS_Store
 .sync/
+# Private, local-only material (never published)
+evals/
+rulepacks/*/source/
+/*.docx
+/*.zip
+/*.pdf

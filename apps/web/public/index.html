@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EvoScholar</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">Evo<span>Scholar</span></div>
+      <div class="genome" id="genomeBadge" title="当前 harness 版本">g-0000</div>
+    </div>
+    <button class="primary wide" id="newSession">＋ 新建会话</button>
+    <nav class="sessions" id="sessions"></nav>
+    <section class="budget" id="budget"></section>
+  </aside>
+
+  <main class="main">
+    <header class="top">
+      <div>
+        <h1 id="title">欢迎使用 EvoScholar</h1>
+        <div class="sub" id="subtitle">新建一个会话开始。文献检索、数据处理与出图、写作规范检查都可以在对话里完成。</div>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" data-panel="files">文件</button>
+        <button class="ghost" data-panel="settings">模型与密钥</button>
+        <button class="ghost" data-panel="ledger">账单</button>
+      </div>
+    </header>
+    <div class="banner" id="banner" hidden></div>
+    <section class="thread" id="thread"></section>
+    <form class="composer" id="composer">
+      <div class="attachments" id="attachments"></div>
+      <textarea id="input" rows="3" placeholder="输入问题；可以粘贴图片，或用左下角按钮把数据文件放进会话的 inputs/ 目录。Enter 发送，Shift+Enter 换行"></textarea>
+      <div class="composer-bar">
+        <label class="ghost small file-btn">上传文件<input type="file" id="fileInput" multiple hidden></label>
+        <span class="hint" id="cwdHint"></span>
+        <button type="button" class="ghost" id="stopBtn" hidden>停止</button>
+        <button type="submit" class="primary" id="sendBtn">发送</button>
+      </div>
+    </form>
+  </main>
+
+  <aside class="panel" id="panel" hidden>
+    <div class="panel-head"><h2 id="panelTitle"></h2><button class="ghost small" id="closePanel">关闭</button></div>
+    <div id="panelBody"></div>
+  </aside>
+</div>
+<template id="tplApproval">
+  <div class="approval">
+    <div class="approval-head">需要你的确认 · <b class="tool"></b></div>
+    <pre class="summary"></pre>
+    <div class="approval-actions"><button class="ghost deny">拒绝</button><button class="primary allow">允许执行</button></div>
+  </div>
+</template>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

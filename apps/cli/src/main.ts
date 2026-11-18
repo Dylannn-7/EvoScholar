@@ -40,7 +40,19 @@ function streamPrinter() {
 
 async function chat(rt: Runtime, args: string[], oneShot?: string) {
   const category = (flag(args, 'category') ?? 'usage') as BudgetCategory
+  const yes = args.includes('--yes')
+  let rlRef: ReturnType<typeof createInterface> | undefined
+  const approve = async (tool: string, summary: string) => {
+    if (yes) return true
+    if (!stdin.isTTY) { console.log(yellow(`\n已拒绝 ${tool}（非交互模式；加 --yes 自动允许）`)); return false }
+    const rl = rlRef ?? createInterface({ input: stdin, output: stdout })
+    const ans = (await rl.question(yellow(`\n需要确认 · ${tool}\n${summary}\n允许执行吗？[y/N] `))).trim().toLowerCase()
+    if (!rlRef) rl.close()
+    return ans === 'y' || ans === 'yes'
+  }
   const rs = await openResearchSession(rt, {
+    approve,
+    cwd: flag(args, 'cwd'),
     sessionId: flag(args, 'session'),
     category,
     stage: flag(args, 'stage'),
@@ -63,6 +75,8 @@ async function chat(rt: Runtime, args: string[], oneShot?: string) {
     return
   }
   const rl = createInterface({ input: stdin, output: stdout })
+  rlRef = rl
+  console.log(dim(`工作目录 ${rs.cwd}`))
   console.log(dim('输入问题开始对话。命令：/budget  /good  /bad 备注  /exit'))
   for (;;) {
     const line = (await rl.question(cyan('\n你 › '))).trim()
@@ -104,8 +118,8 @@ async function main() {
     }
     default:
       console.log(`用法：evoscholar <命令>
-  chat [--category usage|dev] [--session ID] [--stage NAME]   交互式对话
-  ask  <问题> [--category dev]                                  单轮提问
+  chat [--category usage|dev] [--session ID] [--cwd DIR] [--yes]   交互式对话
+  ask  <问题> [--category dev] [--cwd DIR] [--yes]                  单轮提问（--yes 自动允许执行代码）
   budget                                                        查看 API 花费与预算
   providers                                                     查看模型厂商与 Key 状态
   genome [ID]                                                   查看当前 harness genome`)

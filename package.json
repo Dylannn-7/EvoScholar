@@ -4,13 +4,22 @@
   "private": true,
   "description": "A self-evolving personal research workbench (harness-level evolution) built on a fork of aipoch/open-science agent-harness",
   "license": "Apache-2.0",
-  "engines": { "node": ">=22.13.0" },
-  "workspaces": ["packages/harness", "packages/core", "apps/cli"],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "workspaces": [
+    "packages/harness",
+    "packages/core",
+    "apps/cli",
+    "apps/server"
+  ],
   "scripts": {
-    "build": "tsc -b packages/harness packages/core apps/cli",
+    "build": "tsc -b packages/harness packages/core apps/cli apps/server",
+    "start": "node --no-warnings apps/server/dist/main.js",
     "chat": "node --no-warnings apps/cli/dist/main.js chat",
     "es": "node --no-warnings apps/cli/dist/main.js",
-    "test": "node --no-warnings --test packages/core/dist/**/*.test.js"
+    "setup:python": "node scripts/setup-python.mjs",
+    "test": "node --no-warnings --test packages/core/dist/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",
