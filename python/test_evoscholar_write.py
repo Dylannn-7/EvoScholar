@@ -82,6 +82,14 @@ See Section~\ref{sec:nope} and Eq.~\eqref{eq:1}.
         self.assertTrue(any('PDF' in f['message'] for f in by_rule(rep, 'ml.pages')))   # page limit needs the PDF
         self.assertTrue(all(f['source'] for f in rep['findings']))
 
+    def test_camera_ready_stage(self):
+        sub = Wr.run(self.d / 'main.tex', ['ml-conference'], 'neurips2025')
+        cam = Wr.run(self.d / 'main.tex', ['ml-conference'], 'neurips2025', stage='camera-ready')
+        self.assertTrue(by_rule(sub, 'ml.anonymity'))
+        self.assertFalse(by_rule(cam, 'ml.anonymity'))
+        self.assertTrue(any('≤10' in f['message'] for f in by_rule(cam, 'ml.pages')))
+        self.assertRaises(ValueError, Wr.run, self.d / 'main.tex', ['common'], None, None, 'draft')
+
     def test_annotate_latex(self):
         rep = Wr.run(self.d / 'main.tex', ['common'])
         out = Wr.annotate(rep, self.d / 'main.tex', self.d / 'out')
@@ -89,6 +97,34 @@ See Section~\ref{sec:nope} and Eq.~\eqref{eq:1}.
         self.assertIn('% EVO[', txt)
         self.assertIn('sec:m', (self.d / 'sections' / 'results.tex').read_text(encoding='utf-8'))   # original untouched
         self.assertTrue(any(p.endswith('results.tex') for p in out))
+
+
+class LatexFalsePositives(unittest.TestCase):
+    def test_real_paper_patterns(self):
+        d = Path(tempfile.mkdtemp())
+        (d / 'main.tex').write_text(r'''\documentclass{article}
+\newcommand{\methodac}{XYZ}
+\newcommand{\pisft}{\pi^\text{SFT}}
+\begin{document}
+We propose \textit{Direct Preference Optimization} (DPO). DPO is simple. DPO works.
+A \textit{preference-based RL} (PbRL) method; PbRL again. A contextual dueling bandit (CDB; \cite{a}) and CDB.
+Methods: Preferred-FT, PPO-GT, and GPT-4 on TL;DR and CNN/DailyMail. Using the lowest temperature (DPO).
+\vspace{-2mm}\includegraphics[width=0.5\textwidth]{f}
+See Tables~\ref{tab:x-1}-\ref{tab:x-3}.
+\begin{table}\caption{A}\label{tab:x-1}\end{table}
+\begin{table}\caption{B}\label{tab:x-2}\end{table}
+\begin{table}\caption{C}\label{tab:x-3}\end{table}
+\end{document}
+''', encoding='utf-8')
+        (d / 'f.pdf').write_bytes(b'%PDF-1.4')
+        rep = Wr.run(d / 'main.tex', ['common'])
+        got = [(f['rule'], f['evidence']) for f in rep['findings']]
+        self.assertFalse([g for g in got if g[0] == 'common.units'], got)                       # \vspace{-2mm}
+        self.assertFalse([g for g in got if g[0].startswith('common.floats')], got)              # range reference
+        self.assertFalse([g for g in got if g[0].startswith('common.abbreviations')], got)       # braces, ';', compounds, preamble
+        self.assertTrue(Wr._initials_match('the preference-based RL', 'PbRL'))
+        self.assertFalse(Wr._initials_match('using the lowest temperature', 'DPO'))
+        shutil.rmtree(d, ignore_errors=True)
 
 
 class WordThesis(unittest.TestCase):
@@ -248,6 +284,9 @@ class TextAndPdf(unittest.TestCase):
         self.assertEqual(Wr.pdf_section_pages(path, ['References'])['starts'], {'References': 11})
         ok = Wr.run(path, ['ml-conference'], 'iclr2026')
         self.assertTrue(by_rule(ok, 'ml.pages.iclr2026'))      # 10 > 9 as well
+        self.assertFalse(by_rule(rep, 'common.abbreviations'))  # PDFs only get page / metadata / section checks
+        cam = Wr.run(path, ['ml-conference'], 'neurips2026', stage='camera-ready')
+        self.assertFalse(by_rule(cam, 'ml.pages'))              # 10 pages allowed for camera-ready
 
     def test_cli(self):
         out = subprocess.run([sys.executable, Wr.__file__, 'packs'], capture_output=True, text=True, check=True).stdout
