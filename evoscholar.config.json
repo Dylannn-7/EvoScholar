@@ -1,0 +1,19 @@
+{
+  "$comment": "User-owned, protected settings. The evolution engine can never change this file.",
+  "dataDir": "data",
+  "currency": "CNY",
+  "usdToCny": 7.2,
+  "budget": {
+    "totalCny": 200,
+    "categories": { "usage": 130, "evolution": 40, "dev": 20, "reserve": 10 },
+    "dailyUsageSoftCny": 5,
+    "evolutionPerRoundCny": 2,
+    "evolutionRoundsPerDay": 1,
+    "webCallsPerDay": 300,
+    "alertAt": [0.5, 0.8]
+  },
+  "evolution": { "offPeakOnly": true },
+  "providers": {
+    "deepseek": { "protocol": "chat-completions", "apiKeyEnv": "DEEPSEEK_API_KEY" }
+  }
+}

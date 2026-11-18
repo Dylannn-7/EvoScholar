@@ -1,0 +1,19 @@
+{
+  "name": "evoscholar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A self-evolving personal research workbench (harness-level evolution) built on a fork of aipoch/open-science agent-harness",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22.13.0" },
+  "workspaces": ["packages/harness", "packages/core", "apps/cli"],
+  "scripts": {
+    "build": "tsc -b packages/harness packages/core apps/cli",
+    "chat": "node --no-warnings apps/cli/dist/main.js chat",
+    "es": "node --no-warnings apps/cli/dist/main.js",
+    "test": "node --no-warnings --test packages/core/dist/**/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3"
+  }
+}
