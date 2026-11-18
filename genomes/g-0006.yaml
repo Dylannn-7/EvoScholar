@@ -2,7 +2,7 @@ id: g-0006
 parent: g-0005
 createdBy: manual
 createdAt: 2026-11-18T07:08:56.073Z
-status: active
+status: archived
 note: 第 5
   天：启用数据与出图技能（data-tables、figure-style、figure-composer、tikz-diagram、ml-results、ml-curves、optics-spectra、optics-fields、device-curves）和
   figure_check 工具
