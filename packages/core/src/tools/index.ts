@@ -1,9 +1,12 @@
 import type { AgentTool } from '@evoscholar/harness'
 import { deepseekFetch, deepseekSearch } from './deepseek'
 import { editFile, listFiles, readFile, writeFile } from './fs'
+import { readSkill } from '../skills'
+import { litImport, litLookup, litSearch, litVerify, pdfPageImage, pdfText } from './literature'
 import { httpGet, readProcess, runCommand, runPython, startProcess, stopProcess } from './exec'
 export { stopAllProcesses, pythonBin, pyenvDir } from './exec'
 export { inside, checkCommand } from './sandbox'
+export { mergeWorks, titleSim, normDoi, searchAll, type Work } from './literature'
 import type { ToolEnv, ToolFactory } from './types'
 export * from './types'
 
@@ -20,7 +23,14 @@ export const TOOL_FACTORIES: Record<string, ToolFactory> = {
   start_process: startProcess,
   read_process: readProcess,
   stop_process: stopProcess,
-  http_get: httpGet
+  http_get: httpGet,
+  lit_search: litSearch,
+  lit_lookup: litLookup,
+  lit_verify: litVerify,
+  lit_import: litImport,
+  pdf_text: pdfText,
+  pdf_page_image: pdfPageImage,
+  read_skill: readSkill
 }
 
 export function registerTool(name: string, factory: ToolFactory): void {

@@ -18,6 +18,7 @@ import { meterModel } from './metering'
 import { createModel, modelInfo } from './providers'
 import { buildTools, stopAllProcesses, type ToolEnv } from './tools'
 import { TrajectoryRecorder, textOf } from './trajectory'
+import { skillIndex } from './skills'
 
 export type Runtime = { ws: Workspace; db: Db; ledger: Ledger; genomes: GenomeRepo }
 
@@ -81,7 +82,7 @@ export async function openResearchSession(
     sessionId,
     model,
     tools,
-    instructions: rt.genomes.text(genome.instructions.system) + `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）\n- 日期：${new Date().toISOString().slice(0, 10)}`,
+    instructions: rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, genome.skills) + `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）\n- 日期：${new Date().toISOString().slice(0, 10)}`,
     store: createJournalAgentStore({ directory: join(rt.ws.dataDir, 'sessions') }),
     maxSteps: b.maxSteps,
     maxOutputTokens,

@@ -18,8 +18,18 @@ export function pythonBin(env: ToolEnv): string {
   return process.platform === 'win32' ? 'python' : 'python3'
 }
 
-function childEnv(env: ToolEnv): NodeJS.ProcessEnv {
-  return { ...process.env, MPLBACKEND: 'Agg', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', EVOSCHOLAR_CWD: env.cwd, DEEPSEEK_API_KEY: '', OPENAI_API_KEY: '', ANTHROPIC_API_KEY: '' }
+export function childEnv(env: ToolEnv): NodeJS.ProcessEnv {
+  const pyPath = [join(env.ws.root, 'python'), process.env.PYTHONPATH].filter(Boolean).join(process.platform === 'win32' ? ';' : ':')
+  // Model-facing code never sees provider keys.
+  const scrubbed = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/_API_KEY$/.test(k)))
+  return { ...scrubbed, MPLBACKEND: 'Agg', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONPATH: pyPath, EVOSCHOLAR_CWD: env.cwd }
+}
+
+/** Run the bundled literature helper (python/evoscholar_lit.py) and parse its JSON/stdout. */
+export async function runLitHelper(env: ToolEnv, args: string[], signal: AbortSignal): Promise<string> {
+  const r = await run(pythonBin(env), [join(env.ws.root, 'python', 'evoscholar_lit.py'), ...args], env, 120, signal)
+  if (r.code !== 0) throw new Error(r.out.trim().split('\n').slice(-3).join(' ') || `helper exit ${r.code}`)
+  return r.out
 }
 
 async function approve(env: ToolEnv, tool: string, summary: string): Promise<boolean> {
