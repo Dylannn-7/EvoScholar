@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { atomicWriteFile } from '../atomic-file'
 import type { HarnessGenome } from '../genome'
 import type { Runtime } from '../session'
 import { readSkillFile, saveSkillRevision, skillNameValid } from '../skills'
@@ -47,7 +48,7 @@ export function mutate(rt: Runtime, base: HarnessGenome, p: Proposal, runId: str
   const write = (ref: string, text: string) => {
     const file = join(rt.ws.root, ref)
     mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, text)
+    atomicWriteFile(file, text)
   }
   if (p.target === 'instructions') {
     const ref = nextVersionPath(rt.ws.root, g.instructions.system)

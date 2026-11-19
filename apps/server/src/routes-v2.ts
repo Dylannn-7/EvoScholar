@@ -169,7 +169,7 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
       if (!info) throw httpError(404, '未知厂商')
       const model = String(b.model || info.models[0]?.id || '')
       if (!model) return send(res, 400, { error: '没有可测试的模型，请先获取模型' }), true
-      const r = await testProviderConnection(ws.config, `${id}/${model}`)
+      const r = await testProviderConnection(ws.config, `${id}/${model}`, { ledger: rt.ledger })
       return send(res, r.ok ? 200 : 400, r.ok ? r : { error: r.error }), true
     }
     if (p === '/api/settings/execution/status' && method === 'GET') {

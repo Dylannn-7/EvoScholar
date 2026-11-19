@@ -300,3 +300,59 @@ test('fixed public presets keep the injected transport, and a custom public gate
   })
   assert.equal(custom.ok, true)
 })
+
+test('usageTotals aggregates beyond the 400-model grouping limit and ignores dev sessions', () => {
+  const dir = tempWorkspace()
+  try {
+    const rt = openRuntime(openWorkspace(dir))
+    const ts = new Date().toISOString()
+    rt.db.prepare(`INSERT INTO sessions (id, created_at, genome_id, title, category) VALUES ('s-dev', ?, 'g-0007', 'dev', 'dev')`).run(ts)
+    const stmt = rt.db.prepare(`INSERT INTO ledger (ts, category, kind, provider, model, session_id, input_tokens, cache_read_tokens, output_tokens, cost_usd, cost_cny)
+      VALUES (?, 'usage', 'model', 'openai', ?, NULL, 10, 2, 5, 0, 0)`)
+    rt.db.exec('BEGIN')
+    for (let i = 0; i < 450; i++) stmt.run(ts, `openai/m-${i}`)
+    rt.db.prepare(`INSERT INTO ledger (ts, category, kind, provider, model, session_id, input_tokens, cache_read_tokens, output_tokens, cost_usd, cost_cny)
+      VALUES (?, 'usage', 'model', 'openai', 'openai/dev-only', 's-dev', 9999, 0, 9999, 0, 0)`).run(ts)
+    rt.db.exec('COMMIT')
+    assert.equal(usageBy(rt.db, 'model').length, 400)
+    const totals = usageTotals(rt.db, 7)
+    assert.equal(totals.requests, 450)
+    assert.equal(totals.inputTokens, 4500)
+    assert.equal(totals.cacheReadTokens, 900)
+    assert.equal(totals.outputTokens, 2250)
+    rt.db.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('testProviderConnection records sessionless token usage without cost', async (t) => {
+  const dir = tempWorkspace()
+  const old = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'probe-key'
+  t.after(() => {
+    if (old === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = old
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const rt = openRuntime(openWorkspace(dir))
+  t.after(() => rt.db.close())
+  const fetchMock = (async () => sse([
+    { choices: [{ index: 0, delta: { role: 'assistant', content: 'OK' }, finish_reason: null }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    { choices: [], usage: { prompt_tokens: 18, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 6 } } }
+  ], true)) as unknown as typeof fetch
+  const res = await testProviderConnection(rt.ws.config, 'deepseek/deepseek-flash', { fetch: fetchMock, ledger: rt.ledger })
+  assert.equal(res.ok, true)
+  const rows = rt.db.prepare(`SELECT category, kind, provider, model, session_id, input_tokens, cache_read_tokens, output_tokens, cost_usd, cost_cny FROM ledger`).all() as Record<string, unknown>[]
+  assert.equal(rows.length, 1)
+  assert.deepEqual({ ...rows[0] }, {
+    category: 'usage', kind: 'model', provider: 'deepseek', model: 'deepseek/deepseek-flash',
+    session_id: null, input_tokens: 18, cache_read_tokens: 6, output_tokens: 3, cost_usd: 0, cost_cny: 0
+  })
+  const bySession = usageBy(rt.db, 'session', { days: 7 })
+  assert.equal(bySession.length, 1)
+  assert.equal(bySession[0].label, '（无会话）')
+  assert.equal(bySession[0].inputTokens, 18)
+  assert.equal(usageTotals(rt.db, 7).requests, 1)
+})

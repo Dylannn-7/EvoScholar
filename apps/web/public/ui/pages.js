@@ -259,9 +259,20 @@ export async function renderTrajectory (root, arg) {
           ${o.before_score !== null && o.after_score !== null ? `<span class="faint">回合得分 ${Number(o.before_score).toFixed(2)} → ${Number(o.after_score).toFixed(2)}</span>` : ''}<span class="page-actions">${sessLink(o.session_id)}${o.status === 'trial' || o.status === 'kept' ? `<button class="btn ghost small" data-rev="${esc(o.id)}" type="button">撤销</button>` : ''}</span></div>
           <p>${esc(o.value || '')}${o.reason ? `<br><span class="faint">原因：${esc(o.reason)}</span>` : ''}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有会话调整</b>智能体在会话里用 tune_harness 试用的工作方式调整会列在这里；表现好的调整之后可以沉淀为 genome 候选，经你批准上线。</div>'
     } else {
-      html += `<div class="section-t">待你批准</div>${pending.length ? `<div class="timeline">${pending.map((c) => `<div class="tl-item"><i class="rail-dot"></i><div class="c">
-          <div class="h"><code>${esc(c.genome_id)}</code><span class="badge warn">待批准</span><span class="faint">${esc(c.target || '')}</span><span class="page-actions"><button class="btn ghost small" data-rej="${esc(c.genome_id)}" type="button">拒绝</button><button class="btn primary small" data-pro="${esc(c.genome_id)}" type="button">批准上线</button></span></div>
-          <p>${esc(c.change || c.diagnosis || '')}</p></div></div>`).join('')}</div>` : '<p class="muted">没有等待批准的改动。</p>'}
+      html += `<div class="section-t">待你批准</div>${pending.length ? `<div class="timeline">${pending.map((c) => {
+          const v = c.verification || {}
+          const badge = v.verified
+            ? `<span class="badge ok">已验证 ${esc(String(v.pass))}/${esc(String(v.total))}</span>`
+            : '<span class="badge warn">未验证</span>'
+          const evidenceLine = v.verified
+            ? `验证运行：<code>${esc(v.runId || '')}</code> · 通过 ${esc(String(v.pass))}/${esc(String(v.total))}`
+            : '验证证据：未验证（尚未关联离线回放或评测通过记录）'
+          const scopeLine = `适用范围：${esc(v.scope || '全局 harness')}`
+          return `<div class="tl-item"><i class="rail-dot"></i><div class="c">
+          <div class="h"><code>${esc(c.genome_id)}</code><span class="badge warn">待批准</span>${badge}<span class="faint">${esc(c.target || '')}</span><span class="page-actions"><button class="btn ghost small" data-rej="${esc(c.genome_id)}" type="button">拒绝</button><button class="btn primary small" data-pro="${esc(c.genome_id)}" type="button">批准上线</button></span></div>
+          <p>${esc(c.change || c.diagnosis || '')}</p>
+          <p class="faint">${evidenceLine} · ${scopeLine}</p></div></div>`
+        }).join('')}</div>` : '<p class="muted">没有等待批准的改动。</p>'}
         <div class="section-t">harness 版本</div><div class="timeline">${evo.lineage.slice().reverse().slice(0, 40).map((g) => `<div class="tl-item"><i class="rail-dot ${g.status === 'active' ? '' : 'dim'}"></i><div class="c">
           <div class="h"><code>${esc(g.id)}</code>${g.status === 'active' ? '<span class="badge ok">当前</span>' : `<span class="badge">${esc({ archived: '历史', rejected: '已拒绝', candidate: '候选' }[g.status] || g.status)}</span>`}<span class="faint">${esc(g.createdBy?.startsWith('evolution') ? '进化生成' : '手动')}</span>
           ${g.status === 'archived' ? `<span class="page-actions"><button class="btn ghost small" data-rb="${esc(g.id)}" type="button">回滚到此版本</button></span>` : ''}</div><p>${esc(g.note || '')}</p></div></div>`).join('')}</div>`
@@ -304,7 +315,18 @@ export async function renderTrajectory (root, arg) {
       const rev = e.target.closest('[data-rev]'); if (rev) { await post(`/api/overlays/${rev.dataset.rev}/revert`); return renderTrajectory(root) }
       const b = e.target.closest('[data-pro],[data-rej],[data-rb]')
       if (!b) return
-      if (b.dataset.pro) { if (!(await confirmDialog({ title: '批准上线', message: `把 ${b.dataset.pro} 设为当前 harness？可以随时回滚。`, confirmText: '批准' }))) return; await post(`/api/evolution/${b.dataset.pro}/promote`) }
+      if (b.dataset.pro) {
+        const cand = pending.find((x) => x.genome_id === b.dataset.pro)
+        const v = cand?.verification
+        if (v?.verified) {
+          if (!(await confirmDialog({ title: '批准上线', message: `把 ${b.dataset.pro} 设为当前 harness？（验证 ${v.pass}/${v.total}，适用范围：${v.scope}）。可以随时回滚。`, confirmText: '批准' }))) return
+          await post(`/api/evolution/${b.dataset.pro}/promote`, {})
+        } else {
+          if (!(await confirmDialog({ title: '批准未验证候选', message: `候选 ${b.dataset.pro} 当前为「未验证」，尚未关联离线回放或评测记录（适用范围：${v?.scope || '全局 harness'}）。确定继续吗？`, confirmText: '继续确认', danger: true }))) return
+          if (!(await confirmDialog({ title: '二次确认：上线未验证候选', message: `请再次确认将未验证候选 ${b.dataset.pro} 设为当前 harness。上线后如有异常可随时回滚。`, confirmText: '确认批准上线', danger: true }))) return
+          await post(`/api/evolution/${b.dataset.pro}/promote`, { confirmUnverified: true })
+        }
+      }
       if (b.dataset.rej) await post(`/api/evolution/${b.dataset.rej}/reject`, {})
       if (b.dataset.rb) { if (!(await confirmDialog({ title: '回滚', message: `回滚到 ${b.dataset.rb}？`, confirmText: '回滚' }))) return; await post('/api/genome/rollback', { to: b.dataset.rb }) }
       await store.refresh(); toast('已更新', 'ok'); renderTrajectory(root)

@@ -29,6 +29,7 @@ import { installEvolveLoop, type EvolveHooks, type EvolveLoop } from './evolve/l
 import { EvolveStore } from './evolve/store'
 import { extraSkills, listSkills, type SkillRef } from './skills'
 import { kernelIndex } from './evolve/kernels'
+import { reconcileRuntime } from './recovery'
 
 export type Runtime = { ws: Workspace; db: Db; ledger: Ledger; genomes: GenomeRepo; evolve: EvolveStore; executor: ExecutionBackend }
 
@@ -36,10 +37,17 @@ export function openRuntime(ws: Workspace, onAlert?: (m: string) => void, execut
   const db = openDb(ws.dataDir)
   const ledger = new Ledger(db, ws.config, onAlert)
   const engineEnv: ToolEnv = { ws, cwd: ws.root, ledger, category: () => 'usage' }
-  return {
+  const rt: Runtime = {
     ws, db, ledger, genomes: new GenomeRepo(ws.root), evolve: new EvolveStore(db, ws.dataDir),
     executor: executor ?? new DockerExecutor(ws, (command, args, timeout, signal) => runProcess(command, args, engineEnv, timeout, signal))
   }
+  reconcileRuntime(rt, {
+    onLog: (msg) => {
+      console.warn(`[启动对账] ${msg}`)
+      onAlert?.(msg)
+    }
+  })
+  return rt
 }
 
 export type ResearchSession = {

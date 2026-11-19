@@ -3,9 +3,11 @@ import { createChatCompletionsModel } from '@evoscholar/harness/chat-completions
 import { createMessagesModel } from '@evoscholar/harness/messages'
 import { createResponsesModel } from '@evoscholar/harness/responses'
 import type { AuthHeader, EvoConfig, ModelSetting, Protocol, ProviderOverride, ReasoningCapability } from './config'
+import type { Ledger } from './budget'
 import { gatewayTransport, normalizeGatewayBase } from './gateway'
 import { createGeminiModel } from './gemini'
 import { MiB, readJson } from './http-body'
+import { meterModel } from './metering'
 import presets from './presets.json'
 
 export type { Protocol } from './config'
@@ -46,6 +48,8 @@ export type ProviderInfo = {
   regions?: { id: string; label: string; bases: Bases }[]
   region?: string
   authHeader: AuthHeader
+  /** True when the user or the preset chose the header; false for the protocol-derived default. */
+  authHeaderExplicit: boolean
   apiKeyEnv: string
   apiKeyUrl?: string
   hasKey: boolean
@@ -163,6 +167,7 @@ function describe(id: string, p: Preset | undefined, o: ProviderOverride | undef
     regions: p?.regions,
     region: o?.region ?? p?.regions?.[0]?.id,
     authHeader: o?.authHeader ?? p?.authHeader ?? (protocol === 'gemini' ? 'x-goog-api-key' : protocol === 'messages' && id === 'anthropic' ? 'x-api-key' : 'bearer'),
+    authHeaderExplicit: !!(o?.authHeader ?? p?.authHeader),
     apiKeyEnv: keyEnvFor(id, o),
     apiKeyUrl: p?.apiKeyUrl,
     hasKey: false,
@@ -236,15 +241,23 @@ function authHeaders(style: AuthHeader, key: string): Record<string, string> {
   return { authorization: `Bearer ${key}` }
 }
 
-/** The harness adapters always send `Authorization: Bearer`; rewrite it for vendors that want another header. */
-function authFetch(style: AuthHeader, inner: typeof fetch = globalThis.fetch): typeof fetch | undefined {
-  if (style === 'bearer' || style === 'x-goog-api-key') return inner
+const nativeAuth = (protocol: Protocol): AuthHeader =>
+  protocol === 'gemini' ? 'x-goog-api-key' : protocol === 'messages' ? 'x-api-key' : 'bearer'
+
+/**
+ * Rewrite the adapter's native auth header when the provider asks for another style.
+ * The derived default 'bearer' is left alone: Anthropic-compatible vendor endpoints have always
+ * received the adapter's x-api-key, and changing that silently could break working setups.
+ */
+function authFetch(protocol: Protocol, style: AuthHeader, explicit: boolean, inner: typeof fetch = globalThis.fetch): typeof fetch {
+  if (style === nativeAuth(protocol) || (!explicit && style === 'bearer')) return inner
   return (async (url: string | URL | Request, init?: RequestInit) => {
     const h = new Headers(init?.headers)
     const auth = h.get('authorization')
-    const key = auth?.replace(/^Bearer\s+/i, '') ?? h.get('x-api-key') ?? h.get('x-goog-api-key') ?? ''
+    const key = auth?.replace(/^Bearer\s+/i, '') ?? h.get('x-api-key') ?? h.get('api-key') ?? h.get('x-goog-api-key') ?? ''
     h.delete('authorization')
     h.delete('x-api-key')
+    h.delete('api-key')
     h.delete('x-goog-api-key')
     for (const [k, v] of Object.entries(authHeaders(style, key))) h.set(k, v)
     return inner(url, { ...init, headers: h })
@@ -423,14 +436,14 @@ export function createModel(
   const parameters = resolveProviderParameters(protocol, provider, opts.parameters, opts.effort ?? config.reasoningEffort?.[ref])
   const transport = providerTransport(config, info, opts.fetch)
   if (protocol === 'gemini')
-    return createGeminiModel({ baseUrl: url, model, id: `${ref}@gemini`, apiKey, parameters, fetch: authFetch(info.authHeader, transport), inputCapabilities: { images: mi.vision } })
+    return createGeminiModel({ baseUrl: url, model, id: `${ref}@gemini`, apiKey, parameters, fetch: authFetch(protocol, info.authHeader, info.authHeaderExplicit, transport), inputCapabilities: { images: mi.vision } })
   const common = {
     endpoint: url,
     model,
     id: `${ref}@${protocol}`,
     apiKey,
     parameters,
-    fetch: authFetch(info.authHeader, transport),
+    fetch: authFetch(protocol, info.authHeader, info.authHeaderExplicit, transport),
     inputCapabilities: { images: mi.vision }
   }
   if (protocol === 'messages') return createMessagesModel(common)
@@ -442,11 +455,14 @@ export function createModel(
 export async function testProviderConnection(
   config: EvoConfig,
   ref: string,
-  opts: { fetch?: typeof fetch; effort?: string; timeoutMs?: number } = {}
+  opts: { fetch?: typeof fetch; effort?: string; timeoutMs?: number; ledger?: Ledger } = {}
 ): Promise<{ ok: true; latencyMs: number; text: string; usage?: { inputTokens: number; outputTokens: number } } | { ok: false; error: string }> {
   const t0 = Date.now()
   try {
-    const model = createModel(config, ref, { fetch: opts.fetch, effort: opts.effort })
+    const rawModel = createModel(config, ref, { fetch: opts.fetch, effort: opts.effort })
+    const model = opts.ledger
+      ? meterModel(rawModel, { ledger: opts.ledger, modelRef: ref, category: () => 'usage' })
+      : rawModel
     const signal = AbortSignal.timeout(opts.timeoutMs ?? 30_000)
     let text = ''
     let finish: Extract<ModelEvent, { type: 'finish' }> | undefined
