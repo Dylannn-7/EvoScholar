@@ -337,10 +337,10 @@ test('testProviderConnection records sessionless token usage without cost', asyn
   t.after(() => {
     if (old === undefined) delete process.env.DEEPSEEK_API_KEY
     else process.env.DEEPSEEK_API_KEY = old
-    rmSync(dir, { recursive: true, force: true })
   })
   const rt = openRuntime(openWorkspace(dir))
-  t.after(() => rt.db.close())
+  // Windows cannot delete an open database file: close first, then remove.
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
   const fetchMock = (async () => sse([
     { choices: [{ index: 0, delta: { role: 'assistant', content: 'OK' }, finish_reason: null }] },
     { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },

@@ -20,7 +20,6 @@ function makeWs() {
 
 test('startup reconciliation quarantines orphan candidate files and marks missing candidate files invalid', (t) => {
   const dir = makeWs()
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
   const rt1 = openRuntime(openWorkspace(dir), () => {})
   const active = rt1.genomes.load()
   // Simulate crash after writing candidate YAML before inserting candidates row.
@@ -39,7 +38,8 @@ test('startup reconciliation quarantines orphan candidate files and marks missin
 
   const alerts: string[] = []
   const rt2 = openRuntime(openWorkspace(dir), (m) => alerts.push(m))
-  t.after(() => rt2.db.close())
+  // Windows cannot delete an open database file: close first, then remove.
+  t.after(() => { rt2.db.close(); rmSync(dir, { recursive: true, force: true }) })
   assert.equal(existsSync(join(dir, 'genomes', `${orphanId}.yaml`)), false, 'orphan candidate removed from genomes/')
   assert.ok(existsSync(join(dir, 'genomes', `${freshId}.yaml`)), 'a just-written candidate is left for its writer')
   const quarantined = readdirSync(join(dir, 'data', 'quarantine', 'genomes'))
@@ -56,7 +56,6 @@ test('startup reconciliation quarantines orphan candidate files and marks missin
 
 test('startup reconciliation recovers ACTIVE from missing or unapproved genome to latest approved version', (t) => {
   const dir = makeWs()
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
   // Case 1: ACTIVE points to a nonexistent genome.
   writeFileSync(join(dir, 'genomes', 'ACTIVE'), 'g-9999\n')
   const alerts1: string[] = []
@@ -78,14 +77,14 @@ test('startup reconciliation recovers ACTIVE from missing or unapproved genome t
 
   const alerts2: string[] = []
   const rt2 = openRuntime(openWorkspace(dir), (m) => alerts2.push(m))
-  t.after(() => rt2.db.close())
+  // Windows cannot delete an open database file: close first, then remove.
+  t.after(() => { rt2.db.close(); rmSync(dir, { recursive: true, force: true }) })
   assert.equal(rt2.genomes.activeId(), active.id)
   assert.ok(alerts2.some((a) => a.includes(cand.genome) && a.includes(active.id)))
 })
 
 test('startup reconciliation releases stale budget reservations and keeps fresh ones', (t) => {
   const dir = makeWs()
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
   const rt1 = openRuntime(openWorkspace(dir), () => {})
   const oldTs = new Date(Date.now() - 2 * 3600_000).toISOString()
   const freshTs = new Date().toISOString()
@@ -94,7 +93,8 @@ test('startup reconciliation releases stale budget reservations and keeps fresh 
   rt1.db.close()
 
   const rt2 = openRuntime(openWorkspace(dir), () => {})
-  t.after(() => rt2.db.close())
+  // Windows cannot delete an open database file: close first, then remove.
+  t.after(() => { rt2.db.close(); rmSync(dir, { recursive: true, force: true }) })
   const left = rt2.db.prepare(`SELECT round_id, cost_cny FROM budget_reservations`).all() as { round_id: string; cost_cny: number }[]
   assert.equal(left.length, 1)
   assert.equal(left[0].round_id, 'r-new')
@@ -105,10 +105,9 @@ test('startup reconciliation releases stale budget reservations and keeps fresh 
 
 test('compare-and-swap rejects stale active pointer switch across concurrent hosts and syncs committed state', (t) => {
   const dir = makeWs()
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
   const hostA = openRuntime(openWorkspace(dir), () => {})
   const hostB = openRuntime(openWorkspace(dir), () => {})
-  t.after(() => { hostA.db.close(); hostB.db.close() })
+  t.after(() => { hostA.db.close(); hostB.db.close(); rmSync(dir, { recursive: true, force: true }) })
 
   const initial = hostA.genomes.activeId()
   const oid1 = hostA.evolve.addOverlay({ sessionId: 's1', op: 'prompt.note', value: '规则A', reason: 'a' })
@@ -135,7 +134,6 @@ test('compare-and-swap rejects stale active pointer switch across concurrent hos
 
 test('interrupted skill replacement restores backup and cleans staging on startup', (t) => {
   const dir = makeWs()
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
   const skillMd = '---\nname: swap-skill\ndescription: Swap test\nlicense: MIT\n---\n# v1\n'
   installSkillFiles(dir, new Map([['SKILL.md', Buffer.from(skillMd)]]), { type: 'zip' })
   installSkillFiles(dir, new Map([['SKILL.md', Buffer.from(skillMd.replace('# v1', '# v2'))]]), { type: 'zip' }, { replace: true })
@@ -149,7 +147,7 @@ test('interrupted skill replacement restores backup and cleans staging on startu
   rmSync(join(dir, 'skills', 'swap-skill'), { recursive: true, force: true })
 
   const rt = openRuntime(openWorkspace(dir), () => {})
-  t.after(() => rt.db.close())
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
   assert.equal(existsSync(join(dir, 'skills', 'swap-skill', 'SKILL.md')), true, 'backup restored')
   assert.equal(existsSync(backup), false, 'backup dir moved back')
   assert.equal(existsSync(staging), false, 'leftover staging dir removed')
