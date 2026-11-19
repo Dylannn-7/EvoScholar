@@ -122,6 +122,8 @@
 | P4 | 已提交（4e1ddee）。可执行技能（forge / run / patch）、规则提案与用户规则包、沉淀为 genome 候选、技能导入（文件夹 / zip / GitHub）、启用停用；出图风格库（SciencePlots、tueplots、aquarel、cmcrameri，26 种风格，带样图和默认风格）；导入 K-Dense 的 scientific-visualization、matplotlib、seaborn 三个技能并启用（g-0009，figure-style 升到 v2）。DeepSeek 实测：模型锻造技能一次通过，另外两个会话复用后自动转正 | ¥0.2594 |
 | P5 | 已提交（a2d8fb3）。粒子形状随思维链切换（文献 = 星座，数据 / 出图 = 曲线，写作 = 文字行，作答与交付 = 环），形状在世界空间正对镜头、居中于对话区；反思 = 收缩再重组，进化（回忆 / 调整 / 学到 / 偏好）= 紫色波纹，交付 = 白色波纹，等待确认 = 近乎静止 + 慢闪，思考 = 加速旋涡 + 呼吸；高画质 45–49 fps | ¥0 |
 | P6 | 已提交。`scripts/install.sh` / `install.ps1` 一键安装；`npm run demo` 零成本演示（内置脚本模型 + 示例项目，走完反思 → 记经验 → 选项 → 交付 → 下一会话回忆）；GitHub Actions（Linux / macOS / Windows：构建、TS 测试、Python 测试）；中英文 README、CHANGELOG、版本 0.2.0；测试的 Windows 兼容（junction、python 命令名）。在全新目录里从零安装、测试、演示均通过；Windows 只能等 CI 验证 | ¥0 |
+| P7 | 已提交（35b4cc2 → aa3e09c）。后端审查与加固：路径与链接边界、项目文件预览隔离、并发与取消、SSE 资源、Gemini 断流；离线 Linux 容器执行模型代码（无 Docker 时停用，可选宿主模式）；本机接口令牌鉴权与网关授权；外部记忆溯源；应用私有路径；崩溃对账；候选验证证据；协议测试；Azure api-version、数值思考预算、文件上限。详见 `docs/backend-review.md` | ¥0 |
+| P8 | 已提交（f2fe96b → b2ab086）。用量只统计日常使用；界面去掉说明性小字和注销；资料空间三栏改版；Electron 桌面应用（进程内服务、无配对、用户数据目录工作区、一键安装 Python 和构建镜像、dmg / exe）；整体审查修复（停止后会话卡死、访达启动的 PATH、升级策略等 17 项）；插件：附带技能可信、导入技能信任开关、技能详情、锻造技能启停、目录选择器 | ¥0 |
 
 ## 6. 不变的硬规则
 
