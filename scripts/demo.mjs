@@ -110,7 +110,9 @@ writeFileSync(join(ws, 'data', 'settings.json'), JSON.stringify({
   defaults: { model: 'demo/demo-model', permission: 'ask' },
   efforts: {}
 }, null, 2))
-const project = join(ws, '示例项目-微环光谱')
+// Projects may not live inside the app workspace, so the sample project gets its own folder.
+const projectRoot = mkdtempSync(join(tmpdir(), 'evoscholar-demo-project-'))
+const project = join(projectRoot, '示例项目-微环光谱')
 mkdirSync(join(project, 'data'), { recursive: true })
 writeFileSync(join(project, 'data', 'spectrum.csv'), 'wavelength_nm,transmission\n1549.00,0.99\n1549.32,0.21\n1549.70,0.97\n1550.11,0.11\n1550.50,0.96\n1550.87,0.31\n1551.20,0.98\n')
 writeFileSync(join(project, 'README.md'), '# 微环谐振器透射谱\n\n演示用的示例项目。\n')
@@ -150,6 +152,7 @@ const stop = async () => {
   server.close(); mock.close()
   try { rt.db.close() } catch {}
   rmSync(ws, { recursive: true, force: true })
+  rmSync(projectRoot, { recursive: true, force: true })
   process.exit(0)
 }
 process.on('SIGINT', stop)

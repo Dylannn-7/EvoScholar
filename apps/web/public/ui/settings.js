@@ -11,10 +11,10 @@ const TABS = [
   { id: 'about', label: '关于', icon: 'info' }
 ]
 const PERMS = [
-  ['ask', '询问', '写文件和执行命令前都先问你。最稳妥，适合刚开始用。'],
-  ['acceptEdits', '自动接受编辑', '写文件自动进行，执行代码或命令前问你。'],
-  ['plan', '计划', '只读：先分析并给出计划，你确认后再切换模式执行。'],
-  ['bypass', '完全放行', '全部自动执行。仍然只能访问项目文件夹，进化确认仍需你点。']
+  ['ask', '询问', '写文件和执行前询问'],
+  ['acceptEdits', '自动接受编辑', '自动写文件，执行前询问'],
+  ['plan', '计划', '只读，先给计划'],
+  ['bypass', '完全放行', '全部自动执行']
 ]
 const AUTH = { bearer: 'Authorization: Bearer', 'x-api-key': 'x-api-key', 'api-key': 'api-key（Azure）', 'x-goog-api-key': 'x-goog-api-key（Gemini）' }
 
@@ -53,7 +53,7 @@ function models (body, m, root) {
     <div class="prov-detail">
       <div class="panel">
         <h3>${esc(p.label)}</h3>
-        <p class="lede">选择协议，确认 Base URL，填写 API Key，然后获取模型并测试连接。${p.apiKeyUrl ? ` <a href="${esc(p.apiKeyUrl)}" target="_blank" rel="noopener" class="muted">获取 API Key</a>` : ''}</p>
+        ${p.apiKeyUrl ? `<p><a href="${esc(p.apiKeyUrl)}" target="_blank" rel="noopener" class="muted">获取 API Key</a></p>` : ''}
         <div class="field"><span class="lbl">协议</span>
           <div class="proto-grid">${m.protocols.map((pr) => `<button type="button" class="proto ${p.protocol === pr.id ? 'on' : ''}" data-proto="${pr.id}">
             <span class="n">${esc(pr.label)}${p.custom ? '' : p.defaultProtocol === pr.id ? ' <span class="badge accent">官方默认</span>' : p.official.includes(pr.id) ? ' <span class="badge">官方支持</span>' : ''}</span>
@@ -70,9 +70,9 @@ function models (body, m, root) {
         ${p.baseUrl && !p.gatewayApproved && !p.baseUrl.includes('<') ? '<p class="muted">请保存并确认当前网关地址，再填写 API Key。</p>' : ''}
         ${p.id === 'azure'
           ? `<div class="row2"><div class="field"><span class="lbl">认证请求头</span><select class="input" id="authHeader">${Object.entries(AUTH).map(([k, v]) => `<option value="${k}" ${p.authHeader === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
-             <div class="field"><span class="lbl">API 版本</span><div class="inline"><input class="input" id="apiVersion" value="${esc(p.apiVersion || '')}" placeholder="2024-10-21（留空不追加）" spellcheck="false"><button class="btn ghost small" id="saveApiVersion" type="button">保存</button></div></div></div>`
+             <div class="field"><span class="lbl">API 版本</span><div class="inline"><input class="input" id="apiVersion" value="${esc(p.apiVersion || '')}" placeholder="2024-10-21" spellcheck="false"><button class="btn ghost small" id="saveApiVersion" type="button">保存</button></div></div></div>`
           : p.custom ? `<div class="field"><span class="lbl">认证请求头</span><select class="input" id="authHeader">${Object.entries(AUTH).map(([k, v]) => `<option value="${k}" ${p.authHeader === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>` : ''}
-        <div class="field"><span class="lbl">API Key <span class="faint">· 只保存在本机 .env 的 ${esc(p.apiKeyEnv)}</span></span>
+        <div class="field"><span class="lbl">API Key</span>
           <div class="inline"><input class="input" id="apiKey" type="password" autocomplete="off" placeholder="${p.hasKey ? '已保存，输入新值可替换' : '粘贴 API Key'}"><button class="btn ${p.hasKey ? 'ghost' : 'primary'} small" id="saveKey" type="button">保存</button>${p.hasKey ? '<button class="btn ghost small" id="clearKey" type="button">清除</button>' : ''}</div>
         </div>
         <div class="inline">
@@ -84,11 +84,11 @@ function models (body, m, root) {
         ${lastResult?.p === p.id ? `<div class="result ${lastResult.ok ? 'ok' : 'bad'}">${esc(lastResult.text)}</div>` : ''}
       </div>
       <div class="panel">
-        <h3>模型 <span class="faint" style="font-size:12px;font-weight:400">${p.models.length} 个 · ${fetched ? `上游 /models 返回的原始名称 · 获取于 ${new Date(p.modelsFetchedAt).toLocaleString('zh-CN')}` : '预设列表，点「获取模型」读取上游的原始名称'}</span></h3>
+        <h3>模型 <span class="faint" style="font-size:12px;font-weight:400">${p.models.length}</span></h3>
         ${p.models.length ? `<div class="table-wrap"><table class="mtable"><tr><th>模型 ID</th><th>上下文</th><th>最大输出</th><th>图片</th><th>思考程度 · <code>${esc(p.reasoningParam || '')}</code></th><th></th></tr>
           ${p.models.map((x) => { const ref = `${p.id}/${x.id}`; const isDef = m.defaults.model === ref; return `<tr><td class="mono">${esc(x.id)}</td><td>${x.contextWindow ? `${Math.round(x.contextWindow / 1000)}K` : '<span class="faint">—</span>'}</td><td>${x.maxOutputTokens ? `${Math.round(x.maxOutputTokens / 1000)}K` : '<span class="faint">—</span>'}</td><td>${x.vision ? '支持' : '<span class="faint">—</span>'}</td>
             <td>${x.reasoningEffort?.supported ? (x.reasoningEffort.values || []).map((v) => `<span class="badge">${esc(v)}</span>`).join(' ') || '支持' : '<span class="faint">不支持</span>'}</td>
-            <td>${isDef ? '<span class="badge accent">默认</span>' : p.hasKey ? `<button class="btn ghost small" data-def="${esc(ref)}" type="button">设为默认</button>` : ''}</td></tr>` }).join('')}</table></div>` : '<p class="muted">还没有模型。填写 API Key 后点「获取模型」。</p>'}
+            <td>${isDef ? '<span class="badge accent">默认</span>' : p.hasKey ? `<button class="btn ghost small" data-def="${esc(ref)}" type="button">设为默认</button>` : ''}</td></tr>` }).join('')}</table></div>` : '<p class="muted">还没有模型</p>'}
       </div>
     </div></div>`
 
@@ -163,7 +163,7 @@ function customDialog (m, root) {
       <div class="field"><label class="lbl">显示名</label><input class="input" name="label" placeholder="实验室网关"></div></div>
       <div class="field"><label class="lbl">协议</label><select class="input" name="protocol">${m.protocols.map((p) => `<option value="${p.id}">${p.label}</option>`).join('')}</select></div>
       <div class="field"><label class="lbl">Base URL</label><input class="input" name="baseUrl" required placeholder="https://example.com/v1" spellcheck="false"><label><input name="privateGateway" type="checkbox"> 允许访问内网地址</label></div>
-      <div class="field"><label class="lbl">模型 ID（可留空，保存后点「获取模型」）</label><input class="input" name="models" placeholder="model-a, model-b"></div>
+      <div class="field"><label class="lbl">模型 ID</label><input class="input" name="models" placeholder="model-a, model-b"></div>
       <div class="field"><label class="lbl">API Key</label><input class="input" name="key" type="password" autocomplete="off"></div>
       <div class="modal-actions"><button class="btn primary" type="submit">授权并添加</button></div></form>`,
     onMount: (el, close) => {
@@ -188,42 +188,41 @@ function defaults (body, m, root) {
   const d = m.defaults
   const execution = m.execution
   body.innerHTML = `
-    <div class="panel"><h3>默认模型</h3><p class="lede">新会话默认使用的模型；输入框里可以随时为单个会话换模型。轻量和视觉角色用于子任务（核对、读图），留空则跟随主模型。</p>
+    <div class="panel"><h3>默认模型</h3>
       ${all.length ? `<div class="row2">
         <div class="field"><label class="lbl">主模型</label><select class="input" data-k="model">${opt(d.model, '未设置（使用第一个可用模型）')}</select></div>
         <div class="field"><label class="lbl">轻量模型</label><select class="input" data-k="fast">${opt(d.fast, '跟随主模型')}</select></div>
         <div class="field"><label class="lbl">视觉模型</label><select class="input" data-k="vision">${opt(d.vision, '跟随主模型')}</select></div>
-      </div>` : '<p class="muted">还没有可用模型。先到「模型与密钥」接入一个厂商。</p>'}
+      </div>` : '<p class="muted">还没有可用模型</p>'}
     </div>
-    <div class="panel"><h3>默认权限模式</h3><p class="lede">新会话的权限模式。每个会话也可以在输入框里单独切换。</p>
+    <div class="panel"><h3>默认权限模式</h3>
       <div class="perm-grid">${PERMS.map(([id, label, desc]) => `<button type="button" class="proto ${(d.permission || 'ask') === id ? 'on' : ''}" data-perm="${id}"><span class="n">${label}</span><span class="d" style="font-family:var(--sans)">${desc}</span></button>`).join('')}</div>
     </div>
     <div class="panel"><h3>代码执行</h3>
-      <p class="lede">优先使用离线 Linux 容器。容器不可用时，默认停用模型代码执行。</p>
-      <p class="muted" id="execution-status">正在检测容器状态…</p>
+      
+      <p class="muted" id="execution-status">检测中…</p>
       <form id="execution-settings" class="modal-form">
         <label class="field-label">容器命令<input class="input" name="engine" value="${esc(execution.engine)}" required></label>
         <label class="field-label">本地执行镜像<input class="input" name="image" value="${esc(execution.image)}" required></label>
         <label class="field-label"><input name="hostMode" type="checkbox" ${execution.hostMode ? 'checked' : ''}> 容器不可用时启用宿主模式</label>
-        <p class="warn" style="color:var(--danger)">宿主模式下，模型代码以工作台账户的权限运行，可访问项目之外的文件。每次执行都需确认，完全放行模式下无效。</p>
+        <p class="warn" id="hostWarn" style="color:var(--danger)" ${execution.hostMode ? '' : 'hidden'}>模型代码将以你的账户权限运行，可访问项目外的文件。</p>
         <button class="btn ghost small" type="submit">保存代码执行设置</button>
       </form>
     </div>`
+  body.querySelector('[name="hostMode"]').onchange = (e) => { body.querySelector('#hostWarn').hidden = !e.target.checked }
   const statusLine = body.querySelector('#execution-status')
   api('/api/settings/execution/status').then((s) => {
-    const fallback = s.hostMode ? '当前使用宿主模式，每次执行都需要你确认。' : '模型代码执行已停用。'
-    statusLine.textContent = s.state === 'ready'
-      ? '当前状态：离线容器可用，模型代码在容器中运行。'
-      : s.state === 'image'
-        ? `当前状态：容器引擎已运行，但缺少执行镜像。在项目目录运行 npm run sandbox:build 构建。${fallback}`
-        : `当前状态：未检测到 Linux 容器引擎。请启动 Docker Desktop 或兼容引擎。${fallback}`
-  }).catch(() => { statusLine.textContent = '无法检测容器状态。' })
+    const fallback = s.hostMode ? '使用宿主模式' : '代码执行已停用'
+    statusLine.textContent = s.state === 'ready' ? '容器可用'
+      : s.state === 'image' ? `缺少执行镜像（npm run sandbox:build）· ${fallback}`
+        : `未检测到 Docker · ${fallback}`
+  }).catch(() => { statusLine.textContent = '无法检测容器状态' })
   body.querySelector('#execution-settings').onsubmit = async (event) => {
     event.preventDefault()
     const fields = new FormData(event.currentTarget)
     const hostMode = fields.has('hostMode')
     if (hostMode && !execution.hostMode && !(await confirmDialog({
-      title: '启用宿主模式', message: '模型代码将获得工作台账户的权限，能够读取或修改项目之外的文件。仅在你信任本次代码时批准执行。', danger: true, confirmText: '确认启用'
+      title: '启用宿主模式', message: '模型代码将以你的账户权限运行，可读写项目外的文件。', danger: true, confirmText: '确认启用'
     }))) return
     try {
       await put('/api/settings/execution', { engine: fields.get('engine'), image: fields.get('image'), hostMode, confirmHostMode: hostMode })
@@ -240,7 +239,7 @@ function appearance (body) {
   let q = 'auto'
   try { q = localStorage.getItem('evoscholar.fxQuality') || 'auto' } catch {}
   const Q = [['auto', '自动', '按设备性能选择'], ['high', '高', '262,144 个粒子'], ['mid', '中', '65,536 个粒子'], ['low', '低', '16,384 个粒子'], ['off', '关闭', '纯色背景，最省电']]
-  body.innerHTML = `<div class="panel"><h3>背景粒子</h3><p class="lede">粒子会随智能体的思考、调用工具、等待确认和自我进化而变化。切换后立即生效。</p>
+  body.innerHTML = `<div class="panel"><h3>背景粒子</h3>
     ${Q.map(([id, l, d]) => `<div class="opt-row"><div class="t"><b>${l}</b><span>${d}</span></div><button class="switch ${q === id ? 'on' : ''}" data-q="${id}" type="button" aria-label="${l}"></button></div>`).join('')}</div>`
   body.querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => {
     setFxQuality(b.dataset.q)
@@ -250,9 +249,9 @@ function appearance (body) {
 
 function about (body) {
   const s = store.state
-  body.innerHTML = `<div class="panel"><h3>EvoScholar</h3><p class="lede">个人自进化科研工作台：文献检索、数据处理与出图、论文写作规范检查。进化的是 harness（提示词、技能、工具、路由、工作流），每一次持久修改都经你批准。</p>
+  body.innerHTML = `<div class="panel"><h3>EvoScholar</h3>
     <div class="kv"><span>当前 genome</span><span><code>${esc(s.genome.id)}</code></span></div>
-    <div class="kv"><span>数据</span><span>全部保存在本机：会话、轨迹和索引在 <code>data/</code>，API Key 在 <code>.env</code></span></div>
-    <div class="kv"><span>项目文件</span><span>交付文件写在项目文件夹的 <code>evoscholar-out/</code>，上传文件在 <code>evoscholar-in/</code></span></div>
+    <div class="kv"><span>数据</span><span><code>data/</code>、<code>.env</code></span></div>
+    <div class="kv"><span>项目文件</span><span><code>evoscholar-out/</code>、<code>evoscholar-in/</code></span></div>
     <div class="kv"><span>源代码</span><span><a href="https://github.com/Dylannn-7/EvoScholar" target="_blank" rel="noopener">github.com/Dylannn-7/EvoScholar</a></span></div></div>`
 }
