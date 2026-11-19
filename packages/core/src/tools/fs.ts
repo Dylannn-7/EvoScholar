@@ -1,6 +1,6 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { open } from 'node:fs/promises'
-import { basename, dirname, extname, join, relative } from 'node:path'
+import { basename, dirname, extname, join, relative, sep } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { atomicWriteFile } from '../atomic-file'
 import { FILE_LIMITS, KiB, MiB_BYTES } from '../limits'
@@ -130,7 +130,7 @@ export const listFiles: ToolFactory = (env) => ({
         const full = join(dir, entry.name)
         if (appPrivate(env.ws, full)) continue
         const st = statSync(full)
-        const rel = relative(cwd, full).split('\\').join('/')
+        const rel = relative(cwd, full).split('\\').join('/')   // model-facing paths use / on every OS
         out.push(st.isDirectory() ? `${rel}/` : `${rel}  (${st.size} B)`)
         if (st.isDirectory() && d > 1) walk(full, d - 1)
       }
@@ -211,7 +211,7 @@ export const writeFile: ToolFactory = (env) => ({
     const existed = existsSync(file)
     atomicWriteFile(file, a.content)
     env.trace?.({ kind: 'file.write', path: a.path, bytes: Buffer.byteLength(a.content) })
-    env.onFiles?.([relative(env.cwd, file)])
+    env.onFiles?.([relative(env.cwd, file).split(sep).join('/')])
     return textResult(`${existed ? '已覆盖' : '已创建'} ${a.path}（${Buffer.byteLength(a.content)} B）`)
   }
 })
@@ -238,7 +238,7 @@ export const editFile: ToolFactory = (env) => ({
     if (count !== 1) return textResult(`old_text 出现了 ${count} 次，需要恰好 1 次`, true)
     atomicWriteFile(file, text.replace(a.old_text, () => a.new_text))
     env.trace?.({ kind: 'file.edit', path: a.path })
-    env.onFiles?.([relative(env.cwd, file)])
+    env.onFiles?.([relative(env.cwd, file).split(sep).join('/')])
     return textResult(`已修改 ${a.path}`)
   }
 })

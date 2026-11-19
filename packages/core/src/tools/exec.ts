@@ -1,7 +1,7 @@
 import { createServer } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, lstatSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, lstatSync, statSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { join, relative, sep } from 'node:path'
 import type { Json } from '@evoscholar/harness'
@@ -67,7 +67,7 @@ function snapshot(dir: string, depth = 3): Map<string, number> {
 }
 
 function changedFiles(before: Map<string, number>, after: Map<string, number>, cwd: string): string[] {
-  return [...after].filter(([f, t]) => before.get(f) !== t).map(([f]) => relative(cwd, f)).slice(0, 50)
+  return [...after].filter(([f, t]) => before.get(f) !== t).map(([f]) => relative(cwd, f).split(sep).join('/')).slice(0, 50)
 }
 
 /** Spawn a process in env.cwd with the scrubbed child environment (no provider keys). */
@@ -85,6 +85,36 @@ export async function runModelProcess(env: ToolEnv, job: ExecutionJob, timeout: 
   return run(...job.host, env, timeout, active)
 }
 
+/**
+ * Kill a process and everything it started. On Windows `child.kill()` only ends the direct child
+ * (e.g. PowerShell), leaving grandchildren that keep the output pipes open, so use taskkill /T.
+ */
+export function killTree(child: ChildProcess, force = false): void {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  if (process.platform === 'win32' && child.pid) {
+    try { spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => child.kill()) } catch { child.kill() }
+  } else child.kill(force ? 'SIGKILL' : 'SIGTERM')
+}
+
+/**
+ * Call onDone once: on 'close', or shortly after 'exit' when a grandchild still holds the pipes
+ * (otherwise 'close' never fires on Windows), or after a spawn error.
+ */
+function settled(child: ChildProcess, onDone: (code: number | null, sig: string | null) => void): void {
+  let done = false
+  const finish = (code: number | null, sig: string | null) => {
+    if (done) return
+    done = true
+    onDone(code, sig)
+  }
+  child.once('close', (code, sig) => finish(code, sig))
+  child.once('exit', (code, sig) => setTimeout(() => {
+    child.stdout?.destroy(); child.stderr?.destroy()
+    finish(code, sig)
+  }, 1500))
+  child.once('error', () => setTimeout(() => finish(child.exitCode ?? -1, null), 50))
+}
+
 async function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal: AbortSignal) {
   signal.throwIfAborted()
   return new Promise<ProcessResult>((resolveP, reject) => {
@@ -97,9 +127,9 @@ async function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, 
     let forceTimer: NodeJS.Timeout | undefined
     const kill = () => {
       if (forceTimer) return
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+      killTree(child)
       forceTimer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+        killTree(child, true)
         child.stdout.destroy()
         child.stderr.destroy()
       }, 2000)
@@ -119,7 +149,7 @@ async function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, 
     const timer = setTimeout(() => { timedOut = true; kill() }, timeoutS * 1000)
     signal.addEventListener('abort', kill, { once: true })
     child.on('error', (e) => { out += `\n[spawn error] ${e.message}` })
-    child.once('close', (code, sig) => {
+    settled(child, (code, sig) => {
       clearTimeout(timer)
       clearTimeout(forceTimer)
       signal.removeEventListener('abort', kill)
@@ -267,13 +297,13 @@ export async function stopAllProcesses(sessionKey: string): Promise<void> {
 
 async function stopProc(p: Proc): Promise<void> {
   const running = () => !p.error && p.child.exitCode === null && p.child.signalCode === null
-  if (running()) p.child.kill('SIGTERM')
+  if (running()) killTree(p.child)
   const timer = setTimeout(() => {
-    if (running()) p.child.kill('SIGKILL')
+    if (running()) killTree(p.child, true)
     p.child.stdout?.destroy()
     p.child.stderr?.destroy()
   }, 3000)
-  try { await p.closed } finally { clearTimeout(timer) }
+  try { await Promise.race([p.closed, delay(5000)]) } finally { clearTimeout(timer) }   // never block shutdown on a stubborn process
 }
 
 function procStatus(p: Proc): string {
