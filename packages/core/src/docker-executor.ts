@@ -150,6 +150,7 @@ export class DockerExecutor implements ExecutionBackend {
     let launched = false
     let keep = !!run
     try {
+      const delivery = run?.project.planDelivery(job.deliverables)
       run?.project.sync()
       launched = true
       await this.create(binary, name, env, job, stage, signal)
@@ -159,7 +160,7 @@ export class DockerExecutor implements ExecutionBackend {
       launched = false
       signal.throwIfAborted()
       if (result.timedOut) keep = false
-      else if (run) result.files = run.project.publish(this.session(env))
+      else if (run) result.files = run.project.publish(this.session(env), result.code === 0 ? delivery : undefined)
       return result
     } catch (error) {
       if (launched || signal.aborted) keep = false

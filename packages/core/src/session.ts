@@ -69,6 +69,8 @@ export type ResearchSession = {
 
 const measure = (r: ModelRequest) => Math.ceil(JSON.stringify(r).length / 3)
 
+class TurnStepLimit extends Error {}
+
 export async function openResearchSession(
   rt: Runtime,
   opts: {
@@ -141,9 +143,10 @@ export async function openResearchSession(
     })
   }
   const platform = '模型代码默认在 Linux 容器用 POSIX 命令语法执行；宿主和容器通过项目相对路径交换文件。'
-  const outputNote = opts.outputDir ? `\n- 交付文件（图、表、文稿、数据结果）写到 ${opts.outputDir}/ 下；用户上传的文件在 evoscholar-in/ 下；不要改动项目里其他已有文件，除非用户明确要求` : ''
+  const outputNote = opts.outputDir ? `\n- 交付默认写到 ${opts.outputDir}/ 下，上传文件在 evoscholar-in/ 下。改动项目中已有文件需用户明确要求。` : ''
+  const deliveryNote = '用户指定项目根目录或其他项目相对位置时，按该路径交付。用 run_python 或 run_command 生成最终文件时，代码和 deliverables 使用同一项目相对路径。例如根目录 report.pdf 填 deliverables: ["report.pdf"]。只声明最终文件，检查工具返回的实际交付路径。'
   const workflow = openWorkflow(genome, env, model, opts.stage)
-  const envNote = `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）${outputNote}\n- 系统：${platform}\n- 日期：${new Date().toISOString().slice(0, 10)}`
+  const envNote = `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）${outputNote}\n- ${deliveryNote}\n- 系统：${platform}\n- 日期：${new Date().toISOString().slice(0, 10)}`
   /** Tools and instructions for the current session overlay (tool notes, skill switches, prompt notes). */
   const assemble = () => {
     const ov = loop?.overlay()
@@ -163,8 +166,9 @@ export async function openResearchSession(
     const tools = [...buildTools(genome.tools.enabled, { ...env, skills }, overrides, (s) => rt.genomes.text(s)), ...(workflow?.tools ?? []), ...(loop?.tools ?? [])]
     const forged = loop ? kernelIndex(rt.ws.root, extraSkills(rt.ws.root).map((x) => x.name)) : ''
     const style = rt.ws.settings?.defaults.figureStyle ? `\n- 用户默认出图风格：${rt.ws.settings.defaults.figureStyle}（在 run_python 里 \`import evoscholar_styles as S; S.use('${rt.ws.settings.defaults.figureStyle}', venue=...)\`；用户另有要求时以用户为准）` : ''
-    const instructions = rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, skills) + forged + (workflow?.instructions ?? '') + (loop?.instructions ?? '') + (ov?.instructions ?? '') + envNote + style
-    return { tools, instructions, version: ov?.version ?? '' }
+    const projectRules = loop?.projectRules() ?? ''
+    const instructions = rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, skills) + forged + (workflow?.instructions ?? '') + (loop?.instructions ?? '') + (ov?.instructions ?? '') + envNote + style + projectRules
+    return { tools, instructions, version: JSON.stringify([ov?.version ?? '', projectRules]) }
   }
   const initial = assemble()
   let configured = initial.version
@@ -178,7 +182,7 @@ export async function openResearchSession(
   let remainingSteps = b.maxSteps
   const session = await openAgentSession({
     admit: () => {
-      if (remainingSteps <= 0) throw new Error('已达到本回合步数上限')
+      if (remainingSteps <= 0) throw new TurnStepLimit('已达到本回合步数上限')
       remainingSteps--
     },
     sessionId,
@@ -237,7 +241,13 @@ export async function openResearchSession(
         await settleInterrupted(session)
         status = await session.prompt(blocks)
         const check = status === 'complete' && remainingSteps > 0 ? loop?.selfCheck() : undefined
-        if (check) status = await session.prompt([{ type: 'text', text: check }])
+        if (check) {
+          try { status = await session.prompt([{ type: 'text', text: check }]) }
+          catch (error) {
+            if (!(error instanceof TurnStepLimit)) throw error
+            status = 'budget'
+          }
+        }
         const snap = await session.snapshot()
         const last = [...snap.messages].reverse().find((m) => m.role === 'assistant')
         answer = textOf(last?.content)
