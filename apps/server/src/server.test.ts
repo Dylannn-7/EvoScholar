@@ -227,6 +227,9 @@ test('v2 endpoints: model settings, projects, uploads into the library, usage, h
   assert.equal(fileRes.status, 200)
   await localFetch(`${base}/api/library/${lib.body.files[0].id}`, { method: 'PATCH', headers: H, body: JSON.stringify({ deliverable: true }) })
   assert.equal((await json(await localFetch(`${base}/api/library?deliverable=1`))).body.files.length, 1)
+  assert.equal((await json(await localFetch(`${base}/api/library?limit=1`))).body.files.length, 1)
+  assert.equal((await localFetch(`${base}/api/library/999999/reveal`, { method: 'POST', headers: H })).status, 404)
+  assert.equal((await localFetch(`${base}/api/library/${lib.body.files[0].id}/reveal`, { method: 'POST' })).status, 403)
 
   // Session settings switch without reopening; usage and folder picker answer.
   const sw = await json(await localFetch(`${base}/api/sessions/${sess.body.id}/settings`, { method: 'PATCH', headers: H, body: JSON.stringify({ permission: 'bypass' }) }))
@@ -415,7 +418,7 @@ test('local pairing consumes either code, expires automatic codes, and throttles
   assert.ok(auth.verify(`Bearer ${again.token}`))
 })
 
-test('all API reads require a bearer, cross-port origins are forbidden, and logout revokes the token', async (t) => {
+test('all API reads require a bearer, and cross-port origins are forbidden', async (t) => {
   const dir = tempWorkspace()
   const rt = openRuntime(openWorkspace(dir))
   const auth = createLocalAuth()
@@ -462,8 +465,6 @@ test('all API reads require a bearer, cross-port origins are forbidden, and logo
   const second = await update({ baseUrl: changed, confirmGateway: changed })
   assert.equal(second.status, 200)
   assert.equal((await second.json() as { provider: { hasKey: boolean } }).provider.hasKey, false)
-  assert.equal((await localFetch(base + '/api/auth/logout', { method: 'POST', headers: { 'x-evoscholar': '1' } })).status, 200)
-  assert.equal((await localFetch(base + '/api/state')).status, 401)
 })
 
 test('candidate approval requires confirmation when unverified and returns verification evidence via API', async (t) => {

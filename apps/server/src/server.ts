@@ -467,10 +467,6 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       grant = auth.verify(req.headers.authorization)
       if (!grant) return send(res, 401, { error: '请先配对工作台' })
       ws.config.localHttpPort = req.socket.localPort
-      if (p === '/api/auth/logout' && req.method === 'POST') {
-        auth.revoke(grant)
-        return send(res, 200, { ok: true })
-      }
       if (await v2(req, res, url)) return
     }
 

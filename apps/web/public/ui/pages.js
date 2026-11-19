@@ -1,6 +1,6 @@
 // Pages: plugins, library (资料空间), usage, trajectory.
 import { go, store } from '../app.js'
-import { ago, api, del, fmtSize, fmtTokens, loadApiImages, patch, post, put } from './api.js'
+import { ago, api, apiFetch, del, fmtSize, fmtTokens, loadApiImages, patch, post, put } from './api.js'
 import { icon } from './icons.js'
 import { confirmDialog, esc, openModal, promptDialog, toast } from './modal.js'
 import { openFilePreviewModal } from './review.js'
@@ -16,7 +16,7 @@ const srcBadge = (s) => { const [l, c] = SOURCE[s || 'builtin']; return `<span c
 let pluginTab = 'skills'
 export async function renderPlugins (root, arg) {
   if (typeof arg === 'string' && ['skills', 'tools', 'rules', 'styles'].includes(arg)) pluginTab = arg
-  const body = shell(root, '插件', '技能、工具、规则包和出图风格。进化沉淀出的可执行技能和规则会出现在这里；也可以导入外部技能（Anthropic Agent Skills 格式）。',
+  const body = shell(root, '插件', '',
     '<button class="btn primary small" id="importSkill" type="button">导入技能</button>')
   root.querySelector('#importSkill').onclick = () => importDialog(root)
   const [c, ur, st] = await Promise.all([api('/api/capabilities'), api('/api/plugins/rules'), api('/api/styles').catch(() => ({ styles: [], current: null }))])
@@ -45,7 +45,7 @@ export async function renderPlugins (root, arg) {
         ${fb.size ? `<div class="section-t">规则反馈（误报 / 有效）</div><div class="bars">${[...fb.values()].slice(0, 20).map((x) => `<div class="bar-row"><span class="l"><code>${esc(x.rule)}</code></span><span class="tr"><i class="c-out" style="width:${(100 * (x.valid || 0)) / Math.max(1, x.total || 1)}%"></i><i style="background:var(--danger);width:${(100 * (x.false_positive || 0)) / Math.max(1, x.total || 1)}%"></i></span><span class="n">${x.false_positive || 0} / ${x.valid || 0}</span></div>`).join('')}</div>` : ''}`
     } else {
       const groups = [...new Set(st.styles.map((x) => x.group))]
-      pl.innerHTML = `<p class="muted" style="margin-top:-4px">风格决定图的外观，期刊规则包决定尺寸和字号；两者组合使用。设为默认后，新会话出图会优先用它（你在对话里另有要求时以对话为准）。</p>
+      pl.innerHTML = `
         ${groups.map((g) => `<div class="section-t">${esc(g)}</div><div class="cards style-cards">${st.styles.filter((x) => x.group === g).map((x) => `<div class="pcard style ${st.current === x.id ? 'cur' : ''}" data-style="${esc(x.id)}">
           <div class="sprev"><img loading="lazy" data-api-image="/api/styles/${esc(x.id)}/preview?v=2" alt="${esc(x.label)} 样图"></div>
           <div class="top"><span class="nm">${esc(x.label)}</span><span class="badge">${esc(x.library)}</span>${st.current === x.id ? '<span class="badge accent">默认</span>' : ''}</div>
@@ -95,7 +95,7 @@ function importDialog (root) {
   let mode = 'github'
   openModal({
     title: '导入技能',
-    bodyHtml: `<p class="modal-msg">支持 Anthropic Agent Skills 格式：一个包含 SKILL.md（带 name、description 的 frontmatter）的文件夹，可附带 references/、scripts/、assets/。导入后默认启用；附带脚本只供智能体阅读，运行仍按权限模式确认。</p>
+    bodyHtml: `
       <div class="seg" id="im" style="margin:6px 0 14px"><button type="button" class="on" data-m="github">GitHub</button><button type="button" data-m="zip">zip 文件</button><button type="button" data-m="folder">本地文件夹</button></div>
       <div id="imBody"></div>
       <label class="inline" style="margin-top:6px;font-size:12px;color:var(--text-2)"><input type="checkbox" id="imReplace"> 已存在时覆盖更新</label>
@@ -106,7 +106,7 @@ function importDialog (root) {
         el.querySelector('#imBody').innerHTML = mode === 'github'
           ? '<input class="input" id="imUrl" placeholder="https://github.com/<owner>/<repo>/tree/main/skills/<name>" spellcheck="false">'
           : mode === 'zip' ? '<input class="input" id="imZip" type="file" accept=".zip" style="padding-top:6px">'
-            : '<input class="input" id="imFolder" placeholder="技能文件夹的完整路径（里面有 SKILL.md）" spellcheck="false">'
+            : '<input class="input" id="imFolder" placeholder="技能文件夹路径" spellcheck="false">'
       }
       el.querySelector('#im').onclick = (e) => { const b = e.target.closest('[data-m]'); if (b) { mode = b.dataset.m; drawBody() } }
       drawBody()
@@ -132,63 +132,127 @@ function importDialog (root) {
 }
 
 // ---------------------------------------------------------------- library
-const lib = { project: '', session: '', type: '', q: '', deliverable: false }
+// Three panes: scopes (all, deliverables, uploads, projects), files grouped by session, preview.
+const lib = { scope: 'all', session: '', type: '', q: '', selected: 0, view: (() => { try { return localStorage.getItem('evo.libView') || 'grid' } catch { return 'grid' } })() }
+const IMG_FILE = /\.(png|jpe?g|gif|webp|svg)$/i
+const typeIcon = (t) => (t === 'data' ? 'data' : t === 'code' ? 'code' : t === 'figure' ? 'image' : 'file')
+const baseName = (p) => p.split('/').pop()
+const inScope = (f, scope) => scope === 'all' || (scope === 'deliverable' ? !!f.deliverable
+  : scope === 'upload' ? f.kind === 'upload' : scope === 'drafts' ? !f.project_id : f.project_id === scope.slice(2))
+async function downloadLibraryFile (f) {
+  const res = await apiFetch(`/api/library/${f.id}/file`)
+  if (!res.ok) throw new Error('下载失败')
+  const url = URL.createObjectURL(await res.blob())
+  const a = Object.assign(document.createElement('a'), { href: url, download: baseName(f.path) })
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 export async function renderLibrary (root, arg) {
-  if (arg) Object.assign(lib, { project: arg.project || '', session: arg.session || '' })
-  const body = shell(root, '资料空间', '所有会话产出的文件和你上传的文件。文件留在原处（项目文件夹或草稿目录），这里只建索引，方便随时找到交付物。')
-  const S = store.state
-  const draw = async () => {
-    const qs = new URLSearchParams()
-    for (const [k, v] of Object.entries(lib)) if (v) qs.set(k === 'deliverable' ? 'deliverable' : k, k === 'deliverable' ? '1' : v)
-    const { files } = await api(`/api/library?${qs}`)
+  if (arg) Object.assign(lib, { scope: arg.project ? (arg.project === 'drafts' ? 'drafts' : `p:${arg.project}`) : 'all', session: arg.session || '', selected: 0 })
+  const body = shell(root, '资料空间', '')
+  body.classList.add('lib-body')
+  let files = []
+  const load = async () => { files = (await api('/api/library?limit=2000')).files }
+  const draw = () => {
+    const S = store.state
+    const count = (scope) => files.filter((f) => inScope(f, scope)).length
+    const scopes = [['all', '全部', 'library'], ['deliverable', '交付物', 'star'], ['upload', '上传', 'upload']]
+    const projects = [...S.projects.map((p) => [`p:${p.id}`, p.name]), ['drafts', '草稿']].filter(([id]) => count(id))
+    const q = lib.q.toLowerCase()
+    const shown = files.filter((f) => inScope(f, lib.scope) && (!lib.session || f.session_id === lib.session) &&
+      (!lib.type || f.type === lib.type) && (!q || f.path.toLowerCase().includes(q)))
+    const groups = new Map()
+    for (const f of shown) {
+      const key = f.session_id || ''
+      if (!groups.has(key)) groups.set(key, { title: f.session_title || (f.kind === 'upload' ? '上传' : '未归属会话'), project: f.project_name || '草稿', session: f.session_id, latest: f.updated_at, files: [] })
+      const g = groups.get(key); g.files.push(f); if (f.updated_at > g.latest) g.latest = f.updated_at
+    }
+    const ordered = [...groups.values()].sort((a, b) => (a.latest < b.latest ? 1 : -1))
+    const sel = files.find((f) => f.id === lib.selected)
+    const thumb = (f, size) => f.exists && IMG_FILE.test(f.path)
+      ? `<img data-api-image="/api/library/${f.id}/file" loading="lazy" alt="">` : icon(typeIcon(f.type), size)
+    const card = (f) => `<button type="button" class="lcard ${f.id === lib.selected ? 'on' : ''} ${f.exists ? '' : 'missing'}" data-id="${f.id}" title="${esc(f.path)}">
+        <span class="lthumb">${thumb(f, 26)}${f.deliverable ? `<i class="lstar">${icon('star', 12)}</i>` : ''}</span>
+        <span class="lname">${esc(baseName(f.path))}</span><span class="lsub">${fmtSize(f.size)}</span></button>`
+    const row = (f) => `<button type="button" class="lrow ${f.id === lib.selected ? 'on' : ''} ${f.exists ? '' : 'missing'}" data-id="${f.id}" title="${esc(f.path)}">
+        <span class="lfi">${thumb(f, 16)}</span><span class="lname">${esc(baseName(f.path))}</span>
+        <span class="lsub">${f.deliverable ? icon('star', 12) : ''}</span><span class="lsub">${fmtSize(f.size)}</span><span class="lsub">${esc(ago(f.updated_at))}</span></button>`
     const sessTitle = lib.session && (S.sessions.find((s) => s.id === lib.session)?.title || lib.session)
-    body.innerHTML = `<div class="toolbar">
-        <div class="search">${icon('search', 15)}<input class="input" id="lq" placeholder="搜索文件名" value="${esc(lib.q)}"></div>
-        <div class="seg">${[['', '全部'], ['figure', '图'], ['document', '文档'], ['data', '数据'], ['code', '代码']].map(([id, l]) => `<button type="button" class="${lib.type === id ? 'on' : ''}" data-type="${id}">${l}</button>`).join('')}</div>
-        <select class="input" id="lp"><option value="">全部项目</option>${S.projects.map((p) => `<option value="${esc(p.id)}" ${lib.project === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}<option value="drafts" ${lib.project === 'drafts' ? 'selected' : ''}>草稿</option></select>
-        <button type="button" class="btn ${lib.deliverable ? 'primary' : 'ghost'} small" id="ld">${icon('star', 14)}只看交付物</button>
-        ${lib.session ? `<button type="button" class="btn ghost small" id="lsx">会话：${esc(sessTitle)} ${icon('close', 12)}</button>` : ''}
-      </div>
-      ${files.length ? `<div class="flist">${files.map((f) => {
-        const img = f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) && f.exists
-        return `<div class="frow ${f.exists ? '' : 'missing'}" data-id="${f.id}" data-path="${esc(f.path)}" data-type="${f.type}" title="${esc(f.root)}/${esc(f.path)}">
-          <div class="fi">${img ? `<img data-api-image="/api/library/${f.id}/file" loading="lazy" alt="">` : icon(f.type === 'data' ? 'data' : f.type === 'code' ? 'code' : f.type === 'figure' ? 'image' : 'file', 17)}</div>
-          <div class="fn"><b>${esc(f.path.split('/').pop())}</b><span>${esc(f.path)}${f.exists ? '' : ' · 文件已移动或删除'}</span></div>
-          <div class="src">${f.kind === 'upload' ? '上传 · ' : ''}${f.session_id ? `<a data-sess="${esc(f.session_id)}">${esc(f.session_title || f.session_id)}</a>` : ''}<span class="faint"> · ${esc(f.project_name || '草稿')}</span></div>
-          <div class="sz">${fmtSize(f.size)}</div><div class="tm">${esc(ago(f.updated_at))}</div>
-          <button class="icon-btn star ${f.deliverable ? 'on' : ''}" data-star="${f.id}" title="${f.deliverable ? '取消交付物标记' : '标为交付物'}" type="button">${icon('star', 16)}</button></div>`
-      }).join('')}</div>` : '<div class="empty-state"><b>还没有文件</b>会话里生成的图、表、文稿和你上传的文件都会出现在这里。</div>'}`
-    loadApiImages(root)
+    body.innerHTML = `<div class="lib">
+      <nav class="lib-nav">
+        ${scopes.map(([id, label, ic]) => `<button type="button" class="lnav ${lib.scope === id ? 'on' : ''}" data-scope="${id}">${icon(ic, 15)}<span>${label}</span><i>${count(id)}</i></button>`).join('')}
+        ${projects.length ? `<div class="lnav-h">项目</div>${projects.map(([id, label]) => `<button type="button" class="lnav ${lib.scope === id ? 'on' : ''}" data-scope="${esc(id)}">${icon('folder', 15)}<span>${esc(label)}</span><i>${count(id)}</i></button>`).join('')}` : ''}
+      </nav>
+      <section class="lib-main">
+        <div class="lib-bar">
+          <label class="lib-search">${icon('search', 14)}<input id="lq" placeholder="搜索" value="${esc(lib.q)}"></label>
+          <div class="seg">${[['', '全部'], ['figure', '图'], ['document', '文档'], ['data', '数据'], ['code', '代码']].map(([id, l]) => `<button type="button" class="${lib.type === id ? 'on' : ''}" data-type="${id}">${l}</button>`).join('')}</div>
+          <div class="seg lib-view">${[['grid', '网格'], ['list', '列表']].map(([id, l]) => `<button type="button" class="${lib.view === id ? 'on' : ''}" data-view="${id}" aria-label="${l}" title="${l}">${icon(id, 14)}</button>`).join('')}</div>
+        </div>
+        ${lib.session ? `<button type="button" class="lib-chip" id="lsx">${esc(sessTitle)} ${icon('close', 11)}</button>` : ''}
+        ${ordered.length ? ordered.map((g) => `<div class="lgroup">
+            <div class="lgroup-h">${g.session ? `<a data-sess="${esc(g.session)}">${esc(g.title)}</a>` : `<span>${esc(g.title)}</span>`}<span class="faint"> · ${esc(g.project)}</span><span class="lgroup-t">${esc(ago(g.latest))}</span></div>
+            <div class="${lib.view === 'grid' ? 'lgrid' : 'llist'}">${g.files.map(lib.view === 'grid' ? card : row).join('')}</div>
+          </div>`).join('') : `<div class="empty-state"><b>${files.length ? '没有匹配的文件' : '还没有文件'}</b></div>`}
+      </section>
+      <aside class="lib-prev">${sel ? `
+        <button type="button" class="lprev-media" data-open="${sel.id}" ${sel.exists ? '' : 'disabled'}>${thumb(sel, 40)}</button>
+        <div class="lprev-name">${esc(baseName(sel.path))}</div>
+        <div class="lkv"><span>大小</span><span>${fmtSize(sel.size)}</span></div>
+        <div class="lkv"><span>修改</span><span>${esc(new Date(sel.updated_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span></div>
+        ${sel.session_id ? `<div class="lkv"><span>会话</span><a data-sess="${esc(sel.session_id)}">${esc(sel.session_title || sel.session_id)}</a></div>` : ''}
+        <div class="lkv"><span>项目</span><span>${esc(sel.project_name || '草稿')}</span></div>
+        <div class="lkv"><span>路径</span><span class="lpath" title="${esc(sel.root)}/${esc(sel.path)}">${esc(sel.path)}</span></div>
+        ${sel.exists ? `<div class="lprev-acts">
+          <button type="button" class="btn ghost small" data-open="${sel.id}">${icon('eye', 14)}预览</button>
+          <button type="button" class="btn ghost small" data-star="${sel.id}">${icon('star', 14)}${sel.deliverable ? '取消交付物' : '标为交付物'}</button>
+          <button type="button" class="btn ghost small" data-reveal="${sel.id}">${icon('folder', 14)}在文件夹中显示</button>
+          <button type="button" class="btn ghost small" data-download="${sel.id}">${icon('download', 14)}下载</button>
+        </div>` : '<p class="faint">文件已移动或删除</p>'}` : ''}</aside>
+    </div>`
+    loadApiImages(body)
+    const qi = body.querySelector('#lq')
     let t
-    body.querySelector('#lq').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { lib.q = e.target.value.trim(); draw() }, 250) }
-    body.querySelector('.seg').onclick = (e) => { const b = e.target.closest('[data-type]'); if (b) { lib.type = b.dataset.type; draw() } }
-    body.querySelector('#lp').onchange = (e) => { lib.project = e.target.value; draw() }
-    body.querySelector('#ld').onclick = () => { lib.deliverable = !lib.deliverable; draw() }
-    body.querySelector('#lsx')?.addEventListener('click', () => { lib.session = ''; draw() })
-    body.querySelector('.flist')?.addEventListener('click', async (e) => {
-      const star = e.target.closest('[data-star]')
-      if (star) { e.stopPropagation(); await patch(`/api/library/${star.dataset.star}`, { deliverable: !star.classList.contains('on') }); return draw() }
-      const s = e.target.closest('[data-sess]')
-      if (s) { e.stopPropagation(); go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: s.dataset.sess })) }
-      const row = e.target.closest('.frow')
-      if (row && !row.classList.contains('missing')) openFilePreviewModal(null, row.dataset.path, `/api/library/${row.dataset.id}/file`)
-    })
+    qi.oninput = (e) => { clearTimeout(t); t = setTimeout(() => { lib.q = e.target.value.trim(); draw(); const n = body.querySelector('#lq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length) }, 200) }
   }
-  await draw()
+  body.addEventListener('click', async (e) => {
+    const el = e.target.closest('[data-scope],[data-type],[data-view],[data-id],[data-sess],[data-open],[data-star],[data-reveal],[data-download],#lsx')
+    if (!el) return
+    const byId = (v) => files.find((f) => f.id === Number(v))
+    try {
+      if (el.id === 'lsx') { lib.session = ''; return draw() }
+      if (el.dataset.scope !== undefined) { lib.scope = el.dataset.scope; lib.session = ''; return draw() }
+      if (el.dataset.type !== undefined) { lib.type = el.dataset.type; return draw() }
+      if (el.dataset.view) { lib.view = el.dataset.view; try { localStorage.setItem('evo.libView', lib.view) } catch {} return draw() }
+      if (el.dataset.sess) { go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: el.dataset.sess })) }
+      const f = byId(el.dataset.id ?? el.dataset.open ?? el.dataset.star ?? el.dataset.reveal ?? el.dataset.download)
+      if (!f) return
+      // Narrow windows hide the preview pane; open the file straight away instead.
+      const paneHidden = !body.querySelector('.lib-prev')?.offsetParent
+      if (el.dataset.id) { lib.selected = f.id; if (paneHidden && f.exists) return openFilePreviewModal(null, f.path, `/api/library/${f.id}/file`); return draw() }
+      if (el.dataset.open) return openFilePreviewModal(null, f.path, `/api/library/${f.id}/file`)
+      if (el.dataset.star) { await patch(`/api/library/${f.id}`, { deliverable: !f.deliverable }); f.deliverable = f.deliverable ? 0 : 1; return draw() }
+      if (el.dataset.reveal) return await post(`/api/library/${f.id}/reveal`)
+      if (el.dataset.download) return await downloadLibraryFile(f)
+    } catch (err) { toast(err.message, 'err') }
+  })
+  await load()
+  draw()
 }
 
 // ---------------------------------------------------------------- usage
 const use = { days: 30, group: 'model' }
 export async function renderUsage (root) {
-  const body = shell(root, '用量', '模型 token 用量统计。不统计费用：不同厂商、不同网关的价格各不相同，请以厂商账单为准。',
+  const body = shell(root, '用量', '',
     `<div class="seg" id="ur">${[[7, '7 天'], [30, '30 天'], [90, '90 天'], [0, '全部']].map(([d, l]) => `<button type="button" class="${use.days === d ? 'on' : ''}" data-d="${d}">${l}</button>`).join('')}</div>`)
   root.querySelector('#ur').onclick = (e) => { const b = e.target.closest('[data-d]'); if (b) { use.days = Number(b.dataset.d); renderUsage(root) } }
   const q = (group) => api(`/api/usage?group=${group}&days=${use.days || ''}`)
   const [daily, grouped] = await Promise.all([q('day'), q(use.group)])
   const t = daily.totals
-  const total = t.inputTokens + t.outputTokens
+  // Agents resend the whole context every step; most of it is a cache hit, so show it apart.
+  const fresh = Math.max(0, t.inputTokens - t.cacheReadTokens)
   body.innerHTML = `<div class="stats">
-      ${[['总 tokens', fmtTokens(total)], ['输入', fmtTokens(t.inputTokens)], ['输出', fmtTokens(t.outputTokens)], ['缓存命中', `${(t.cacheHitRate * 100).toFixed(1)}%`], ['模型请求', fmtTokens(t.requests)], ['对话回合', fmtTokens(t.turns)], ['工具调用', `${fmtTokens(t.toolCalls)}${t.toolErrors ? ` <span class="faint" style="font-size:12px">失败 ${t.toolErrors}</span>` : ''}`]]
+      ${[['新增输入', fmtTokens(fresh)], ['缓存命中', `${fmtTokens(t.cacheReadTokens)} <span class="faint" style="font-size:12px">${(t.cacheHitRate * 100).toFixed(0)}%</span>`], ['输出', fmtTokens(t.outputTokens)], ['模型请求', fmtTokens(t.requests)], ['对话回合', fmtTokens(t.turns)], ['工具调用', `${fmtTokens(t.toolCalls)}${t.toolErrors ? ` <span class="faint" style="font-size:12px">失败 ${t.toolErrors}</span>` : ''}`]]
         .map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}
     </div>
     <div class="panel"><h3>每日用量</h3>${chart(daily.rows)}<div class="legend"><span><i class="c-in"></i>输入（未命中缓存）</span><span><i class="c-cache"></i>输入（缓存命中）</span><span><i class="c-out"></i>输出</span></div></div>
@@ -228,7 +292,7 @@ let memFilter = 'live'
 const pick = new Set()
 export async function renderTrajectory (root, arg) {
   if (typeof arg === 'string' && ['timeline', 'memory', 'overlays', 'versions'].includes(arg)) trajTab = arg
-  const body = shell(root, '轨迹', '智能体在思考—行动循环里的自进化记录：回忆了哪些经验、因为什么反思、调整了什么、学到了什么。经验和偏好自动生效但随时可撤销；持久修改 harness 需要你批准。')
+  const body = shell(root, '轨迹', '')
   const [ev, evo] = await Promise.all([api('/api/evolve'), api('/api/evolution')])
   const pending = evo.candidates.filter((c) => c.status === 'pending')
   const live = ev.memory.filter((m) => m.status !== 'retired')
@@ -244,7 +308,7 @@ export async function renderTrajectory (root, arg) {
     if (trajTab === 'timeline') {
       html += ev.log.length ? `<div class="timeline">${ev.log.map((e) => `<div class="tl-item"><i class="rail-dot ${['adjust', 'learned', 'preference'].includes(e.kind) ? '' : 'dim'}"></i><div class="c">
           <div class="h"><span class="badge ${['adjust', 'learned', 'preference'].includes(e.kind) ? 'accent' : e.kind === 'selfcheck' ? 'warn' : ''}">${KIND[e.kind] || esc(e.kind)}</span>${(e.refs || []).slice(0, 5).map((r) => `<code>${esc(r)}</code>`).join(' ')}<span class="faint">${esc(ago(e.ts))}</span><span class="page-actions">${sessLink(e.session_id, e.session_title)}</span></div>
-          <p>${esc(e.text)}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有自进化记录</b>开始一个会话后，回忆、反思、调整和学到的内容会按时间排在这里。</div>'
+          <p>${esc(e.text)}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有自进化记录</b></div>'
     } else if (trajTab === 'memory') {
       const list = ev.memory.filter((m) => memFilter === 'live' ? m.status !== 'retired' : m.status === memFilter)
       html += list.length ? `<div class="cards">${list.map((m) => { const [sl, sc] = STATUS[m.status]; return `<div class="pcard" data-mem="${esc(m.id)}">
@@ -252,12 +316,12 @@ export async function renderTrajectory (root, arg) {
           <div class="ds" style="-webkit-line-clamp:5"><b style="color:#fff;font-weight:500">${esc(m.trigger)}</b> → ${esc(m.content)}</div>
           <div class="ft"><span>得分 ${score(m).toFixed(2)}</span><span>用过 ${m.uses} 次</span><span>${{ model: '模型提炼', user: '你给的', choice: '你的选择', edit: '你的修改', host: '系统' }[m.source] || ''}</span><span>${m.scope === 'project' ? '项目内' : m.scope === 'stage' ? `阶段 ${esc(m.stage || '')}` : '全局'}</span>
             <span class="page-actions"><button class="icon-btn" data-act="pin" title="${m.pinned ? '取消置顶' : '置顶（总是注入）'}" type="button">${icon('pin', 14)}</button><button class="icon-btn" data-act="edit" title="编辑" type="button">${icon('edit', 14)}</button>
-            ${m.status === 'retired' ? `<button class="icon-btn" data-act="restore" title="恢复" type="button">${icon('refresh', 14)}</button>` : `<button class="icon-btn" data-act="retire" title="淘汰（不再注入）" type="button">${icon('archive', 14)}</button>`}<button class="icon-btn" data-act="del" title="删除" type="button">${icon('trash', 14)}</button></span></div></div>` }).join('')}</div>` : '<div class="empty-state"><b>这里还没有条目</b>会话中提炼的经验、你的选择和明确要求（例如「以后都用 Okabe-Ito 配色」）会出现在这里。</div>'
+            ${m.status === 'retired' ? `<button class="icon-btn" data-act="restore" title="恢复" type="button">${icon('refresh', 14)}</button>` : `<button class="icon-btn" data-act="retire" title="淘汰（不再注入）" type="button">${icon('archive', 14)}</button>`}<button class="icon-btn" data-act="del" title="删除" type="button">${icon('trash', 14)}</button></span></div></div>` }).join('')}</div>` : '<div class="empty-state"><b>这里还没有条目</b></div>'
     } else if (trajTab === 'overlays') {
       html += ev.overlays.length ? `<div class="timeline">${ev.overlays.slice().reverse().map((o) => `<div class="tl-item"><i class="rail-dot ${o.status === 'reverted' ? 'dim' : ''}"></i><div class="c">
           <div class="h">${o.status === 'trial' || o.status === 'kept' ? `<input type="checkbox" data-pick="${esc(o.id)}" ${pick.has(o.id) ? 'checked' : ''} title="选入 genome 候选">` : ''}<code>${esc(o.id)}</code><span class="badge">${esc(o.op)}${o.target ? ` · ${esc(o.target)}` : ''}</span><span class="badge ${o.status === 'reverted' ? '' : o.status === 'kept' ? 'ok' : 'warn'}">${{ trial: '试用中', kept: '保留', reverted: '已撤销', promoted: '已沉淀' }[o.status] || esc(o.status)}</span>
           ${o.before_score !== null && o.after_score !== null ? `<span class="faint">回合得分 ${Number(o.before_score).toFixed(2)} → ${Number(o.after_score).toFixed(2)}</span>` : ''}<span class="page-actions">${sessLink(o.session_id)}${o.status === 'trial' || o.status === 'kept' ? `<button class="btn ghost small" data-rev="${esc(o.id)}" type="button">撤销</button>` : ''}</span></div>
-          <p>${esc(o.value || '')}${o.reason ? `<br><span class="faint">原因：${esc(o.reason)}</span>` : ''}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有会话调整</b>智能体在会话里用 tune_harness 试用的工作方式调整会列在这里；表现好的调整之后可以沉淀为 genome 候选，经你批准上线。</div>'
+          <p>${esc(o.value || '')}${o.reason ? `<br><span class="faint">原因：${esc(o.reason)}</span>` : ''}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有会话调整</b></div>'
     } else {
       html += `<div class="section-t">待你批准</div>${pending.length ? `<div class="timeline">${pending.map((c) => {
           const v = c.verification || {}
@@ -296,7 +360,7 @@ export async function renderTrajectory (root, arg) {
     const sl = e.target.closest('[data-sess]'); if (sl) { go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: sl.dataset.sess })) }
     try {
       if (e.target.closest('#addPref')) {
-        const text = await promptDialog({ title: '添加偏好', message: '写一条你希望智能体以后都遵守的习惯，例如「出图用 Okabe-Ito 配色，坐标轴标签不加粗」。', multiline: true })
+        const text = await promptDialog({ title: '添加偏好', message: '', multiline: true })
         if (!text) return
         await post('/api/memory', { kind: 'preference', trigger: '用户设定', content: text, pinned: true })
         return renderTrajectory(root)

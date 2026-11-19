@@ -301,7 +301,7 @@ test('fixed public presets keep the injected transport, and a custom public gate
   assert.equal(custom.ok, true)
 })
 
-test('usageTotals aggregates beyond the 400-model grouping limit and ignores dev sessions', () => {
+test('usageTotals aggregates beyond the 400-model grouping limit and counts only everyday usage', () => {
   const dir = tempWorkspace()
   try {
     const rt = openRuntime(openWorkspace(dir))
@@ -313,6 +313,10 @@ test('usageTotals aggregates beyond the 400-model grouping limit and ignores dev
     for (let i = 0; i < 450; i++) stmt.run(ts, `openai/m-${i}`)
     rt.db.prepare(`INSERT INTO ledger (ts, category, kind, provider, model, session_id, input_tokens, cache_read_tokens, output_tokens, cost_usd, cost_cny)
       VALUES (?, 'usage', 'model', 'openai', 'openai/dev-only', 's-dev', 9999, 0, 9999, 0, 0)`).run(ts)
+    // Offline evolution and dev runs are developer spend, not the user's everyday usage.
+    for (const category of ['evolution', 'dev'])
+      rt.db.prepare(`INSERT INTO ledger (ts, category, kind, provider, model, session_id, input_tokens, cache_read_tokens, output_tokens, cost_usd, cost_cny)
+        VALUES (?, ?, 'model', 'deepseek', 'deepseek/deepseek-flash', NULL, 14000000, 12000000, 600000, 0, 0)`).run(ts, category)
     rt.db.exec('COMMIT')
     assert.equal(usageBy(rt.db, 'model').length, 400)
     const totals = usageTotals(rt.db, 7)

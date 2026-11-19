@@ -2,7 +2,8 @@
 import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { spawn } from 'node:child_process'
+import { dirname, join } from 'node:path'
 import {
   DEFAULT_SANDBOX_IMAGE,
   PERMISSION_LABELS,
@@ -273,7 +274,8 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
           kind: q.get('kind') ?? undefined,
           type: q.get('type') ?? undefined,
           q: q.get('q') ?? undefined,
-          deliverable: q.get('deliverable') === '1'
+          deliverable: q.get('deliverable') === '1',
+          limit: Number(q.get('limit')) || undefined
         })
       }), true
     }
@@ -288,6 +290,17 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
         forgetLibraryEntry(rt.db, id)
         return send(res, 200, { ok: true }), true
       }
+    }
+    if ((mm = /^\/api\/library\/(\d+)\/reveal$/.exec(p)) && method === 'POST') {
+      // Only indexed files; the server runs on the user's own machine, so this opens their file manager.
+      const f = libraryPath(rt.db, Number(mm[1]))
+      if (!f || !existsSync(f)) throw httpError(404, '文件不存在（可能已被移动或删除）')
+      const [cmd, args] = process.platform === 'darwin' ? ['open', ['-R', f]]
+        : process.platform === 'win32' ? ['explorer.exe', [`/select,${f}`]] : ['xdg-open', [dirname(f)]]
+      const child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true })
+      child.on('error', () => {})
+      child.unref()
+      return send(res, 200, { ok: true }), true
     }
     if ((mm = /^\/api\/library\/(\d+)\/file$/.exec(p)) && method === 'GET') {
       const f = libraryPath(rt.db, Number(mm[1]))

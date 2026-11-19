@@ -21,7 +21,7 @@ const GROUP_SQL: Record<UsageGroup, { key: string; label: string }> = {
 /** Aggregate model requests from the ledger table over the last `days` days. */
 export function usageBy(db: Db, group: UsageGroup, opts: { days?: number; sessionId?: string; projectId?: string } = {}): UsageRow[] {
   const g = GROUP_SQL[group]
-  const where = ["l.kind = 'model'", "s.category IS NOT 'dev'", "l.category IN ('usage', 'evolution')"]
+  const where = ["l.kind = 'model'", "s.category IS NOT 'dev'", "l.category = 'usage'"]
   const args: (string | number)[] = []
   if (opts.days) { where.push('l.ts >= ?'); args.push(new Date(Date.now() - opts.days * 86_400_000).toISOString()) }
   if (opts.sessionId) { where.push('l.session_id = ?'); args.push(opts.sessionId) }
@@ -37,7 +37,7 @@ export function usageBy(db: Db, group: UsageGroup, opts: { days?: number; sessio
 }
 
 export function usageTotals(db: Db, days?: number) {
-  const where = ["l.kind = 'model'", "s.category IS NOT 'dev'", "l.category IN ('usage', 'evolution')"]
+  const where = ["l.kind = 'model'", "s.category IS NOT 'dev'", "l.category = 'usage'"]
   const args: (string | number)[] = []
   const since = days ? new Date(Date.now() - days * 86_400_000).toISOString() : undefined
   if (since) { where.push('l.ts >= ?'); args.push(since) }

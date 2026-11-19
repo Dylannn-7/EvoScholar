@@ -1,6 +1,6 @@
 // EvoScholar web workbench v2 — no build step, no external requests.
 // Shell: icon rail + view router + shared state. Views live in ui/*.js.
-import { api, forgetToken, post, storeToken } from './ui/api.js'
+import { api, post, storeToken } from './ui/api.js'
 import { icon } from './ui/icons.js'
 import { toast } from './ui/modal.js'
 import { initWorkbench } from './ui/workbench.js'
@@ -88,14 +88,9 @@ function renderRail () {
     <button class="rail-btn brand" data-go="workbench" data-home="1" data-tip="EvoScholar 首页" type="button">${icon('brand', 18)}</button>
     ${VIEWS.map((v) => `<button class="rail-btn ${view === v.id ? 'on' : ''}" data-go="${v.id}" data-tip="${v.label}" type="button" aria-label="${v.label}">${icon(v.icon, 19)}${v.id === 'trajectory' && pending ? '<i class="dotmark"></i>' : ''}</button>`).join('')}
     <div class="rail-sp"></div>
-    <button class="rail-btn" id="logout" data-tip="注销" type="button" aria-label="注销">${icon('close', 16)}</button>
     <button class="rail-btn ${view === 'settings' ? 'on' : ''}" data-go="settings" data-tip="设置" type="button" aria-label="设置">${icon('settings', 19)}</button>`
 }
 document.getElementById('rail').addEventListener('click', (e) => {
-  if (e.target.closest('#logout')) {
-    void post('/api/auth/logout').then(() => { forgetToken(); location.reload() }).catch((error) => toast(error.message, 'err'))
-    return
-  }
   const b = e.target.closest('[data-go]')
   if (!b) return
   if (b.dataset.home) { go('workbench'); workbench.home(); return }
