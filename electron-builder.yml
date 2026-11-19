@@ -1,0 +1,50 @@
+# Desktop packages: macOS dmg (arm64, x64) and Windows installer (x64). Not code-signed yet.
+appId: io.evoscholar.app
+productName: EvoScholar
+copyright: Copyright 2026 EvoScholar contributors
+asar: false
+directories:
+  output: release
+  buildResources: build
+files:
+  - package.json
+  - apps/desktop/**
+  - apps/server/package.json
+  - apps/server/dist/**
+  - apps/web/public/**
+  - packages/harness/package.json
+  - packages/harness/dist/**
+  - packages/core/package.json
+  - packages/core/dist/**
+  - evoscholar.config.json
+  - .dockerignore
+  - genomes/**
+  - prompts/**
+  - skills/**
+  - python/*.py
+  - sandbox/**
+  - rulepacks/figures/**
+  - rulepacks/writing/**
+  - scripts/setup-python.mjs
+  - scripts/build-sandbox.mjs
+  - scripts/requirements.txt
+  - "!**/*.test.js"
+  - "!**/*.test.js.map"
+  - "!**/*.tsbuildinfo"
+  - "!python/test_*.py"
+  - "!apps/web/test/**"
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.education
+  icon: build/icon.png
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
