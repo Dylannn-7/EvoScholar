@@ -233,6 +233,11 @@ def preview(style: str, out: str) -> str:
 
 
 if __name__ == '__main__':
+    for _s in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page; output is UTF-8 JSON / Chinese
+        try:
+            _s.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
     cmd = sys.argv[1] if len(sys.argv) > 1 else 'list'
     if cmd == 'list':
         print(json.dumps(list_styles(meta='--meta' in sys.argv), ensure_ascii=False))

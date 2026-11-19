@@ -135,7 +135,7 @@ class FigureChecks(unittest.TestCase):
         ax.plot([0, 1], [0, 1])
         fig.savefig('a.pdf')
         out = subprocess.run([sys.executable, F.__file__, 'check', 'a.pdf', '--venue', 'nature', '--preview'],
-                             capture_output=True, text=True, check=True).stdout
+                             capture_output=True, text=True, encoding='utf-8', check=True).stdout
         r = json.loads(out)
         self.assertEqual(r['measured']['format'], 'pdf')
         self.assertTrue(Path(r['preview']).exists())

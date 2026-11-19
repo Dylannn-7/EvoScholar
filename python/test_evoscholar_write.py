@@ -338,14 +338,14 @@ class TextAndPdf(unittest.TestCase):
         self.assertFalse(by_rule(cam, 'ml.pages'))              # 10 pages allowed for camera-ready
 
     def test_cli(self):
-        out = subprocess.run([sys.executable, Wr.__file__, 'packs'], capture_output=True, text=True, check=True).stdout
+        out = subprocess.run([sys.executable, Wr.__file__, 'packs'], capture_output=True, text=True, encoding='utf-8', check=True).stdout
         packs = {p['id']: p for p in json.loads(out)}
         for must in ('hust-thesis', 'gbt7714', 'optica', 'ieee-journal', 'ml-conference', 'common'):
             self.assertIn(must, packs)
         self.assertEqual(packs['hust-thesis']['variants'], ['master', 'doctor', 'undergrad'])
         md = self.d / 'a.md'
         md.write_text('# 摘要\n这是一段中文,用了半角逗号。\n', encoding='utf-8')
-        r = json.loads(subprocess.run([sys.executable, Wr.__file__, 'check', str(md), '--out', str(self.d / 'rep')], capture_output=True, text=True, check=True).stdout)
+        r = json.loads(subprocess.run([sys.executable, Wr.__file__, 'check', str(md), '--out', str(self.d / 'rep')], capture_output=True, text=True, encoding='utf-8', check=True).stdout)
         self.assertIn('common.punctuation.half_in_zh', rules(r))
         self.assertTrue((self.d / 'rep' / 'report.md').exists())
 

@@ -564,4 +564,9 @@ def _cli(argv: list[str]) -> int:
 
 
 if __name__ == '__main__':
+    for _s in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page; output is UTF-8 JSON / Chinese
+        try:
+            _s.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
     sys.exit(_cli(sys.argv[1:]))
