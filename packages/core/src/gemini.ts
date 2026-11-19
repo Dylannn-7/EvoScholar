@@ -135,6 +135,14 @@ export function createGeminiModel(input: GeminiOptions): AgentModel {
     capabilities: { tools: true, images: !!input.inputCapabilities?.images, files: input.inputCapabilities?.files === true },
     async *stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent> {
       const { thinkingConfig: tc, generationConfig: gc, ...rest } = (input.parameters ?? {}) as Record<string, Json>
+      const thinkingConfig: Record<string, Json> = {
+        includeThoughts: true,
+        ...(tc && typeof tc === 'object' && !Array.isArray(tc) ? tc : {})
+      }
+      if (!request.useProviderOutputDefault && request.maxOutputTokens > 0 &&
+        typeof thinkingConfig.thinkingBudget === 'number' && thinkingConfig.thinkingBudget > 0) {
+        thinkingConfig.thinkingBudget = Math.min(thinkingConfig.thinkingBudget, Math.max(1, request.maxOutputTokens - 1))
+      }
       const body: Record<string, unknown> = {
         ...rest,
         systemInstruction: { parts: [{ text: request.instructions }] },
@@ -142,7 +150,7 @@ export function createGeminiModel(input: GeminiOptions): AgentModel {
         generationConfig: {
           ...(gc && typeof gc === 'object' && !Array.isArray(gc) ? gc : {}),
           ...(request.useProviderOutputDefault ? {} : { maxOutputTokens: request.maxOutputTokens }),
-          thinkingConfig: { includeThoughts: true, ...(tc && typeof tc === 'object' && !Array.isArray(tc) ? tc : {}) }
+          thinkingConfig
         }
       }
       if (request.tools.length)

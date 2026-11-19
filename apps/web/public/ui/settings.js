@@ -68,7 +68,10 @@ function models (body, m, root) {
         </div>
         <label class="faint"><input type="checkbox" id="privateGateway" ${p.gatewayPrivateAccess ? 'checked' : ''}> 允许此自定义网关访问内网地址</label>
         ${p.baseUrl && !p.gatewayApproved && !p.baseUrl.includes('<') ? '<p class="muted">请保存并确认当前网关地址，再填写 API Key。</p>' : ''}
-        ${p.custom || p.id === 'azure' ? `<div class="field"><span class="lbl">认证请求头</span><select class="input" id="authHeader">${Object.entries(AUTH).map(([k, v]) => `<option value="${k}" ${p.authHeader === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>` : ''}
+        ${p.id === 'azure'
+          ? `<div class="row2"><div class="field"><span class="lbl">认证请求头</span><select class="input" id="authHeader">${Object.entries(AUTH).map(([k, v]) => `<option value="${k}" ${p.authHeader === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+             <div class="field"><span class="lbl">API 版本</span><div class="inline"><input class="input" id="apiVersion" value="${esc(p.apiVersion || '')}" placeholder="2024-10-21（留空不追加）" spellcheck="false"><button class="btn ghost small" id="saveApiVersion" type="button">保存</button></div></div></div>`
+          : p.custom ? `<div class="field"><span class="lbl">认证请求头</span><select class="input" id="authHeader">${Object.entries(AUTH).map(([k, v]) => `<option value="${k}" ${p.authHeader === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>` : ''}
         <div class="field"><span class="lbl">API Key <span class="faint">· 只保存在本机 .env 的 ${esc(p.apiKeyEnv)}</span></span>
           <div class="inline"><input class="input" id="apiKey" type="password" autocomplete="off" placeholder="${p.hasKey ? '已保存，输入新值可替换' : '粘贴 API Key'}"><button class="btn ${p.hasKey ? 'ghost' : 'primary'} small" id="saveKey" type="button">保存</button>${p.hasKey ? '<button class="btn ghost small" id="clearKey" type="button">清除</button>' : ''}</div>
         </div>
@@ -111,6 +114,10 @@ function models (body, m, root) {
   }
   body.querySelector('#resetUrl')?.addEventListener('click', () => save({ baseUrl: '' }, '已恢复默认 URL'))
   body.querySelector('#authHeader')?.addEventListener('change', (e) => save({ authHeader: e.target.value }))
+  body.querySelector('#saveApiVersion')?.addEventListener('click', () => {
+    const v = body.querySelector('#apiVersion').value.trim()
+    save({ apiVersion: v }, v ? 'API 版本已保存' : '已清除 API 版本')
+  })
   body.querySelector('#saveKey').onclick = () => { const v = body.querySelector('#apiKey').value.trim(); if (v) save({ key: v }, 'API Key 已保存到本机 .env') }
   body.querySelector('#clearKey')?.addEventListener('click', async () => { if (await confirmDialog({ title: '清除 API Key', message: `从 .env 删除 ${p.apiKeyEnv}？`, confirmText: '清除', danger: true })) save({ key: '' }, '已清除') })
   body.querySelector('#delProv')?.addEventListener('click', async () => {
@@ -141,9 +148,10 @@ function models (body, m, root) {
 function endpointPreview (p) {
   const base = (p.baseUrl || p.defaultBaseUrl || '').replace(/\/+$/, '')
   if (!base || base.includes('<')) return '（先填写 Base URL）'
-  if (p.protocol === 'chat-completions') return base.endsWith('/chat/completions') ? base : `${base}/chat/completions`
-  if (p.protocol === 'responses') return `${base}/responses`
-  if (p.protocol === 'messages') return base.endsWith('/messages') ? base : /\/v1$/.test(base) ? `${base}/messages` : `${base}/v1/messages`
+  const q = p.apiVersion ? `?api-version=${p.apiVersion}` : ''
+  if (p.protocol === 'chat-completions') return `${base.endsWith('/chat/completions') ? base : `${base}/chat/completions`}${q}`
+  if (p.protocol === 'responses') return `${base}/responses${q}`
+  if (p.protocol === 'messages') return `${base.endsWith('/messages') ? base : /\/v1$/.test(base) ? `${base}/messages` : `${base}/v1/messages`}${q}`
   return `${base}/models/{model}:streamGenerateContent`
 }
 

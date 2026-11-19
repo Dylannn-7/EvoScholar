@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type { AgentTool, Json, ToolContext } from '@evoscholar/harness'
 import { TOOL_FACTORIES, appPrivate, childEnv, checkCommand, guarded, inside, runProcess, stopAllProcesses, type ToolEnv } from './tools'
 import { BudgetError } from './budget'
+import { FILE_LIMITS } from './limits'
 
 const ctx = (): ToolContext => ({ sessionId: 's', runId: 'r', invocationId: 'i', signal: new AbortController().signal, update() {} })
 function setup() {
@@ -190,4 +191,30 @@ test('a child response that exceeds the stdout budget is rejected', async (t) =>
   assert.notEqual(result.code, 0)
   assert.match(result.out, /输出超过/)
   assert.ok(Buffer.byteLength(result.stdout) <= 8 * 1024 * 1024)
+})
+
+test('read_file streams large text files by line range, truncates at 256 KB, and rejects >10 MB images', async (t) => {
+  const { cwd, call } = setup()
+  t.after(() => rmSync(cwd, { recursive: true, force: true }))
+  const lines = Array.from({ length: 4000 }, (_, i) => `L${String(i + 1).padStart(4, '0')} ${'数据行内容'.repeat(12)}`)
+  writeFileSync(join(cwd, 'big.log'), lines.join('\n'))
+
+  const page1 = text(await call('read_file', { path: 'big.log', offset: 1, limit: 3 }))
+  assert.equal(page1, lines.slice(0, 3).join('\n'))
+  const pageMid = text(await call('read_file', { path: 'big.log', offset: 200, limit: 2 }))
+  assert.equal(pageMid, lines.slice(199, 201).join('\n'))
+
+  const full = text(await call('read_file', { path: 'big.log' }))
+  assert.ok(Buffer.byteLength(full, 'utf8') <= FILE_LIMITS.textReadBytes, 'truncated text stays within 256 KB')
+  assert.match(full, /已截断.*offset.*limit/)
+
+  writeFileSync(join(cwd, 'one-line.txt'), 'x'.repeat(300 * 1024))
+  const single = text(await call('read_file', { path: 'one-line.txt' }))
+  assert.ok(Buffer.byteLength(single, 'utf8') <= FILE_LIMITS.textReadBytes)
+  assert.match(single, /已截断.*offset.*limit/)
+
+  writeFileSync(join(cwd, 'huge.png'), Buffer.alloc(FILE_LIMITS.imageBytes + 1024, 1))
+  const imgRes = await call('read_file', { path: 'huge.png' })
+  assert.equal(imgRes.isError, true)
+  assert.match(text(imgRes), /10 MB.*缩小/)
 })

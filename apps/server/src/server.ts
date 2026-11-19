@@ -9,8 +9,11 @@ import { createLocalAuth } from './local-auth'
 import {
   Bench,
   BudgetError,
+  FILE_LIMITS,
+  MiB_BYTES,
   PROTECTED_LIMITS,
   VERDICTS,
+  base64DecodedBytes,
   candidateDetail,
   evolveRound,
   feedbackEvents,
@@ -486,6 +489,8 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     }
     if (p === '/api/budget' && req.method === 'GET') {
       return send(res, 200, {
+        scope: 'dev-and-history',
+        notice: '开发与历史花费（日常使用只统计 token，不统计金额）',
         summary: rt.ledger.summary(),
         peak: isDeepSeekPeak(),
         recent: rt.db.prepare('SELECT ts, category, kind, model, input_tokens, cache_read_tokens, output_tokens, peak, cost_cny, estimated FROM ledger ORDER BY id DESC LIMIT 50').all()
@@ -689,19 +694,47 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         const refs = (Array.isArray(b.refs) ? b.refs : []).map(String).slice(0, 20)
         const vision = modelInfo(ws.config, l.rs.model).vision
         const notes: string[] = []
+        let imageCount = 0
+        let imageTotalBytes = 0
+        /** Referenced project images that do not fit are passed by path instead of failing the message. */
+        const fitsImageLimits = (bytes: number) => bytes <= FILE_LIMITS.imageBytes &&
+          imageCount < FILE_LIMITS.messageImagesMax && imageTotalBytes + bytes <= FILE_LIMITS.messageImagesTotalBytes
+        const checkImageLimits = (bytes: number, label: string) => {
+          if (bytes > FILE_LIMITS.imageBytes) {
+            throw httpError(413, `图片 ${label} 超过单张上限 ${Math.round(FILE_LIMITS.imageBytes / MiB_BYTES)} MB（当前 ${(bytes / MiB_BYTES).toFixed(1)} MB），请先缩小后重试`)
+          }
+          imageCount++
+          if (imageCount > FILE_LIMITS.messageImagesMax) {
+            throw httpError(413, `单条消息最多附带 ${FILE_LIMITS.messageImagesMax} 张图片，请减少图片数量后重试`)
+          }
+          imageTotalBytes += bytes
+          if (imageTotalBytes > FILE_LIMITS.messageImagesTotalBytes) {
+            throw httpError(413, `单条消息图片总大小超过 ${Math.round(FILE_LIMITS.messageImagesTotalBytes / MiB_BYTES)} MB 上限，请减少或压缩图片后重试`)
+          }
+        }
+        const attached = new Set(attachments)
         for (const rel of [...attachments, ...refs]) {
           const f = inside(l.rs.cwd, rel)
           if (!existsSync(f) || !statSync(f).isFile()) continue
           const ext = extname(f).toLowerCase()
           const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : ''
-          if (mime && vision && statSync(f).size < 8 * 1024 * 1024) {
+          if (mime && vision) {
+            const size = statSync(f).size
+            if (!attached.has(rel) && !fitsImageLimits(size)) { notes.push(rel); continue }
+            checkImageLimits(size, rel)
             blocks.push({ type: 'image', mimeType: mime, source: `data:${mime};base64,${readFileSync(f).toString('base64')}`, filename: basename(f) })
             notes.push(`${rel}（图片，已附在消息里）`)
           } else notes.push(rel)
         }
         if (notes.length) text += `\n\n[${attachments.length ? '附件' : '引用文件'}] ${notes.join('；')}`
-        for (const img of (b.images ?? []) as { mimeType: string; data: string }[])
-          if (/^image\/(png|jpeg|gif|webp)$/.test(img.mimeType)) blocks.push({ type: 'image', mimeType: img.mimeType, source: `data:${img.mimeType};base64,${img.data}` })
+        for (const img of (Array.isArray(b.images) ? b.images : []) as { mimeType?: string; data?: string }[]) {
+          const mimeType = String(img?.mimeType ?? '')
+          if (/^image\/(png|jpeg|gif|webp)$/.test(mimeType)) {
+            const data = String(img?.data ?? '')
+            checkImageLimits(base64DecodedBytes(data), `第 ${imageCount + 1} 张`)
+            blocks.push({ type: 'image', mimeType, source: `data:${mimeType};base64,${data}` })
+          }
+        }
         if (l.meta.permission === 'plan') text = `${PLAN_MODE_NOTE}\n\n${text}`
         blocks.unshift({ type: 'text', text })
         const live0 = l

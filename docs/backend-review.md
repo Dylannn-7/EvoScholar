@@ -27,6 +27,9 @@
 | 17 低 | `packages/core/src/projects.ts:77`、`apps/server/src/server.ts:86`、`apps/server/src/server.ts:699` | 部分文件列表跟随链接，冷重启后的文件接口把项目会话误当草稿会话。附件同名候选耗尽时可覆盖最后一个文件。 | 文件列表跳过链接与特殊文件，冷会话从 SQLite 读 cwd。附件用独占创建，重名耗尽返回 409。补充冷会话下载测试，原有上传和资料库测试通过。 |
 | 18 高 | `packages/core/src/execution.ts`、`packages/core/src/docker-executor.ts`、`packages/core/src/staged-project.ts`、`packages/core/src/tools/exec.ts`、`packages/core/src/evolve/kernels.ts` | Shell、Python 和生成的技能以宿主账户运行。项目 cwd、静态正则和父进程回收无法约束任意代码访问宿主文件、网络或启动后代进程。 | 模型写的代码（`run_python`、`run_command`、`start_process`、锻造和导入技能脚本）改在离线 Linux 容器执行，见下文实施记录。内置检查脚本仍在宿主运行。没有容器时默认停用，可显式开启宿主模式。 |
 | 19 高 | `apps/server/src/local-auth.ts`、`apps/server/src/server.ts`、`apps/web/public/ui/api.js`、`apps/web/public/ui/stream.js`、`packages/core/src/gateway.ts`、`packages/core/src/tools/exec.ts` | 工作台只绑定回环，但任意本机进程能直接请求 API。自定义网关和模型访问本机测试服务扩大了内网访问面。 | 一次性配对换 Bearer 令牌，所有业务 API、SSE、预览和下载统一鉴权。自定义网关按 origin 授权并固定校验过的连接地址。`http_get` 只访问本会话登记的服务。见下文实施记录。 |
+| 20 中 | `packages/core/src/config.ts`、`packages/core/src/providers.ts`、`packages/core/src/gemini.ts`、`apps/server/src/routes-v2.ts`、`apps/web/public/ui/settings.js` | Azure 版本化部署 URL 缺少 `api-version` 配置通道；Gemini 2.5 与 Anthropic 预算型模型需要数值型思考预算，但需与现有字符串思考程度和自适应模型设置保持兼容。 | `ProviderOverride` 新增可选 `apiVersion`（校验 `/^\d{4}-\d{2}-\d{2}(-preview)?$/`），在 Azure 设置页「认证请求头」旁提供输入框，配置后对模型请求和 `/models` 追加 `?api-version=<值>`，未配置时保持原 URL。用户可见思考设置仍为字符串程度，core 内部通过统一映射表 `THINKING_BUDGET_TOKENS`（`low=1024`、`medium=4096`、`high=16384` 等）将 Gemini 2.5 等预算模型映射到 `thinkingConfig.thinkingBudget`、将 Anthropic 预算型 Messages 模型映射到 `thinking.budget_tokens`，并在请求时截断到 `< maxOutputTokens`；Gemini 3、Anthropic 自适应模型及 Chat Completions / Responses 字符串协议保持原请求格式不变。测试覆盖 `apiVersion` 追加与非法值拦截、数值预算映射与上限截断及字符串协议兼容。 |
+| 21 中 | `apps/cli/src/main.ts`、`apps/server/src/server.ts`、`packages/core/src/usage.ts` | 旧金额账本和 token 用量共用 SQLite，日常界面需明确只展示 token，历史金额保留为开发入口；上游 `ModelUsage` 无独立推理 token 字段。 | 按决策 A2，日常界面（工作台、设置、用量页与 `/api/usage`）只统计和展示 token，不返回金额字段；保留历史数据不做破坏性迁移，CLI `budget` / `/budget` 标题改为「开发与历史花费（日常使用只统计 token）」，`GET /api/budget` 返回 `scope: 'dev-and-history'` 与说明字段，离线演进日志保留开发预算花费。推理 token 因上游 harness 的 `ModelUsage` 仅含输入、输出和缓存计数且 harness 保持逐字节只读，本次不采集独立推理 token，等上游适配器统一支持后再接入。测试校验 `/api/budget` 说明字段与 `/api/usage` 不含金额字段。 |
+| 22 低 | `packages/core/src/limits.ts`、`packages/core/src/tools/fs.ts`、`apps/server/src/server.ts` | `read_file` 先整文件 `readFileSync` 再按行切片，超大日志或单行文本会放大内存；图片大小与单条消息图片数量、总大小缺少统一上限和 413 反馈。 | 新增共享常量 `FILE_LIMITS`（单次文本返回 256 KB、单张图片 10 MB、单条消息最多 8 张图片且合计不超过 20 MB）。`read_file` 仅用前 4 KB 探测二进制，文本改为 64 KB 分块流式按行读取，读够 `offset + limit` 行或达到 256 KB 即停止，超限按 UTF-8 字符边界截断并提示用 `offset` / `limit` 续读；超过 10 MB 的图片拒绝并提示先缩小。会话消息组装（`/api/sessions/:id/ask`）对附件图片和内联图片统一检查单张、张数和总字节数，超限返回 HTTP 413 与中文说明。测试覆盖大文件流式分页与 256 KB 截断提示、超大图片拒绝及单消息图片超量 413。 |
 | 23 高 | `packages/core/src/evolve/loop.ts`、`packages/core/src/evolve/store.ts`、`apps/server/src/server.ts` | 来源判断仅近似检查本回合工具名。模型依据先前回合、上传文件、导入技能、附件或压缩摘要提炼经验时，外部来源可能漏标，进而进入可信记录或自动晋级。 | 增加 `externalCallSource`、`externalContextSource` 与 `markExternal`，识别网页/文献工具、上传文件、导入技能和用户附件，并将外部来源标记持久化到 `evolve_log`（`externalSource`），跨越压缩与冷重启；会话分叉通过 `inheritExternalSource` 继承标记。测试覆盖跨回合、压缩窗口和会话重启后记忆保持 untrusted。 |
 | 24 中 | `packages/core/src/http-body.ts`、`packages/core/src/tools/literature.ts`、`packages/core/src/providers.ts`、`packages/core/src/tools/deepseek.ts` | 部分第三方网络读取先缓冲整个响应再截断，文献 429 固定退避不响应取消信号。陌生网关、超大元数据或取消中的重试会增加等待与内存占用。 | 新增有界读取 `readText` / `readJson`（检查声明大小与流式累积字节，超限取消流并报错），接入文献源、模型列表与 DeepSeek 工具；文献 429 退避观察 `AbortSignal` 并在出错或取消时释放未读响应体。测试覆盖声明/流式超限、非法 JSON 及取消退避。 |
 | 25 高 | `packages/core/src/tools/sandbox.ts`、`packages/core/src/projects.ts`、`packages/core/src/tools/fs.ts`、`packages/core/src/tools/exec.ts`、`packages/core/src/tools/figures.ts`、`packages/core/src/tools/writing.ts` | 选择 EvoScholar 源码目录或其上级目录作项目时，应用自身的配置、凭据和状态文件落在项目边界内；路径检查与实际打开之间也存在并发替换窗口。 | 新增 `appPrivate` 与 `modelPath`，模型文件入口统一校验并拒绝应用代码、配置、凭据与数据目录（保留草稿区与离线评测运行目录），列表遍历跳过私有子树，`addProject` 拒绝应用目录。宿主模式下，路径检查和实际打开之间的并发替换窗口仍然存在，因为 Node 没有可移植的 openat。默认的容器模式下，模型代码碰不到宿主项目树，所以这个窗口基本关闭。测试验证私有路径被拒绝及正常草稿/项目读写不受影响。 |
@@ -36,15 +39,11 @@
 
 ## 未修
 
-无（剩余 20、21、22 项列于下方「需要用户决定」）。
+无。
 
 ## 需要用户决定
 
-| 编号 / 严重程度 | 位置 | 问题和触发条件 | 待选方案 |
-| --- | --- | --- | --- |
-| 20 中 | `packages/core/src/providers.ts:157`、`packages/core/src/providers.ts:309`、`apps/server/src/routes-v2.ts:60` | Azure 已覆盖 `api-key` 请求头及现有路径形态。版本化的部署 URL 缺少 `api-version` 配置通道。Gemini、Anthropic 数值型思考预算与字符串 effort 共用的能力结构还未定。 | 明确 Azure 版本化部署的端点和版本字段。决定数值预算的类型、显示及已有字符串设置的兼容方式后，再加对应模拟测试。 |
-| 21 中 | `packages/core/src/usage.ts:22`、`apps/server/src/server.ts:412`、`apps/cli/src/main.ts:37` | 旧账本和 token 用量共用 SQLite。历史金额及查询仍可读取。上游统一 usage 类型只有输入、输出、缓存计数，无法直接报告独立的推理 token。 | 保留历史查询、降为开发入口或移除旧接口并迁移。若要补推理维度，决定是在 core 内采集有协议支持的字段，还是等上游适配器统一支持。 |
-| 22 低 | `packages/core/src/tools/fs.ts:84`、`apps/server/src/server.ts:609` | 文本工具先读全文件再分页，会话图片只限制单项。一组较大图片或超长日志会放大内存。 | 确定单文件和单回合总量及超限反馈，再统一 CLI、HTTP、工具与流式分页行为。 |
+无。
 
 ## 18、19 实施记录
 
@@ -78,7 +77,7 @@
 - 步数上限。genome 加载要求有效上限，候选上线不能提高父版本或现行版本上限。自检复用主回合的剩余步数。工作流子代理仍各自使用原有独立上限。
 - 持久化。沉淀写候选，激活要求待审批记录和显式操作。可执行技能转正、替换已生效的可执行技能及正式规则生效由人工操作触发。会话试用产物仍可落盘。
 - Untrusted。已标记的外部记忆保持试用或由用户显式处置，不能自动转为 active，也不能作为可信经验沉淀；会话级外部来源标记跨回合、跨压缩和跨重启保留，并由分叉会话继承。
-- 协议。离线套件已覆盖 Chat Completions、Messages、Responses、Gemini 四种协议的并行工具结果关联、长度截断丢弃未完成调用、混合附件（文本/图片/PDF）、非默认鉴权头以及 Gemini 多段思考签名跨回合回放。版本化 Azure 及真机 Windows 路径行为留待验证。
+- 协议。离线套件已覆盖 Chat Completions、Messages、Responses、Gemini 四种协议的并行工具结果关联、长度截断丢弃未完成调用、混合附件（文本/图片/PDF）、非默认鉴权头、Gemini 多段思考签名跨回合回放、Azure `api-version` 参数追加及数值型思考预算映射。真实 Azure 版本化部署端点及真机 Windows 路径行为留待实测。
 
 ## 验证
 
@@ -91,3 +90,5 @@
 - 第 26 项：构建通过，Node 87/88（真容器测试跳过），Python 45/45。真实模型 API 调用 0 次，未新增 npm 依赖。harness 源码与 `evoscholar.config.json` 未修改。
 - 第 27 项：构建通过，Node 92/93（真容器测试跳过），Python 45/45。真实模型 API 调用 0 次，未新增 npm 依赖。harness 源码与 `evoscholar.config.json` 未修改。
 - 复核修正（16、27）：鉴权头只在用户或预设明确指定时改写。Anthropic 兼容端点在默认情况下继续收到适配器原生的 `x-api-key`，避免已在使用的配置静默改为 `Authorization: Bearer`，并补了对应用例。Gemini 的文件输入能力恢复为显式开启，避免把 docx 等不受支持的附件发给上游。启动对账只隔离修改时间超过 60 秒的孤立候选和临时文件，避免与正在写入的另一宿主进程竞争，并补了用例。构建通过，Node 92/93（真容器测试跳过），Python 45/45。
+- 第 20、21、22 项：构建通过，Node 96/97（真容器测试跳过），Python 45/45。真实模型 API 调用 0 次，未新增 npm 依赖。harness 源码与 `evoscholar.config.json` 未修改。
+- 复核修正（20、22）：数值型思考预算只用于已知需要它的模型系列，即 Gemini 1.x / 2.x 和 Claude 3、Claude 4.0–4.5。其他型号（包括以后的新型号）保持原来的档位或自适应请求。Kimi、智谱、MiniMax、百炼等 Anthropic 兼容端点继续发送原来的 `{type:'enabled'}`。按单次请求的 `max_tokens` 截断后，如果预算不足 Anthropic 要求的 1024，则关闭思考，避免请求返回 400。消息里 `@` 引用的项目图片超出上限时改为只给路径，消息照常发送；附件超限仍返回 413。补了对应用例。构建通过，Node 96/97（真容器测试跳过），Python 45/45。

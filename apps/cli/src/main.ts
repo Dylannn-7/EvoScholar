@@ -36,6 +36,7 @@ function flag(args: string[], name: string): string | undefined {
 
 function printBudget(rt: Runtime) {
   const s = rt.ledger.summary()
+  console.log('开发与历史花费（日常使用只统计 token）')
   console.log(`总花费  ¥${s.totalCny.toFixed(4)} / ¥${s.capCny}`)
   if (s.reservedCny > 0) console.log(`待结算预留 ¥${s.reservedCny.toFixed(4)}`)
   for (const [k, v] of Object.entries(s.byCategory)) console.log(`  ${k.padEnd(10)} ¥${v.toFixed(4)} / ¥${s.categoryCaps[k as BudgetCategory]}`)
@@ -237,7 +238,7 @@ async function main() {
       console.log(`用法：evoscholar <命令>
   chat [--category usage|dev] [--session ID] [--cwd DIR] [--model P/M] [--effort E] [--yes]   交互式对话
   ask  <问题> [--category dev] [--cwd DIR] [--yes]                  单轮提问（--yes 自动允许执行代码）
-  budget                                                        查看 API 花费与预算
+  budget                                                        查看开发与历史花费（日常使用只统计 token）
   providers                                                     查看模型厂商与 Key 状态
   genome [ID]                                                   查看当前 harness genome
   eval [development|acceptance|all|L01,D02] [--genome ID] [--no-cache] [--category dev] [--cap 元]   跑评测集（默认计入 evolution 预算，每次 ≤ 每轮上限）

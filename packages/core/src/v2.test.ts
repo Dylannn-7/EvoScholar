@@ -356,3 +356,150 @@ test('testProviderConnection records sessionless token usage without cost', asyn
   assert.equal(bySession[0].inputTokens, 18)
   assert.equal(usageTotals(rt.db, 7).requests, 1)
 })
+
+test('Azure api-version appends query param only when configured and rejects invalid values', async (t) => {
+  const dir = tempWorkspace()
+  const old = process.env.AZURE_API_KEY
+  process.env.AZURE_API_KEY = 'az-ver-key'
+  t.after(() => {
+    if (old === undefined) delete process.env.AZURE_API_KEY
+    else process.env.AZURE_API_KEY = old
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const ws = openWorkspace(dir)
+  const base = 'https://res.openai.azure.com/openai/deployments/my-dep'
+  ws.settings.providers.azure = {
+    baseUrl: base,
+    gatewayApproval: { base, privateAccess: false },
+    credentialOrigin: 'https://res.openai.azure.com',
+    models: [{ id: 'my-dep' }]
+  }
+  saveSettings(ws)
+
+  const seenUrls: string[] = []
+  const okChat = async (url: string | URL | Request) => {
+    seenUrls.push(String(url))
+    return sse([
+      { choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      { choices: [], usage: { prompt_tokens: 5, completion_tokens: 1 } }
+    ], true)
+  }
+  const okModels = async (url: string | URL | Request) => {
+    seenUrls.push(String(url))
+    return Response.json({ data: [{ id: 'my-dep' }] })
+  }
+
+  // Without apiVersion: URL has no api-version query parameter.
+  assert.equal((await testProviderConnection(ws.config, 'azure/my-dep', { fetch: okChat as typeof fetch })).ok, true)
+  assert.equal((await fetchProviderModels(ws.config, 'azure', okModels as typeof fetch)).ok, true)
+  assert.equal(seenUrls[0], `${base}/chat/completions`)
+  assert.equal(seenUrls[1], `${base}/models`)
+
+  // With apiVersion: both chat and /models append ?api-version=<value>.
+  ws.settings.providers.azure.apiVersion = '2024-10-21'
+  saveSettings(ws)
+  assert.equal((await testProviderConnection(ws.config, 'azure/my-dep', { fetch: okChat as typeof fetch })).ok, true)
+  assert.equal((await fetchProviderModels(ws.config, 'azure', okModels as typeof fetch)).ok, true)
+  assert.equal(seenUrls[2], `${base}/chat/completions?api-version=2024-10-21`)
+  assert.equal(seenUrls[3], `${base}/models?api-version=2024-10-21`)
+
+  // Invalid apiVersion is rejected.
+  ws.settings.providers.azure.apiVersion = '2024-10-21&evil=1'
+  saveSettings(ws)
+  assert.throws(() => createModel(ws.config, 'azure/my-dep', { fetch: okChat as typeof fetch }), /API 版本格式/)
+  const badModels = await fetchProviderModels(ws.config, 'azure', okModels as typeof fetch)
+  assert.equal(badModels.ok, false)
+})
+
+test('numeric thinking budgets map from string efforts for Gemini and Messages while keeping string protocols unchanged', async (t) => {
+  const dir = tempWorkspace()
+  const keys = ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY'] as const
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
+  for (const k of keys) process.env[k] = 'fixture-key'
+  t.after(() => {
+    for (const k of keys) {
+      if (prev[k] === undefined) delete process.env[k]
+      else process.env[k] = prev[k]
+    }
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const ws = openWorkspace(dir)
+  ws.settings.providers.anthropic = {
+    models: [{ id: 'claude-opus-5-5', maxOutputTokens: 128000 }, { id: 'claude-sonnet-4-20250514', maxOutputTokens: 64000 },
+      { id: 'claude-opus-6', maxOutputTokens: 128000 }, { id: 'claude-sonnet-4-6', maxOutputTokens: 64000 }]
+  }
+  ws.settings.providers.kimi = { protocol: 'messages', apiKeyEnv: 'DEEPSEEK_API_KEY', models: [{ id: 'kimi-k2' }] }
+  saveSettings(ws)
+
+  const captureBody = async (ref: string, effort: string, maxOutputTokens: number, reply: Response) => {
+    let body: Record<string, any> | undefined
+    const model = createModel(ws.config, ref, {
+      effort,
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        body = JSON.parse(String(init?.body))
+        return reply
+      }) as typeof fetch
+    })
+    await drain(model.stream({
+      requestId: `eff-${ref}`, instructions: 'sys',
+      messages: [{ id: 'u1', role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      tools: [], maxOutputTokens
+    }, new AbortController().signal))
+    return body!
+  }
+
+  const gemReply = () => sse([{ candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 1 } }])
+  const msgReply = () => sse([
+    { type: 'message_start', message: { usage: { input_tokens: 5, output_tokens: 0 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+    { type: 'message_stop' }
+  ])
+  const respReply = () => sse([
+    { type: 'response.created', response: { id: 'r1' } },
+    { type: 'response.output_text.delta', delta: 'ok' },
+    { type: 'response.completed', response: { id: 'r1', usage: { input_tokens: 5, output_tokens: 1 } } }
+  ])
+  const chatReply = () => sse([
+    { choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    { choices: [], usage: { prompt_tokens: 5, completion_tokens: 1 } }
+  ], true)
+
+  // Gemini 2.5 maps string effort -> thinkingBudget and clamps to request.maxOutputTokens.
+  const g25Med = await captureBody('gemini/gemini-2.5-pro', 'medium', 8192, gemReply())
+  assert.equal(g25Med.generationConfig.thinkingConfig.thinkingBudget, 4096)
+  const g25Clamp = await captureBody('gemini/gemini-2.5-pro', 'high', 2048, gemReply())
+  assert.equal(g25Clamp.generationConfig.thinkingConfig.thinkingBudget, 2047)
+  // Gemini 3 keeps string thinkingLevel.
+  const g3High = await captureBody('gemini/gemini-3-pro-preview', 'high', 8192, gemReply())
+  assert.equal(g3High.generationConfig.thinkingConfig.thinkingLevel, 'high')
+
+  // Anthropic budget-based Claude 4 maps string effort -> thinking.budget_tokens and clamps to max_tokens.
+  const c4Low = await captureBody('anthropic/claude-sonnet-4-20250514', 'low', 8192, msgReply())
+  assert.deepEqual(c4Low.thinking, { type: 'enabled', budget_tokens: 1024 })
+  const c4Clamp = await captureBody('anthropic/claude-sonnet-4-20250514', 'high', 2048, msgReply())
+  assert.deepEqual(c4Clamp.thinking, { type: 'enabled', budget_tokens: 2047 })
+  // Anthropic adaptive Claude 5 keeps existing adaptive + output_config.effort format.
+  const c5High = await captureBody('anthropic/claude-opus-5-5', 'high', 8192, msgReply())
+  assert.deepEqual(c5High.thinking, { type: 'adaptive' })
+  assert.deepEqual(c5High.output_config, { effort: 'high' })
+  // Unknown or newer models keep the request shape that worked before; only known legacy families get budgets.
+  assert.equal((await captureBody('gemini/gemini-4-pro', 'high', 8192, gemReply())).generationConfig.thinkingConfig.thinkingLevel, 'high')
+  assert.deepEqual((await captureBody('anthropic/claude-opus-6', 'high', 8192, msgReply())).thinking, { type: 'adaptive' })
+  assert.deepEqual((await captureBody('anthropic/claude-sonnet-4-6', 'low', 8192, msgReply())).thinking, { type: 'adaptive' })
+  // Anthropic rejects budgets below 1024, so a tiny per-request max_tokens turns thinking off instead.
+  assert.deepEqual((await captureBody('anthropic/claude-sonnet-4-20250514', 'high', 1000, msgReply())).thinking, { type: 'disabled' })
+  // Anthropic-compatible vendor endpoints keep receiving the old shape without a budget.
+  assert.deepEqual((await captureBody('kimi/kimi-k2', 'high', 8192, msgReply())).thinking, { type: 'enabled' })
+
+  // String-effort protocols (Responses, Chat Completions) remain unchanged.
+  const oaResp = await captureBody('openai/gpt-5.4', 'medium', 4096, respReply())
+  assert.deepEqual(oaResp.reasoning, { effort: 'medium' })
+  const dsChat = await captureBody('deepseek/deepseek-flash', 'high', 4096, chatReply())
+  assert.equal(dsChat.reasoning_effort, 'high')
+  assert.deepEqual(dsChat.thinking, { type: 'enabled' })
+})
