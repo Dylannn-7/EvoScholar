@@ -49,7 +49,7 @@ export async function renderPlugins (root, arg) {
       const groups = [...new Set(st.styles.map((x) => x.group))]
       pl.innerHTML = `
         ${groups.map((g) => `<div class="section-t">${esc(g)}</div><div class="cards style-cards">${st.styles.filter((x) => x.group === g).map((x) => `<div class="pcard style ${st.current === x.id ? 'cur' : ''}" data-style="${esc(x.id)}">
-          <div class="sprev"><img loading="lazy" data-api-image="/api/styles/${esc(x.id)}/preview?v=2" alt="${esc(x.label)} 样图"></div>
+          <div class="sprev"><img loading="lazy" data-api-image="/api/styles/${esc(x.id)}/preview?v=2" data-fallback="安装 Python 环境后可生成样图" alt="${esc(x.label)} 样图"></div>
           <div class="top"><span class="nm">${esc(x.label)}</span><span class="badge">${esc(x.library)}</span>${st.current === x.id ? '<span class="badge accent">默认</span>' : ''}</div>
           <div class="ds">${esc(x.description)}</div>
           ${styleFacts(x.meta)}

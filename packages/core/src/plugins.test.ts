@@ -8,6 +8,7 @@ import {
   checkKernelCode, consolidate, fetchGithubSkill, installSkillFiles, kernelTools, openRuntime, openWorkspace, parseGithubUrl,
   promote, readFolder, readUserRules, readZip, recordCandidateVerification, setSkillEnabled, skillSource, verifyCandidateOffline,
   kernelIndex, readSkillText, setKernelEnabled, setSkillTrusted, skillDetail, skillUntrusted,
+  listStyles, stylePreview, PREVIEW_VERSION,
   type ExecutionBackend, type ToolEnv
 } from './index'
 
@@ -230,4 +231,17 @@ test('bundled and trusted skills do not taint memories; forged skills can be swi
   setKernelEnabled(rt, 'fit-peaks', false)
   assert.equal(kernelIndex(dir, ['fit-peaks']), '')
   assert.throws(() => setKernelEnabled(rt, 'third-party', false), /锻造/)
+})
+
+test('every figure style has a bundled preview for the current preview version', async (t) => {
+  const dir = ws()
+  cpSync(join(REPO, 'assets'), join(dir, 'assets'), { recursive: true })
+  const rt = openRuntime(openWorkspace(dir))
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  const styles = await listStyles(rt) as { id: string }[]
+  assert.ok(styles.length >= 20)
+  for (const s of styles) {
+    const path = await stylePreview(rt, s.id)
+    assert.equal(path, join(dir, 'assets', 'style-previews', PREVIEW_VERSION, `${s.id}.png`), `bundled preview for ${s.id}`)
+  }
 })
