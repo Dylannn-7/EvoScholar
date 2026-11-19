@@ -34,8 +34,13 @@ export function loadApiImages(root) {
   for (const img of root.querySelectorAll('img[data-api-image]')) {
     const path = img.dataset.apiImage
     delete img.dataset.apiImage
+    // An image that cannot load shows its data-fallback text instead of a broken icon.
+    const fallback = () => {
+      if (!img.dataset.fallback || !img.isConnected) return
+      img.replaceWith(Object.assign(document.createElement('span'), { className: 'img-fallback', textContent: img.dataset.fallback }))
+    }
     void apiFetch(path).then(async (res) => {
-      if (!res.ok || !res.headers.get('content-type')?.startsWith('image/')) return
+      if (!res.ok || !res.headers.get('content-type')?.startsWith('image/')) return fallback()
       const blob = await res.blob()
       if (!img.isConnected) return
       const url = URL.createObjectURL(blob)
@@ -47,7 +52,7 @@ export function loadApiImages(root) {
       img.addEventListener('load', clear)
       img.addEventListener('error', clear)
       img.src = url
-    }).catch(() => {})
+    }).catch(fallback)
   }
 }
 export const api = (path) => call(path)

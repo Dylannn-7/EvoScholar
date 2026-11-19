@@ -15,6 +15,7 @@ test('upgrades refresh app files and built-in skills without touching user evolu
   const appDir = join(base, 'app'), root = join(base, 'workspace')
   write(join(appDir, 'evoscholar.config.json'), '{"v":1}')
   write(join(appDir, 'python', 'old_helper.py'), 'v1')
+  mkdirSync(join(appDir, 'assets'), { recursive: true })
   write(join(appDir, 'prompts', 'system@v1.md'), 'v1')
   write(join(appDir, 'genomes', 'g-0001.yaml'), 'v1')
   write(join(appDir, 'skills', 'figure-style', 'SKILL.md'), 'v1')
@@ -55,4 +56,11 @@ test('upgrades refresh app files and built-in skills without touching user evolu
   assert.equal(read(join(root, 'skills', 'new-skill', 'SKILL.md')), 'new')
   assert.equal(read(join(root, 'skills', 'matplotlib', 'SKILL.md')), 'k-dense v2', 'app-shipped imports update too')
   assert.equal(read(join(root, '.app-version')), '2.0.0')
+
+  // A rebuilt installer with the same version adds new app files without overwriting.
+  write(join(appDir, 'assets', 'style-previews', 'v2', 'evo-default.png'), 'png')
+  write(join(root, 'python', 'new_helper.py'), 'local edit')
+  prepareWorkspace({ appDir, root, version: '2.0.0' })
+  assert.equal(read(join(root, 'assets', 'style-previews', 'v2', 'evo-default.png')), 'png')
+  assert.equal(read(join(root, 'python', 'new_helper.py')), 'local edit')
 })
