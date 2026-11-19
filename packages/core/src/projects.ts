@@ -1,7 +1,7 @@
 // Projects are local folders the user adds (decision A7). Sessions inside a project use the
 // folder as their working directory; outputs go to evoscholar-out/<session>/, uploads to
 // evoscholar-in/. Sessions without a project live in the built-in drafts area.
-import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -85,10 +85,10 @@ export function projectFiles(root: string, q = '', limit = 300): { path: string;
       if (n.startsWith('.') || SKIP.has(n)) continue
       const f = join(d, n)
       let st
-      try { st = statSync(f) } catch { continue }
+      try { st = lstatSync(f) } catch { continue }
       if (st.isDirectory()) { if (depth > 0) walk(f, depth - 1); continue }
       const rel = relative(root, f)
-      if (!needle || rel.toLowerCase().includes(needle)) out.push({ path: rel.split(sep).join('/'), size: st.size })
+      if (st.isFile() && (!needle || rel.toLowerCase().includes(needle))) out.push({ path: rel.split(sep).join('/'), size: st.size })
     }
   }
   walk(root, 6)

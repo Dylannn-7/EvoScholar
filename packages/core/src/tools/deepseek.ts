@@ -8,9 +8,10 @@ async function call(env: ToolEnv, kind: 'search' | 'fetch', body: Record<string,
   const key = process.env.DEEPSEEK_API_KEY
   if (!key) throw new Error('缺少 DEEPSEEK_API_KEY')
   signal.throwIfAborted()
-  const costUsd = toolCostUsd(`deepseek/${kind}`)
-  const reservation = env.ledger.reserve({
-    category: env.category(), kind, provider: 'deepseek', sessionId: env.sessionId, genomeId: env.genomeId,
+  const category = env.category()
+  const costUsd = category === 'usage' ? 0 : toolCostUsd(`deepseek/${kind}`)
+  const reservation = category === 'usage' ? undefined : env.ledger.reserve({
+    category, kind, provider: 'deepseek', sessionId: env.sessionId, genomeId: env.genomeId,
     units: 1, costUsd
   })
   let actual: { costUsd: number } | null | undefined
@@ -19,7 +20,8 @@ async function call(env: ToolEnv, kind: 'search' | 'fetch', body: Record<string,
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal
+      signal,
+      redirect: 'error'
     })
     if (!res.ok) {
       if (res.status < 500) actual = null
@@ -30,7 +32,7 @@ async function call(env: ToolEnv, kind: 'search' | 'fetch', body: Record<string,
     actual = billable ? { costUsd } : null
     return { ok: true as const, status: res.status, data }
   } finally {
-    reservation.settle(actual)
+    reservation?.settle(actual)
   }
 }
 

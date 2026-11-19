@@ -34,7 +34,7 @@ export const manuscriptCheck: ToolFactory = (env) => ({
     required: ['path'],
     additionalProperties: false
   },
-  scheduling: 'parallel',
+  scheduling: 'exclusive',
   validate: (i) => {
     const a = objectArgs(i, ['path', 'packs', 'variant', 'annotate', 'stage'], ['path']) as { packs?: unknown; variant?: unknown; stage?: unknown }
     if (a.stage !== undefined && a.stage !== 'submission' && a.stage !== 'camera-ready') throw new Error('stage 只能是 submission 或 camera-ready')
@@ -43,11 +43,11 @@ export const manuscriptCheck: ToolFactory = (env) => ({
     if (a.variant !== undefined && !/^[a-z0-9-]{1,30}$/.test(String(a.variant))) throw new Error('variant 只能是小写字母、数字和 -')
     return a as Json
   },
-  authorize: async () => true,
+  authorize: async (args, ctx) => env.approve?.('manuscript_check', `保存 ${(args as { path: string }).path} 的检查报告`, 'edit', ctx.signal) ?? true,
   async execute(args, c) {
     const a = args as { path: string; packs?: string[]; variant?: string; annotate?: boolean; stage?: string }
     const file = inside(env.cwd, a.path)
-    const out = join(env.cwd, '.evoscholar', 'checks', basename(file).replace(/\.[^.]+$/, ''))
+    const out = inside(env.cwd, join('.evoscholar', 'checks', basename(file).replace(/\.[^.]+$/, '')))
     mkdirSync(out, { recursive: true })
     const cli = ['check', file, '--out', out, ...(a.packs ?? ['common']).flatMap((p) => ['--pack', p]), ...(a.variant ? ['--variant', a.variant] : []), ...(a.annotate ? ['--annotate'] : []), ...(a.stage ? ['--stage', a.stage] : [])]
     const r = JSON.parse(await runPyHelper(env, 'evoscholar_write.py', cli, c.signal, 180)) as Report
@@ -81,15 +81,15 @@ export const checkFeedback: ToolFactory = (env) => ({
     if (a.note !== undefined && String(a.note).length > 500) throw new Error('note 太长')
     return a as Json
   },
-  authorize: async () => true,
+  authorize: async (_args, ctx) => env.approve?.('check_feedback', '记录稿件检查反馈', 'edit', ctx.signal) ?? true,
   async execute(args) {
     const a = args as { ids: string[]; verdict: string; note?: string; report?: string }
     let file: string | undefined
     if (a.report) file = inside(env.cwd, a.report)
     else {
-      const dir = join(env.cwd, '.evoscholar', 'checks')
+      const dir = inside(env.cwd, join('.evoscholar', 'checks'))
       const cands = existsSync(dir) ? readdirSync(dir).map((d) => join(dir, d, 'report.json')).filter((f) => existsSync(f)) : []
-      file = cands.sort((x, y) => statSync(y).mtimeMs - statSync(x).mtimeMs)[0]
+      file = cands.map((f) => inside(env.cwd, f)).sort((x, y) => statSync(y).mtimeMs - statSync(x).mtimeMs)[0]
     }
     if (!file || !existsSync(file)) return textResult('没有找到稿件检查报告，先运行 manuscript_check', true)
     const { events, missing } = feedbackEvents(readCheckReport(file), a.ids, VERDICTS[a.verdict], a.note)

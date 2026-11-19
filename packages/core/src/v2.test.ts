@@ -167,7 +167,7 @@ test('permission modes gate edits and execution like Claude Code', async () => {
   mode = 'bypass'
   assert.equal(await gate('run_python', 'x', 'exec'), true)
   assert.equal(asked.length, 3)
-  assert.equal(permissionGate(() => 'ask', undefined), undefined, 'unattended runs keep auto-approve')
+  assert.equal(await permissionGate(() => 'ask')?.('write_file', 'fixture', 'edit'), true, 'unattended runs keep auto-approve')
 })
 
 test('model choice: session pick, then user defaults, then legacy genome roles', () => {
@@ -232,4 +232,29 @@ test('shell commands use PowerShell on Windows and /bin/sh elsewhere', () => {
   if (process.platform === 'win32') assert.equal(cmd, 'powershell.exe')
   else assert.deepEqual([cmd, args], ['/bin/sh', ['-c', 'echo hi']])
   assert.equal(typeof createModel, 'function')
+})
+
+test('plan mode blocks side effects in unattended sessions', async () => {
+  const gate = permissionGate(() => 'plan')
+  assert.equal(await gate?.('write_file', 'fixture', 'edit'), false)
+  assert.equal(await gate?.('run_command', 'fixture', 'exec'), false)
+})
+
+test('Gemini requires a terminal result rather than treating a truncated stream as complete', async () => {
+  const model = createGeminiModel({
+    baseUrl: 'https://gemini.test/v1beta', model: 'fixture', apiKey: () => 'fixture-key',
+    fetch: async () => sse([{ candidates: [{ content: { parts: [{ text: 'partial' }] } }] }])
+  })
+  await assert.rejects(drain(model.stream({
+    requestId: 'fixture', instructions: '', messages: [], tools: [], maxOutputTokens: 10
+  }, new AbortController().signal)), /结束状态/)
+  assert.deepEqual(parseModelList({ models: [null, 5, { name: 'models/fixture' }] }, 'gemini'), [{ id: 'fixture' }])
+})
+
+test('evolution approval still calls the user in completely permissive mode', async () => {
+  let asked = 0
+  const gate = permissionGate(() => 'bypass', async () => { asked++; return false })
+  assert.equal(await gate?.('run_skill', 'fixture', 'evolution'), false)
+  assert.equal(asked, 1)
+  assert.equal(await permissionGate(() => 'bypass')?.('run_skill', 'fixture', 'evolution'), false)
 })

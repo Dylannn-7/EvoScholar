@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, realpathSync, mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
@@ -16,6 +16,7 @@ import { openDb, type Db } from './db'
 import { GenomeRepo, PROTECTED_LIMITS, modelFor, stageRole, type HarnessGenome } from './genome'
 import { meterModel } from './metering'
 import { createModel, defaultModelRef, modelInfo } from './providers'
+import { inside } from './tools/sandbox'
 import { permissionGate } from './permissions'
 import type { PermissionMode } from './config'
 import { TOOL_FACTORIES, buildTools, stopAllProcesses, type ToolEnv } from './tools'
@@ -89,18 +90,21 @@ export async function openResearchSession(
   })
   const recorder = new TrajectoryRecorder(rt.db, sessionId, genome.id, { category, title: opts.title, stage: opts.stage })
   const info = modelInfo(rt.ws.config, ref)
-  const enforceCap = category !== 'usage' || !!rt.ws.config.budget.enforceUsageCap
+  const enforceCap = category !== 'usage'
   const model = meterModel(
     createModel(rt.ws.config, ref, { parameters: genome.routing.parameters?.[ref], effort: opts.effort }),
     { ledger: rt.ledger, modelRef: ref, contextWindow: info.contextWindow, imageInputTokenCap: info.imageInputTokenCap,
-      enforceCap, category: () => category, sessionId, genomeId: genome.id, onWarning: opts.onWarning }
+      category: () => category, sessionId, genomeId: genome.id, onWarning: opts.onWarning }
   )
-  const cwd = resolve(opts.cwd ?? join(rt.ws.dataDir, 'projects', sessionId))
-  mkdirSync(join(cwd, '.evoscholar'), { recursive: true })
-  const traceFile = join(cwd, '.evoscholar', 'trace.jsonl')
+  const workDir = resolve(opts.cwd ?? join(rt.ws.dataDir, 'projects', sessionId))
+  mkdirSync(workDir, { recursive: true })
+  const cwd = realpathSync(workDir)
+  const tracePath = join('.evoscholar', 'trace.jsonl')
+  mkdirSync(inside(cwd, '.evoscholar'), { recursive: true })
+  inside(cwd, tracePath)
   const trace = (e: Record<string, unknown>) => {
     const row = { ts: new Date().toISOString(), session: sessionId, genome: genome.id, ...e }
-    appendFileSync(traceFile, JSON.stringify(row) + '\n')
+    appendFileSync(inside(cwd, tracePath), JSON.stringify(row) + '\n')
     recorder.hostEvent(row)
   }
   const approve = permissionGate(opts.permission ?? (() => 'ask'), opts.approve)
@@ -149,7 +153,12 @@ export async function openResearchSession(
   const inputBudget = enforceCap
     ? Math.min(b.contextBudgetTokens ?? 120_000, PROTECTED_LIMITS.contextBudgetTokens, info.contextWindow - maxOutputTokens)
     : Math.max(16_384, info.contextWindow - Math.min(maxOutputTokens, Math.floor(info.contextWindow * 0.4)))
+  let remainingSteps = b.maxSteps
   const session = await openAgentSession({
+    admit: () => {
+      if (remainingSteps <= 0) throw new Error('已达到本回合步数上限')
+      remainingSteps--
+    },
     sessionId,
     model: workflow?.model ?? model,
     tools: initial.tools,
@@ -175,6 +184,7 @@ export async function openResearchSession(
       opts.onEvent?.(e)
     }
   })
+  let asking = false
   return {
     id: sessionId,
     cwd,
@@ -186,11 +196,14 @@ export async function openResearchSession(
     evolve: loop,
     async ask(input) {
       const blocks: ContentBlock[] = typeof input === 'string' ? [{ type: 'text', text: input }] : input
-      recorder.beginTurn(textOf(blocks))
+      if (asking) throw new Error('上一轮还在运行')
+      asking = true
+      remainingSteps = b.maxSteps
       let status: RunStatus = 'failed'
       let answer = ''
       try {
-        if (opts.outputDir) try { mkdirSync(join(cwd, opts.outputDir), { recursive: true }) } catch {}
+        recorder.beginTurn(textOf(blocks))
+        if (opts.outputDir) try { mkdirSync(inside(cwd, opts.outputDir), { recursive: true }) } catch {}
         loop?.beginTurn(textOf(blocks))
         const next = assemble()
         if (next.version !== configured) {
@@ -198,15 +211,17 @@ export async function openResearchSession(
           configured = next.version
         }
         status = await session.prompt(blocks)
-        const check = status === 'complete' ? loop?.selfCheck() : undefined
+        const check = status === 'complete' && remainingSteps > 0 ? loop?.selfCheck() : undefined
         if (check) status = await session.prompt([{ type: 'text', text: check }])
         const snap = await session.snapshot()
         const last = [...snap.messages].reverse().find((m) => m.role === 'assistant')
         answer = textOf(last?.content)
         return { status, answer }
       } finally {
-        recorder.endTurn(status, answer)
-        try { loop?.finishTurn(status) } catch {}
+        try {
+          recorder.endTurn(status, answer)
+          try { loop?.finishTurn(status) } catch {}
+        } finally { asking = false }
       }
     },
     async dispose() {

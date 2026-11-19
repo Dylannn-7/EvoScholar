@@ -8,7 +8,6 @@ export type MeterContext = {
   modelRef: string
   contextWindow?: number
   imageInputTokenCap?: number
-  enforceCap?: boolean
   category: () => BudgetCategory
   sessionId?: string
   genomeId?: string
@@ -37,8 +36,7 @@ function reserveInputTokens(request: ModelRequest, { contextWindow = Infinity, i
 }
 
 /**
- * Wraps any AgentModel so every request is budget-checked before it is sent and every response
- * (including failed streams that reported usage) is written to the ledger.
+ * Records token usage for product traffic and reserves costs before development and evaluation calls.
  */
 export function meterModel(inner: AgentModel, ctx: MeterContext): AgentModel {
   const [provider] = ctx.modelRef.split('/')
@@ -58,7 +56,7 @@ export function meterModel(inner: AgentModel, ctx: MeterContext): AgentModel {
     async *stream(request, signal) {
       signal.throwIfAborted()
       const cat = ctx.category()
-      if (cat === 'usage' && !ctx.enforceCap) {
+      if (cat === 'usage') {
         let usage: ModelUsage | undefined
         try {
           for await (const event of inner.stream(request, signal)) {
@@ -66,7 +64,11 @@ export function meterModel(inner: AgentModel, ctx: MeterContext): AgentModel {
             yield event
           }
         } finally {
-          if (usage) ctx.ledger.record({ category: cat, kind: 'model', provider, model: ctx.modelRef, sessionId: ctx.sessionId, genomeId: ctx.genomeId, ...actual(usage) })
+          if (usage) ctx.ledger.record({
+            category: cat, kind: 'model', provider, model: ctx.modelRef, sessionId: ctx.sessionId,
+            genomeId: ctx.genomeId, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadTokens, costUsd: 0
+          })
         }
         return
       }

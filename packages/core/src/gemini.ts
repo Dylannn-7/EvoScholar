@@ -66,11 +66,15 @@ async function* sse(body: ReadableStream<Uint8Array>, signal: AbortSignal): Asyn
   const reader = body.getReader()
   const dec = new TextDecoder()
   let buf = ''
+  let ended = false
+  const cancel = () => { void reader.cancel().catch(() => {}) }
+  signal.addEventListener('abort', cancel, { once: true })
   try {
     for (;;) {
       signal.throwIfAborted()
       const { value, done } = await reader.read()
-      if (done) break
+      signal.throwIfAborted()
+      if (done) { ended = true; break }
       buf += dec.decode(value, { stream: true })
       let i: number
       while ((i = buf.search(/\r?\n\r?\n/)) >= 0) {
@@ -81,6 +85,8 @@ async function* sse(body: ReadableStream<Uint8Array>, signal: AbortSignal): Asyn
       }
     }
   } finally {
+    signal.removeEventListener('abort', cancel)
+    if (!ended) cancel()
     reader.releaseLock()
   }
 }
@@ -121,8 +127,8 @@ export function createGeminiModel(input: GeminiOptions): AgentModel {
         body: JSON.stringify(body)
       })
       if (!res.ok || !res.body) {
-        const detail = await res.text().catch(() => '')
-        throw new Error(`Gemini HTTP ${res.status}${detail ? `: ${detail.slice(0, 300)}` : ''}`)
+        await res.body?.cancel().catch(() => {})
+        throw new Error(`Gemini HTTP ${res.status}`)
       }
       let text = ''
       let finish = ''
@@ -157,6 +163,8 @@ export function createGeminiModel(input: GeminiOptions): AgentModel {
           ...(u.cachedContentTokenCount ? { cacheReadTokens: u.cachedContentTokenCount } : {})
         }
       }
+      if (finish !== 'STOP' && finish !== 'MAX_TOKENS') throw new Error('Gemini 未返回可完成回合的结束状态')
+      if (finish === 'MAX_TOKENS') calls.length = 0
       yield {
         type: 'finish',
         content: text ? [{ type: 'text', text }] : [],
