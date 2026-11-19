@@ -6,7 +6,7 @@ import { CONFIG } from './config.js'
 import { Fluid } from './fluid.js'
 import { Particles } from './particles.js'
 
-const NOOP = { setState () {}, setDim () {}, setBudgetLevel () {}, reform () {}, setQuality () {}, setMouseStrength () {}, setPaused () {}, quality: 'off', dispose () {} }
+const NOOP = { setState () {}, setDim () {}, setBudgetLevel () {}, reform () {}, setQuality () {}, setMouseStrength () {}, setPaused () {}, setShape () {}, pulse () {}, setFocus () {}, quality: 'off', dispose () {} }
 const QKEY = 'evoscholar.fxQuality'
 
 function autoQuality () {
@@ -63,6 +63,16 @@ export function initFx (canvas) {
   let dimTarget = 1
   let mouseTarget = C.particles.mouseStrength
   let budget = 0
+  // chain-of-thought shape and transient effects
+  let shapeId = 0
+  let morph = 0
+  let morphTarget = 0
+  let contractUntil = 0
+  let contract = 0
+  const pulse = { t0: -1e9, ms: 1, color: new THREE.Color() }
+  let focusX = 0.6
+  const ndc = new THREE.Vector3()
+  const ray = new THREE.Vector3()
 
   // ---- input
   const mouse = { x: innerWidth / 2, y: innerHeight / 2, px: null, py: null, last: 0 }
@@ -118,7 +128,9 @@ export function initFx (canvas) {
     const hz = Math.min(C.maxHZ, (dt / 1000) * 60 || 1)
     simTime += dt / 1000
     const k = 1 - Math.pow(1 - 0.06, hz)
-    for (const key of ['curlMul', 'purpleExp', 'twinkle', 'purpleTint', 'breathe']) cur[key] += (target[key] - cur[key]) * k
+    for (const key of ['curlMul', 'purpleExp', 'twinkle', 'purpleTint', 'breathe', 'swirl', 'blink']) cur[key] += ((target[key] ?? 0) - (cur[key] ?? 0)) * k
+    morph += (morphTarget - morph) * (1 - Math.pow(1 - 0.035, hz))
+    contract += ((now < contractUntil ? 1 : 0) - contract) * (1 - Math.pow(1 - 0.12, hz))
     cur.dim += (dimTarget - cur.dim) * Math.min(1, dt / C.dimMs * 3)
     cur.mouse += (mouseTarget - cur.mouse) * k
 
@@ -134,10 +146,25 @@ export function initFx (canvas) {
     feedMouse(now)
     fluid.step()
     particles.simMat.uniforms.uCurlMul.value = cur.curlMul
+    particles.simMat.uniforms.uSwirlMul.value = cur.swirl ?? 1
+    particles.simMat.uniforms.uShape.value = shapeId
+    particles.simMat.uniforms.uMorph.value = morph
+    particles.simMat.uniforms.uContract.value = contract
+    // shapes centre on the conversation column: unproject its screen centre onto the group's depth plane
+    ndc.set(focusX * 2 - 1, 0.08, 0.5).unproject(camera)
+    ray.copy(ndc).sub(camera.position).normalize()
+    const tHit = (group.position.z - camera.position.z) / ray.z
+    particles.simMat.uniforms.uCenter.value.copy(camera.position).addScaledVector(ray, tHit)
+    particles.pointMat.uniforms.uShapeDim.value = 1 - 0.3 * morph
     particles.simMat.uniforms.uMouse.value = cur.mouse
     particles.step({ time: simTime, hz, fluid, camera, group })
     const pu = particles.pointMat.uniforms
-    pu.uDim.value = cur.dim
+    const blink = (cur.blink ?? 0) * (0.5 + 0.5 * Math.sin(simTime * 2.4))
+    pu.uDim.value = cur.dim * (1 - 0.35 * blink)
+    const pt = (now - pulse.t0) / pulse.ms
+    pu.uPulseR.value = 0.02 + pt * 0.6
+    pu.uPulseA.value = pt >= 0 && pt < 1 ? Math.sin(pt * Math.PI) * 0.9 : 0
+    pu.uPulseColor.value.copy(pulse.color)
     pu.uPurpleExp.value = cur.purpleExp
     pu.uTwinkle.value = cur.twinkle
     pu.uPurpleTint.value = cur.purpleTint
@@ -189,6 +216,23 @@ export function initFx (canvas) {
       }
     },
     reform () { particles.reform() },
+    /** Horizontal screen position (0..1) the shapes centre on, e.g. the conversation column. */
+    setFocus (x) { focusX = Math.min(0.9, Math.max(0.1, x)) },
+    /** Morph toward a chain-of-thought shape: ring | constellation | curve | stripes. */
+    setShape (name) {
+      const id = C.shapes[name] ?? 0
+      if (id === 0) { morphTarget = 0; return }
+      shapeId = id
+      morphTarget = 1
+    },
+    /** Transient effects: reflect (draw in, then re-form), evolve (purple ripple), deliver (white ripple). */
+    pulse (kind) {
+      const now = performance.now()
+      if (kind === 'reflect') { contractUntil = now + C.pulse.reflectMs; return }
+      pulse.t0 = now
+      pulse.ms = kind === 'deliver' ? C.pulse.deliverMs : C.pulse.evolveMs
+      pulse.color.setRGB(...(kind === 'deliver' ? C.pulse.deliverColor : C.pulse.evolveColor))
+    },
     setQuality (q) { try { localStorage.setItem(QKEY, q) } catch {} },
     dispose () { life.abort(); running = false; cancelAnimationFrame(raf); particles.dispose(); fluid.dispose(); renderer.dispose() }
   }

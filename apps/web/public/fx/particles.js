@@ -11,7 +11,46 @@ float smin(float a, float b, float k) { float h = clamp(0.5 + 0.5 * (b - a) / k,
 float angDist(float a, float b) { float d = mod(a - b + 3.14159265, 6.2831853) - 3.14159265; return abs(d); }
 const float SHAPE_SCALE = 1.2;   // the unit design below drawn at 1/SHAPE_SCALE: a large ring that fills the view
 mat2 rot2(float t) { return mat2(cos(t), -sin(t), sin(t), cos(t)); }
-float sdfShape(vec3 p) {
+// Chain-of-thought shapes, defined in WORLD space facing the camera and centred on the conversation
+// (uCenter): 1 literature = star clusters joined by filaments, 2 data / figures = a band along a measured
+// curve with markers, 3 writing = lines of text. Interiors are filled so particles spread, not pile up.
+uniform float uShape; uniform float uMorph; uniform vec3 uCenter;
+float sdBox(vec3 p, vec3 b) { vec3 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0); }
+float sdSeg(vec3 p, vec3 a, vec3 b, float r) { vec3 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h) - r; }
+vec3 star(float i) { return vec3(sin(i * 2.39 + 0.3) * 1.55, cos(i * 1.71 + 0.9) * 0.82, sin(i * 3.1) * 0.15); }
+float shapeConstellation(vec3 p) {
+  float d = 1e5;
+  for (int i = 0; i < 14; i++) {
+    float fi = float(i);
+    d = min(d, length(p - star(fi)) - (0.07 + 0.12 * fract(fi * 0.618)));
+    if (i > 0 && mod(fi, 4.0) != 0.0) d = min(d, sdSeg(p, star(fi - 1.0), star(fi), 0.018));
+  }
+  return d;
+}
+float curveY(float x) { return 0.42 * sin(x * 1.9 + 0.6) + 0.12 * sin(x * 5.3) - 0.05; }
+float shapeCurve(vec3 p) {
+  float x = clamp(p.x, -1.7, 1.7);
+  float d = length(vec2(p.y - curveY(x), p.z * 0.6)) - 0.06;
+  d = max(d, 0.0) + max(abs(p.x) - 1.7, 0.0);
+  for (int i = 0; i < 9; i++) { float xi = -1.6 + float(i) * 0.4; d = min(d, length(p - vec3(xi, curveY(xi), 0.0)) - 0.11); }
+  return d;
+}
+float shapeStripes(vec3 p) {
+  float d = 1e5;
+  for (int i = 0; i < 7; i++) {
+    float fi = float(i);
+    float len = 1.55 - 0.6 * fract(fi * 0.731 + 0.2) - (i == 6 ? 0.55 : 0.0);
+    d = min(d, sdBox(p - vec3(-1.6 + len, 0.78 - fi * 0.26, 0.0), vec3(len, 0.045, 0.08)));
+  }
+  return d;
+}
+float altShape(vec3 pObj) {
+  const float S = 1.7;   // shapes span about three quarters of the conversation area
+  vec3 w = ((uModel * vec4(pObj, 1.0)).xyz - uCenter) / S;
+  float d = uShape < 1.5 ? shapeConstellation(w) : uShape < 2.5 ? shapeCurve(w) : shapeStripes(w);
+  return max(d, 0.0) * S / 5.0;   // filled volume; back to object units (group scale ~5)
+}
+float sdfRing(vec3 p) {
   p.z = sqrt(p.z * p.z + 0.0215) - sqrt(0.012);
   p = qrot(vec4(0.5, 0.5, 0.5, 0.5), p);
   if (length(p) > 0.8) return length(p) - 0.7;
@@ -27,6 +66,10 @@ float sdfShape(vec3 p) {
   float lobe1 = length(p - vec3(0.40 * cos(-0.9), 0.40 * sin(-0.9), 0.04)) - 0.19;
   float lobe2 = length(p - vec3(0.42 * cos(0.95), 0.42 * sin(0.95), -0.05)) - 0.15;
   return smin(smin(ring, lobe1, 0.16), lobe2, 0.14) / SHAPE_SCALE;
+}
+float sdfShape(vec3 p) {
+  float d = sdfRing(p);
+  return uMorph > 0.001 ? mix(d, altShape(p), uMorph) : d;
 }
 vec3 sdfNormal(vec3 p) {
   const vec2 e = vec2(0.001, 0.0);
@@ -55,6 +98,7 @@ varying vec2 vUv;
 uniform sampler2D uPos; uniform sampler2D uOrigin; uniform sampler2D uFluidVel; uniform sampler2D uFluidDen;
 uniform float uTime; uniform float uHZ; uniform float uCurlMul; uniform float uMouse;
 uniform float uCurlScale; uniform float uCurlTime; uniform float uCurlSpeed; uniform float uSwirl; uniform float uPull; uniform float uSpring;
+uniform float uContract; uniform float uSwirlMul;
 uniform mat4 uProj; uniform mat4 uModel; uniform mat3 uCamRot;
 ${SDF}
 void main () {
@@ -65,8 +109,9 @@ void main () {
   pos += curlNoise(pos * 0.1 * uCurlScale + uTime * 0.1 * uCurlTime) * uCurlSpeed * 0.0002 * uHZ * uCurlMul;
   vec3 g = sdfNormal(pos);
   float d = sdfShape(pos);
-  pos += cross(normalize(pos + 1e-5), normalize(g + 1e-5)) * uSwirl;
-  pos += -g * d * uPull;
+  pos += cross(normalize(pos + 1e-5), normalize(g + 1e-5)) * uSwirl * uSwirlMul;
+  pos += -g * d * uPull * (1.0 - 0.85 * uContract);
+  pos *= 1.0 - uContract * 0.045 * uHZ;   // reflection: the cloud draws in, then re-forms when released
   pos += (origin - pos) * uSpring * uHZ;
   vec4 clip = uProj * uModel * vec4(pos, 1.0);
   vec2 suv = clip.xy / clip.w * 0.5 + 0.5;
@@ -81,8 +126,9 @@ void main () {
 
 const POINT_VERT = /* glsl */ `
 uniform sampler2D uPos; uniform float uDPR; uniform float uSize; uniform float uBreathe; uniform float uTime;
+uniform float uPulseR; uniform float uPulseA;
 attribute vec4 random;
-varying vec4 vRandom; varying float vScale;
+varying vec4 vRandom; varying float vScale; varying float vPulse;
 void main () {
   vec3 p = texture2D(uPos, position.xy).xyz;
   p *= mix(1.0, 1.5, pow(random.y, 150.0));
@@ -92,14 +138,16 @@ void main () {
   float scale = smoothstep(3.0, 15.0, dist) * mix(0.5, 1.0, random.z);
   gl_PointSize = uSize * uDPR * 2.0 * scale * (1000.0 / dist) / 18.0;
   vScale = scale; vRandom = random;
+  vPulse = uPulseA * exp(-pow((length(p) - uPulseR) * 6.0, 2.0));   // evolution ripple travelling outward
+  gl_PointSize *= 1.0 + vPulse * 0.5;
   gl_Position = projectionMatrix * mv;
 }`
 
 const POINT_FRAG = /* glsl */ `
 precision highp float;
 uniform sampler2D uMatcap; uniform float uTime; uniform float uDim; uniform float uPurpleExp; uniform float uTwinkle; uniform float uPurpleTint;
-uniform vec3 uPurple; uniform vec3 uTint;
-varying vec4 vRandom; varying float vScale;
+uniform vec3 uPurple; uniform vec3 uTint; uniform vec3 uPulseColor; uniform float uShapeDim;
+varying vec4 vRandom; varying float vScale; varying float vPulse;
 vec3 softLight(vec3 a, vec3 b) { return mix(2.0 * a * b + a * a * (1.0 - 2.0 * b), sqrt(a) * (2.0 * b - 1.0) + 2.0 * a * (1.0 - b), step(0.5, b)); }
 vec3 overlay(vec3 a, vec3 b) { return mix(2.0 * a * b, 1.0 - 2.0 * (1.0 - a) * (1.0 - b), step(0.5, a)); }
 void main () {
@@ -114,7 +162,8 @@ void main () {
   col = mix(col, softLight(col, m), 0.8);
   col = mix(col, overlay(col, m), 0.2);
   col = mix(col, col * uPurple * 1.6, uPurpleTint);
-  gl_FragColor = vec4(col * uDim, 1.0);
+  col = mix(col, uPulseColor * (0.12 + 0.3 * vRandom.z), clamp(vPulse, 0.0, 1.0));   // tinted, not blown out under additive blending
+  gl_FragColor = vec4(col * uDim * uShapeDim, 1.0);
 }`
 
 function matcap () {
@@ -159,6 +208,7 @@ export class Particles {
         uTime: { value: 0 }, uHZ: { value: 1 }, uCurlMul: { value: 1 }, uMouse: { value: p.mouseStrength },
         uCurlScale: { value: p.curlNoiseScale }, uCurlTime: { value: p.curlTimeScale }, uCurlSpeed: { value: p.curlNoiseSpeed },
         uSwirl: { value: p.swirl }, uPull: { value: p.surfacePull }, uSpring: { value: p.originSpring },
+        uShape: { value: 0 }, uMorph: { value: 0 }, uContract: { value: 0 }, uSwirlMul: { value: 1 }, uCenter: { value: new THREE.Vector3(0.4, 0.1, -1) },
         uProj: { value: new THREE.Matrix4() }, uModel: { value: new THREE.Matrix4() }, uCamRot: { value: new THREE.Matrix3() }
       }
     })
@@ -186,7 +236,8 @@ export class Particles {
       uniforms: {
         uPos: { value: this.read.texture }, uDPR: { value: Math.min(window.devicePixelRatio || 1, 2) }, uSize: { value: p.pointSize * 18 * p.sizeMul },
         uTime: { value: 0 }, uMatcap: { value: matcap() }, uDim: { value: 1 }, uPurpleExp: { value: 100 }, uTwinkle: { value: 1 },
-        uPurpleTint: { value: 0 }, uBreathe: { value: 0 }, uPurple: { value: new THREE.Color(...p.purple) }, uTint: { value: new THREE.Color(1, 1, 1) }
+        uPurpleTint: { value: 0 }, uBreathe: { value: 0 }, uPurple: { value: new THREE.Color(...p.purple) }, uTint: { value: new THREE.Color(1, 1, 1) },
+        uPulseR: { value: 0 }, uPulseA: { value: 0 }, uPulseColor: { value: new THREE.Color(...p.purple) }, uShapeDim: { value: 1 }
       }
     })
     this.points = new THREE.Points(geo, this.pointMat)

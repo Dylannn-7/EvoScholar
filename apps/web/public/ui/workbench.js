@@ -438,11 +438,48 @@ export function initWorkbench () {
     W.live = { el, text: '', raf: 0 }
     return W.live
   }
+  // Chain of thought -> particles (P5): each kind of work has its own shape; evolution has its own motion.
+  const LIT = /^(lit_|web_|pdf_)/
+  const DATA = new Set(['run_python', 'run_skill', 'figure_check', 'forge_skill', 'start_process'])
+  const WRITE = new Set(['manuscript_check', 'check_feedback', 'propose_rule'])
+  const EVOLVE_TOOLS = new Set(['note_lesson', 'tune_harness', 'patch_skill', 'forge_skill', 'propose_rule'])
+  function shapeFor (name, args) {
+    if (LIT.test(name)) return 'constellation'
+    if (DATA.has(name)) return 'curve'
+    if (WRITE.has(name)) return 'stripes'
+    const path = String(args?.path || '')
+    if (/\.(tex|md|docx?|txt|bib|rtf)$/i.test(path)) return 'stripes'
+    if (/\.(csv|tsv|xlsx?|json|npy|mat|png|pdf|svg|jpe?g)$/i.test(path)) return 'curve'
+    return null
+  }
+  function particlesFor (e) {
+    switch (e.type) {
+      case 'reasoning': fx.call('setState', 'thinking'); break
+      case 'text': fx.call('setState', 'thinking'); fx.call('setShape', 'ring'); break
+      case 'tool-call': {
+        fx.call('setState', 'tool')
+        if (e.name === 'reflect') fx.call('pulse', 'reflect')
+        else if (EVOLVE_TOOLS.has(e.name)) fx.call('pulse', 'evolve')
+        const sh = shapeFor(e.name, e.arguments)
+        if (sh) fx.call('setShape', sh)
+        break
+      }
+      case 'tool-result': fx.call('setState', 'thinking'); break
+      case 'approval': case 'choice': fx.call('setState', 'approval'); break
+      case 'approval-resolved': case 'choice-resolved': fx.call('setState', 'thinking'); break
+      case 'evolve':
+        if (e.kind === 'reflect') fx.call('pulse', 'reflect')
+        else if (['recall', 'adjust', 'learned', 'preference', 'credit'].includes(e.kind)) fx.call('pulse', 'evolve')
+        else if (e.kind === 'selfcheck') fx.call('setState', 'thinking')
+        break
+      case 'done': fx.call('setShape', 'ring'); fx.call('setState', 'idle'); fx.call('pulse', 'deliver'); break
+    }
+  }
   function handle (e) {
+    particlesFor(e)
     switch (e.type) {
       case 'hello': if (e.busy) setBusy(true); break
       case 'reasoning': {
-        fx.call('setState', 'thinking')
         if (!W.think) { W.think = stepEl('think'); W.think.dataset.t0 = Date.now(); W.think.dataset.text = ''; inner.appendChild(W.think); W.live = null }
         W.think.dataset.text += e.text
         const t = W.think.dataset.text
@@ -458,7 +495,6 @@ export function initWorkbench () {
         break
       }
       case 'tool-call': {
-        fx.call('setState', 'tool')
         if (W.think) { W.think.classList.add('done'); W.think = null }
         W.live = null
         const d = stepEl('tool', e.name, e.arguments, e.id)
@@ -467,14 +503,12 @@ export function initWorkbench () {
         break
       }
       case 'tool-result': {
-        fx.call('setState', 'thinking')
         const id = String(e.invocationId || '').split('/').pop()
         const d = W.calls.get(id) || [...inner.querySelectorAll('.step:not(.think):not(.done):not(.err)')][0]
         if (d) finishStep(d, e.preview, e.isError)
         break
       }
       case 'approval': {
-        fx.call('setState', 'approval')
         const c = document.createElement('div')
         c.className = 'card-inline'
         c.dataset.id = e.id
@@ -501,11 +535,9 @@ export function initWorkbench () {
         if (W.live) W.answer = W.live
         W.live = null
         inner.appendChild(evoEl(e.kind, e.text, { refs: e.refs, items: e.data?.items }))
-        if (e.kind === 'learned') fx.call('reform')
         break
       }
       case 'choice': {
-        fx.call('setState', 'approval')
         const c = document.createElement('div')
         c.className = 'card-inline choice'
         c.dataset.id = e.id
