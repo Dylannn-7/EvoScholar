@@ -190,6 +190,8 @@ test('projects, folder picker, library index and token usage', () => {
     const rt = openRuntime(openWorkspace(dir))
     assert.throws(() => addProject(rt.ws, rt.db, homedir()), /主目录/)
     assert.throws(() => addProject(rt.ws, rt.db, rt.ws.dataDir), /数据目录/)
+    assert.throws(() => addProject(rt.ws, rt.db, rt.ws.root), /程序目录/)
+    assert.throws(() => addProject(rt.ws, rt.db, join(rt.ws.root, 'genomes')), /程序目录/)
     assert.throws(() => addProject(rt.ws, rt.db, 'relative/path'), /绝对路径/)
     mkdirSync(join(proj, 'paper', 'figs'), { recursive: true })
     mkdirSync(join(proj, 'node_modules', 'x'), { recursive: true })

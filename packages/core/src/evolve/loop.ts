@@ -8,6 +8,7 @@ import type { AgentEvent, AgentMessage, AgentTool, Json, ToolGuard } from '@evos
 import { objectArgs, textResult, type ToolEnv } from '../tools/types'
 import { kernelTools } from './kernels'
 import { inside } from '../tools/sandbox'
+import { skillSource } from '../skills'
 import { EVOLVE_DEFAULTS, betaScore, relevance, validateMemoryText, type EvolveEvent, type EvolveStore, type MemoryItem } from './store'
 
 export type ChoiceOption = { label: string; detail?: string }
@@ -30,6 +31,32 @@ export type EvolveHooks = {
 }
 
 const EXTERNAL_TOOLS = new Set(['web_search', 'web_fetch', 'pdf_text', 'pdf_page_image', 'lit_import', 'lit_search', 'lit_lookup'])
+const IMPORTED_SKILLS = new Set(['zip', 'github', 'folder'])
+const UPLOADS = /^(?:\.\/)*evoscholar-in(?:\/|$)/
+
+/**
+ * Does this call bring third-party content into the context? Covers web and literature tools,
+ * files the user uploaded (often other people's documents) and imported skill text or scripts.
+ */
+export function externalCallSource(call: { name: string; arguments: unknown }, importedSkill: (name: string) => boolean): string | undefined {
+  if (EXTERNAL_TOOLS.has(call.name)) return `外部工具 ${call.name}`
+  const a = (call.arguments && typeof call.arguments === 'object' ? call.arguments : {}) as Record<string, unknown>
+  if ((call.name === 'read_skill' || call.name === 'run_skill') && typeof a.name === 'string' && importedSkill(a.name)) return `导入技能 ${a.name}`
+  if (call.name === 'read_file' && typeof a.path === 'string' && UPLOADS.test(a.path.split('\\').join('/'))) return '用户上传的文件'
+  return undefined
+}
+
+/** First external source visible in a context window: attachments and external tool calls. */
+export function externalContextSource(messages: readonly AgentMessage[], importedSkill: (name: string) => boolean): string | undefined {
+  for (const m of messages) {
+    if (m.role === 'user' && m.content.some((b) => b.type !== 'text')) return '用户附带的文件或图片'
+    for (const c of m.calls ?? []) {
+      const source = externalCallSource(c, importedSkill)
+      if (source) return source
+    }
+  }
+  return undefined
+}
 const CHECKS: Record<string, string> = { figure: 'figure_check', manuscript: 'manuscript_check' }
 const FIGURE_EXT = new Set(['.png', '.pdf', '.svg', '.eps', '.tif', '.tiff', '.jpg', '.jpeg'])
 const MANUSCRIPT_EXT = new Set(['.tex', '.docx', '.doc'])
@@ -88,6 +115,20 @@ export function installEvolveLoop(h: EvolveHooks) {
   const emit = (e: EvolveEvent) => {
     const id = h.store.log({ ...e, sessionId: h.sessionId, projectId: h.projectId, turnId: h.turnId() })
     h.emit?.({ ...e, id })
+  }
+
+  // ---------------------------------------------------------------- provenance (item 23)
+  // Once third-party content enters this session's context, everything the model distils
+  // afterwards is untrusted: it may restate injected text from an earlier turn or a summary.
+  let external = h.store.externalSource(h.sessionId)
+  const importedSkill = (name: string) => {
+    if (!h.env) return false
+    try { return IMPORTED_SKILLS.has(skillSource(h.env.ws.root, name).type) } catch { return true }
+  }
+  const markExternal = (source: string | undefined) => {
+    if (!source || external) return
+    external = source
+    emit({ kind: 'observe', text: `本会话上下文含外部内容（${source}），之后记下的经验只作试用，不会自动生效`, data: { provenance: source } })
   }
 
   // ---------------------------------------------------------------- recall (doc §3.1)
@@ -153,6 +194,7 @@ export function installEvolveLoop(h: EvolveHooks) {
 
   // ---------------------------------------------------------------- projection (doc §3.1, §3.2)
   const transformContext = (messages: readonly AgentMessage[]): readonly AgentMessage[] => {
+    if (!external) markExternal(externalContextSource(messages, importedSkill))
     if (!st.block && !st.pendingReflect) return messages
     let lastUser = -1
     for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user') { lastUser = i; break }
@@ -168,9 +210,11 @@ export function installEvolveLoop(h: EvolveHooks) {
     if (e.type === 'model' && e.purpose !== 'compaction') {
       const ev = e.event
       if (ev.type === 'text-delta' || ev.type === 'reasoning-delta') for (const r of ev.text.matchAll(REF)) st.cited.add(r[1])
+      // Calls batched with note_lesson run before the next projection, so check them here too.
       if (ev.type === 'finish') for (const c of ev.calls ?? []) {
         st.calls.set(c.id, { name: c.name, args: c.arguments, key: hashArgs(c.name, c.arguments) })
         st.toolsUsed.add(c.name)
+        if (!external) markExternal(externalCallSource(c, importedSkill))
       }
     } else if (e.type === 'checkpoint') {
       for (const m of e.checkpoint.messages.slice(-8)) {
@@ -262,12 +306,12 @@ export function installEvolveLoop(h: EvolveHooks) {
         kind: { type: 'string', enum: ['lesson', 'preference'] },
         scope: { type: 'string', enum: ['global', 'project', 'stage'], description: '默认：有项目时为 project，否则 global' }
       }, ['trigger', 'advice'], (a) => {
-        const external = [...st.toolsUsed].some((t) => EXTERNAL_TOOLS.has(t))
+        const untrusted = !!external
         const scope = a.scope === 'project' && !h.projectId ? 'global' : a.scope ?? (h.projectId ? 'project' : 'global')
-        const { item, merged } = h.store.upsert({ kind: a.kind === 'preference' ? 'preference' : 'lesson', trigger: String(a.trigger), content: String(a.advice), source: 'model', scope, projectId: scope === 'project' ? h.projectId : null, stage: scope === 'stage' ? h.stage ?? null : null, evidence: h.sessionId, untrusted: external })
+        const { item, merged } = h.store.upsert({ kind: a.kind === 'preference' ? 'preference' : 'lesson', trigger: String(a.trigger), content: String(a.advice), source: 'model', scope, projectId: scope === 'project' ? h.projectId : null, stage: scope === 'stage' ? h.stage ?? null : null, evidence: h.sessionId, untrusted })
         st.learned.push(item.id)
         st.cited.add(item.id)
-        emit({ kind: 'adjust', text: `${merged ? '更新' : '新增'}${item.kind === 'lesson' ? '经验' : '偏好'} ${item.id}（${item.status === 'active' ? '已生效' : external ? '试用，来源含外部内容' : '试用'}）：${item.trigger} → ${item.content}`, refs: [item.id], data: { memory: item.id, revertable: true } })
+        emit({ kind: 'adjust', text: `${merged ? '更新' : '新增'}${item.kind === 'lesson' ? '经验' : '偏好'} ${item.id}（${item.status === 'active' ? '已生效' : untrusted ? '试用，来源含外部内容' : '试用'}）：${item.trigger} → ${item.content}`, refs: [item.id], data: { memory: item.id, revertable: true } })
         return `${merged ? '已合并到' : '已记录为'} ${item.id}（${item.status === 'active' ? '生效' : '试用'}）。`
       }),
     tool('recall', '主动检索过去的经验和用户偏好（宿主已自动注入最相关的几条，需要更多时再用）。',

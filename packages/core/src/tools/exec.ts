@@ -6,7 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { join, relative, sep } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { chooseExecution, type ExecutionJob, type IsolatedService, type ProcessResult } from '../execution'
-import { checkCommand, inside } from './sandbox'
+import { checkCommand, modelPath } from './sandbox'
 import { objectArgs, shellFor, textResult, type ToolEnv, type ToolFactory } from './types'
 
 const OUT_LIMIT = 20_000
@@ -176,19 +176,19 @@ export const runPython: ToolFactory = (env) => ({
     const a = args as { code?: string; file?: string; args?: string[]; timeout_s?: number }
     const mode = await chooseExecution(env)
     const args0 = a.args ?? []
-    const script = a.file === undefined ? undefined : inside(env.cwd, a.file)
+    const script = a.file === undefined ? undefined : modelPath(env, a.file)
     const before = mode === 'host' ? snapshot(env.cwd) : new Map<string, number>()
     let r
     if (mode === 'isolated') {
-      const path = script ? relative(inside(env.cwd, '.'), script).split(sep).join('/') : '/control/cell.py'
+      const path = script ? relative(modelPath(env, '.'), script).split(sep).join('/') : '/control/cell.py'
       const job: ExecutionJob = { host: [pythonBin(env), []], sandbox: ['python', path, ...args0], code: a.code }
       r = await env.executor!.run(env, job, a.timeout_s ?? 120, ctx.signal)
     } else {
       let file = script
       if (!file) {
-        const dir = inside(env.cwd, join('.evoscholar', 'cells'))
+        const dir = modelPath(env, join('.evoscholar', 'cells'))
         mkdirSync(dir, { recursive: true })
-        file = inside(env.cwd, join(dir, `cell-${randomUUID()}.py`))
+        file = modelPath(env, join(dir, `cell-${randomUUID()}.py`))
         writeFileSync(file, a.code!, { encoding: 'utf8', flag: 'wx' })
       }
       r = await run(pythonBin(env), [file, ...args0], env, a.timeout_s ?? 120, ctx.signal)

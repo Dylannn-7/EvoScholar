@@ -218,6 +218,21 @@ export class EvolveStore {
       .run(e.sessionId ?? null, e.projectId ?? null, e.turnId ?? null, e.kind, e.refs?.length ? e.refs.join(',') : null, e.text, e.data ? JSON.stringify(e.data) : null, now())
     return Number(r.lastInsertRowid)
   }
+  /**
+   * First external source recorded for a session (see installEvolveLoop). The marker is sticky:
+   * compaction and cold restarts drop the original tool calls, but the context may still carry them.
+   */
+  externalSource(sessionId: string): string | undefined {
+    const row = this.db.prepare(`SELECT json_extract(data, '$.provenance') AS p FROM evolve_log
+      WHERE session_id = ? AND kind = 'observe' AND json_extract(data, '$.provenance') IS NOT NULL ORDER BY id LIMIT 1`).get(sessionId) as { p: string } | undefined
+    return row?.p ?? undefined
+  }
+  /** A forked session starts from the same context, so it inherits the marker. */
+  inheritExternalSource(fromSessionId: string, toSessionId: string): void {
+    this.db.prepare(`INSERT INTO evolve_log (session_id, project_id, turn_id, kind, refs, text, data, ts)
+      SELECT ?, project_id, NULL, kind, refs, text, data, ? FROM evolve_log
+      WHERE session_id = ? AND kind = 'observe' AND json_extract(data, '$.provenance') IS NOT NULL ORDER BY id LIMIT 1`).run(toSessionId, now(), fromSessionId)
+  }
   recentLog(f: { sessionId?: string; limit?: number } = {}) {
     return (this.db.prepare(`SELECT l.*, s.title AS session_title FROM evolve_log l LEFT JOIN sessions s ON s.id = l.session_id ${f.sessionId ? 'WHERE l.session_id = ?' : ''} ORDER BY l.id DESC LIMIT ?`)
       .all(...(f.sessionId ? [f.sessionId] : []), f.limit ?? 200) as Record<string, unknown>[])

@@ -4,14 +4,15 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentTool, Json, ToolContext } from '@evoscholar/harness'
-import { TOOL_FACTORIES, childEnv, checkCommand, guarded, inside, runProcess, stopAllProcesses, type ToolEnv } from './tools'
+import { TOOL_FACTORIES, appPrivate, childEnv, checkCommand, guarded, inside, runProcess, stopAllProcesses, type ToolEnv } from './tools'
 import { BudgetError } from './budget'
 
 const ctx = (): ToolContext => ({ sessionId: 's', runId: 'r', invocationId: 'i', signal: new AbortController().signal, update() {} })
 function setup() {
   const cwd = mkdtempSync(join(tmpdir(), 'evo-cwd-'))
+  const app = mkdtempSync(join(tmpdir(), 'evo-app-'))
   const events: Record<string, unknown>[] = []
-  const env = { ws: { root: cwd, dataDir: join(cwd, 'nodata'), config: {} }, cwd, sessionId: 'tool-test', ledger: {}, category: () => 'dev', trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
+  const env = { ws: { root: app, dataDir: join(app, 'data'), config: {} }, cwd, sessionId: 'tool-test', ledger: {}, category: () => 'dev', trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
   const tool = (name: string): AgentTool => TOOL_FACTORIES[name](env)
   const call = async (name: string, args: Record<string, unknown>) => {
     const t = tool(name)
@@ -118,6 +119,38 @@ test('tool exceptions become error results; budget errors still propagate', asyn
   assert.equal(r.isError, true)
   assert.match(r.content[0].text, /t 出错：bad json/)
   await assert.rejects(boom(new BudgetError('cap', 'round')).execute({}, ctx), BudgetError)
+})
+
+test('a project that contains the app cannot reach its code, config, credentials or state', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'evo-home-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const app = join(home, 'EvoScholar')
+  mkdirSync(join(app, 'data', 'projects', 's-draft'), { recursive: true })
+  mkdirSync(join(app, 'packages', 'core'), { recursive: true })
+  writeFileSync(join(app, '.env'), 'DEEPSEEK_API_KEY=sk-fixture')
+  writeFileSync(join(app, 'evoscholar.config.json'), '{}')
+  writeFileSync(join(home, 'notes.md'), '研究笔记')
+  const ws = { root: app, dataDir: join(app, 'data'), config: {} }
+  const env = { ws, cwd: home, sessionId: 't', ledger: {}, category: () => 'dev' } as unknown as ToolEnv
+  const run = async (name: string, args: Record<string, unknown>) => {
+    const tool = TOOL_FACTORIES[name](env)
+    return await tool.execute(tool.validate(args as Json), ctx()) as { content: { text?: string }[]; isError?: boolean }
+  }
+  assert.match(text(await run('read_file', { path: 'notes.md' })), /研究笔记/)
+  await assert.rejects(run('read_file', { path: 'EvoScholar/.env' }), /EvoScholar 自身/)
+  await assert.rejects(run('write_file', { path: 'EvoScholar/evoscholar.config.json', content: '{"x":1}' }), /EvoScholar 自身/)
+  await assert.rejects(run('write_file', { path: 'EvoScholar/packages/core/permissions.ts', content: '' }), /EvoScholar 自身/)
+  assert.equal(readFileSync(join(app, 'evoscholar.config.json'), 'utf8'), '{}')
+  const listing = text(await run('list_files', { depth: 3 }))
+  assert.match(listing, /notes\.md/)
+  assert.doesNotMatch(listing, /EvoScholar/)
+  // The drafts area stays a normal working directory.
+  const draft = { ...env, cwd: join(app, 'data', 'projects', 's-draft') } as ToolEnv
+  const write = TOOL_FACTORIES.write_file(draft)
+  await write.execute(write.validate({ path: 'out.txt', content: 'ok' }), ctx())
+  assert.equal(readFileSync(join(app, 'data', 'projects', 's-draft', 'out.txt'), 'utf8'), 'ok')
+  assert.ok(appPrivate(ws, join(app, 'packages')))
+  assert.ok(!appPrivate(ws, join(home, 'notes.md')))
 })
 
 test('file listings skip linked directories at the project boundary', async (t) => {
