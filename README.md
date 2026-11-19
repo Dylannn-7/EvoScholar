@@ -52,11 +52,21 @@ git clone https://github.com/Dylannn-7/EvoScholar.git
 cd EvoScholar; powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-然后启动并打开 http://127.0.0.1:4317 ：
+然后启动：
 
 ```bash
 npm start
 ```
+
+启动后会自动打开浏览器并完成配对。关掉标签页后可以在同一浏览器里直接重新打开；换浏览器或令牌失效时，在运行 `npm start` 的终端按回车，会生成新的配对码并重新打开浏览器。工作台重启后需要重新配对。
+
+**代码执行（推荐）。** 模型写的 Python 和命令默认在离线 Linux 容器里运行，读不到项目之外的文件，也不能联网。装好 [Docker Desktop](https://www.docker.com/products/docker-desktop/)（Windows 家庭版使用 WSL 2 后端），启动后构建一次镜像：
+
+```bash
+npm run sandbox:build
+```
+
+网络受限时可以设置 `DEBIAN_MIRROR`、`PIP_INDEX_URL`、`BASE_IMAGE` 指向镜像源，或在能联网的机器上构建后用 `docker save` / `docker load` 导入。Podman 等兼容引擎可在「设置 → 默认与权限 → 代码执行」里改容器命令。没有容器时，模型代码执行默认停用；可以在同一处开启「宿主模式」，代码会以你的账户权限运行，每次执行都要你确认，完全放行模式下无效。论文检查、出图检查等内置工具不受影响，仍在本机 Python 环境运行。
 
 1. **设置 → 模型与密钥**：选厂商 → 选协议（默认是厂商官方推荐的）→ 确认 Base URL（已预填，可改）→ 填 API Key → 获取模型 → 测试连接。
 2. **添加项目**：左侧「+」选一个本地文件夹。会话在这个文件夹里工作，交付文件写到 `evoscholar-out/<会话>/`，上传的文件放在 `evoscholar-in/`，不会改动其他已有文件（除非你明确要求）。
@@ -97,7 +107,7 @@ npm run demo
 | `data/rulepacks/user.yaml` | 你自己沉淀的写作规则 |
 | 项目文件夹的 `evoscholar-out/`、`evoscholar-in/`、`.evoscholar/memory.md` | 交付文件、上传文件、项目记忆的可读镜像 |
 
-运行代码的子进程拿不到任何 `*_API_KEY` 环境变量；网页只监听 127.0.0.1，并拒绝非本机 Host 的请求。
+模型写的代码在离线容器里运行，只能看到项目的工作副本，产出写回 `evoscholar-out/<会话>/`；运行代码的进程拿不到任何 `*_API_KEY` 环境变量。网页只监听 127.0.0.1，拒绝非本机 Host 的请求，所有接口都要求配对后签发的令牌。
 
 ## 开发
 

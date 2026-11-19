@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
 import type { AgentTool, Json, ToolContext } from '@evoscholar/harness'
 import { TOOL_FACTORIES, childEnv, checkCommand, guarded, inside, runProcess, stopAllProcesses, type ToolEnv } from './tools'
 import { BudgetError } from './budget'
@@ -61,7 +60,16 @@ test('file tools round-trip and edit', async () => {
 })
 
 test('run_python executes and reports changed files', async () => {
-  const { call } = setup()
+  const { call, env } = setup()
+  env.executor = {
+    available: async () => true,
+    start: async () => { throw new Error('Unexpected service') },
+    run: async (_env, job) => {
+      assert.equal(job.sandbox[1], '/control/cell.py')
+      const fail = job.code?.includes('sys.exit')
+      return { code: fail ? 75 : 0, out: 'done', stdout: 'done', signal: null, timedOut: false, files: fail ? [] : ['r.json'] }
+    }
+  }
   const r = await call('run_python', { code: 'import json\nopen("r.json","w").write(json.dumps({"x": 3}))\nprint("done")' })
   assert.match(text(r), /退出码 0/)
   assert.match(text(r), /r\.json/)
@@ -70,38 +78,35 @@ test('run_python executes and reports changed files', async () => {
   assert.match(text(fail), /75/)
 })
 
-test('background process + localhost http + stop', async (t) => {
-  const { cwd, call, events } = setup()
-  t.after(() => stopAllProcesses('tool-test'))
-  writeFileSync(join(cwd, 'srv.py'), `
-import http.server, socketserver
-class H(http.server.BaseHTTPRequestHandler):
-    n = 0
-    def do_GET(self):
-        H.n += 1
-        code = 429 if self.path.startswith('/primary') else 200
-        self.send_response(code); self.end_headers(); self.wfile.write(b'{"ok": %d}' % H.n)
-    def log_message(self, *a): pass
-with socketserver.TCPServer(('127.0.0.1', 0), H) as s:
-    print(f'http://127.0.0.1:{s.server_address[1]}', flush=True)
-    s.serve_forever()
-`)
-  let output = text(await call('start_process', { command: `${process.platform === 'win32' ? 'python' : 'python3'} srv.py`, wait_s: 0 }))
-  const processId = /进程 (\S+)：/.exec(output)
-  assert.ok(processId, output)
-  const [, id] = processId
-  const deadline = Date.now() + 10_000
-  const address = /http:\/\/127\.0\.0\.1:\d+/
-  while (!address.test(output) && Date.now() < deadline) {
-    await delay(50)
-    output += '\n' + text(await call('read_process', { id }))
-    if (/已退出|已终止/.test(output)) break
+test('background containers register only this session’s service port', async (t) => {
+  const { call, env, events, cwd } = setup()
+  let stopped = false
+  const port = 18921
+  env.executor = {
+    available: async () => true,
+    run: async () => { throw new Error('Unexpected command') },
+    start: async (_env, job) => {
+      assert.deepEqual(job.sandbox, ['/bin/sh', '-c', 'python srv.py'])
+      return {
+        read: async () => ({ running: !stopped, text: '运行中', output: 'fixture data' }),
+        get: async (requested, path) => {
+          assert.equal(requested, port)
+          return { status: path.startsWith('/primary') ? 429 : 200, body: '{"fixture": true}' }
+        },
+        stop: async () => { stopped = true }
+      }
+    }
   }
-  const url = address.exec(output)?.[0]
-  assert.ok(url, `服务未就绪：${output.slice(-1000)}`)
+  t.after(async () => { await stopAllProcesses('tool-test'); rmSync(cwd, { recursive: true, force: true }) })
+  const url = `http://127.0.0.1:${port}`
+  assert.equal((await call('http_get', { url })).isError, true)
+  const started = text(await call('start_process', { command: 'python srv.py', wait_s: 0, port }))
+  const processId = /进程 (\S+)：/.exec(started)
+  assert.ok(processId, started)
   assert.match(text(await call('http_get', { url: url + '/primary?q=queue' })), /HTTP 429/)
   assert.match(text(await call('http_get', { url: url + '/backup?q=queue' })), /HTTP 200/)
-  await call('stop_process', { id })
+  await call('stop_process', { id: processId[1] })
+  assert.equal(stopped, true)
   assert.deepEqual(events.filter((e) => e.kind === 'http').map((e) => e.status), [429, 200])
   await assert.rejects(async () => TOOL_FACTORIES.http_get({} as ToolEnv).validate({ url: 'https://example.com' }))
 })

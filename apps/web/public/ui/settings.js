@@ -66,6 +66,8 @@ function models (body, m, root) {
           <button class="btn ghost small" id="saveUrl" type="button">保存</button></div>
           <div class="hint">请求地址：<code>${esc(endpointPreview(p))}</code></div>
         </div>
+        <label class="faint"><input type="checkbox" id="privateGateway" ${p.gatewayPrivateAccess ? 'checked' : ''}> 允许此自定义网关访问内网地址</label>
+        ${p.baseUrl && !p.gatewayApproved && !p.baseUrl.includes('<') ? '<p class="muted">请保存并确认当前网关地址，再填写 API Key。</p>' : ''}
         ${p.custom || p.id === 'azure' ? `<div class="field"><span class="lbl">认证请求头</span><select class="input" id="authHeader">${Object.entries(AUTH).map(([k, v]) => `<option value="${k}" ${p.authHeader === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>` : ''}
         <div class="field"><span class="lbl">API Key <span class="faint">· 只保存在本机 .env 的 ${esc(p.apiKeyEnv)}</span></span>
           <div class="inline"><input class="input" id="apiKey" type="password" autocomplete="off" placeholder="${p.hasKey ? '已保存，输入新值可替换' : '粘贴 API Key'}"><button class="btn ${p.hasKey ? 'ghost' : 'primary'} small" id="saveKey" type="button">保存</button>${p.hasKey ? '<button class="btn ghost small" id="clearKey" type="button">清除</button>' : ''}</div>
@@ -95,7 +97,18 @@ function models (body, m, root) {
   body.querySelector('#addCustom').onclick = () => customDialog(m, root)
   body.querySelectorAll('[data-proto]').forEach((b) => (b.onclick = () => save({ protocol: b.dataset.proto })))
   body.querySelectorAll('[data-region]').forEach((b) => (b.onclick = () => save({ region: b.dataset.region })))
-  body.querySelector('#saveUrl').onclick = () => save({ baseUrl: body.querySelector('#baseUrl').value.trim() }, 'Base URL 已保存')
+  body.querySelector('#saveUrl').onclick = async () => {
+    try {
+      const raw = body.querySelector('#baseUrl').value.trim()
+      if (!raw) return save({ baseUrl: '' }, '已恢复默认 URL')
+      const base = new URL(raw).href.replace(/\/+$/, '')
+      const privateGateway = body.querySelector('#privateGateway').checked
+      if (base !== p.defaultBaseUrl && !(await confirmDialog({
+        title: '确认网关地址', message: `允许连接 ${base}${privateGateway ? '（允许内网地址）' : ''}。更换来源后需重新填写该来源的 API Key。`, confirmText: '授权并保存'
+      }))) return
+      await save({ baseUrl: base, confirmGateway: base, privateGateway }, 'Base URL 已保存')
+    } catch { toast('Base URL 格式不对', 'err') }
+  }
   body.querySelector('#resetUrl')?.addEventListener('click', () => save({ baseUrl: '' }, '已恢复默认 URL'))
   body.querySelector('#authHeader')?.addEventListener('change', (e) => save({ authHeader: e.target.value }))
   body.querySelector('#saveKey').onclick = () => { const v = body.querySelector('#apiKey').value.trim(); if (v) save({ key: v }, 'API Key 已保存到本机 .env') }
@@ -141,16 +154,17 @@ function customDialog (m, root) {
       <div class="row2"><div class="field"><label class="lbl">标识（小写字母、数字、-）</label><input class="input" name="id" required pattern="[a-z0-9][a-z0-9-]{1,30}" placeholder="lab-gateway"></div>
       <div class="field"><label class="lbl">显示名</label><input class="input" name="label" placeholder="实验室网关"></div></div>
       <div class="field"><label class="lbl">协议</label><select class="input" name="protocol">${m.protocols.map((p) => `<option value="${p.id}">${p.label}</option>`).join('')}</select></div>
-      <div class="field"><label class="lbl">Base URL</label><input class="input" name="baseUrl" required placeholder="https://example.com/v1" spellcheck="false"></div>
+      <div class="field"><label class="lbl">Base URL</label><input class="input" name="baseUrl" required placeholder="https://example.com/v1" spellcheck="false"><label><input name="privateGateway" type="checkbox"> 允许访问内网地址</label></div>
       <div class="field"><label class="lbl">模型 ID（可留空，保存后点「获取模型」）</label><input class="input" name="models" placeholder="model-a, model-b"></div>
       <div class="field"><label class="lbl">API Key</label><input class="input" name="key" type="password" autocomplete="off"></div>
-      <div class="modal-actions"><button class="btn primary" type="submit">添加</button></div></form>`,
+      <div class="modal-actions"><button class="btn primary" type="submit">授权并添加</button></div></form>`,
     onMount: (el, close) => {
       el.querySelector('#cf').onsubmit = async (e) => {
         e.preventDefault()
         const f = Object.fromEntries(new FormData(e.target))
         try {
-          await put(`/api/providers/${f.id}`, { custom: true, label: f.label || f.id, protocol: f.protocol, baseUrl: f.baseUrl, models: f.models, ...(f.key ? { key: f.key } : {}) })
+          const base = new URL(f.baseUrl).href.replace(/\/+$/, '')
+          await put(`/api/providers/${f.id}`, { custom: true, label: f.label || f.id, protocol: f.protocol, baseUrl: base, confirmGateway: base, privateGateway: f.privateGateway === 'on', models: f.models, ...(f.key ? { key: f.key } : {}) })
           selected = f.id
           close(); await store.refresh(); renderSettings(root)
         } catch (err) { toast(err.message, 'err') }
@@ -164,6 +178,7 @@ function defaults (body, m, root) {
   const all = m.providers.filter((p) => p.hasKey).flatMap((p) => p.models.map((x) => ({ ref: `${p.id}/${x.id}`, label: `${p.label} · ${x.id}`, x })))
   const opt = (sel, emptyLabel) => `<option value="">${emptyLabel}</option>${all.map((a) => `<option value="${esc(a.ref)}" ${sel === a.ref ? 'selected' : ''}>${esc(a.label)}</option>`).join('')}`
   const d = m.defaults
+  const execution = m.execution
   body.innerHTML = `
     <div class="panel"><h3>默认模型</h3><p class="lede">新会话默认使用的模型；输入框里可以随时为单个会话换模型。轻量和视觉角色用于子任务（核对、读图），留空则跟随主模型。</p>
       ${all.length ? `<div class="row2">
@@ -174,7 +189,40 @@ function defaults (body, m, root) {
     </div>
     <div class="panel"><h3>默认权限模式</h3><p class="lede">新会话的权限模式。每个会话也可以在输入框里单独切换。</p>
       <div class="perm-grid">${PERMS.map(([id, label, desc]) => `<button type="button" class="proto ${(d.permission || 'ask') === id ? 'on' : ''}" data-perm="${id}"><span class="n">${label}</span><span class="d" style="font-family:var(--sans)">${desc}</span></button>`).join('')}</div>
+    </div>
+    <div class="panel"><h3>代码执行</h3>
+      <p class="lede">优先使用离线 Linux 容器。容器不可用时，默认停用模型代码执行。</p>
+      <p class="muted" id="execution-status">正在检测容器状态…</p>
+      <form id="execution-settings" class="modal-form">
+        <label class="field-label">容器命令<input class="input" name="engine" value="${esc(execution.engine)}" required></label>
+        <label class="field-label">本地执行镜像<input class="input" name="image" value="${esc(execution.image)}" required></label>
+        <label class="field-label"><input name="hostMode" type="checkbox" ${execution.hostMode ? 'checked' : ''}> 容器不可用时启用宿主模式</label>
+        <p class="warn" style="color:var(--danger)">宿主模式下，模型代码以工作台账户的权限运行，可访问项目之外的文件。每次执行都需确认，完全放行模式下无效。</p>
+        <button class="btn ghost small" type="submit">保存代码执行设置</button>
+      </form>
     </div>`
+  const statusLine = body.querySelector('#execution-status')
+  api('/api/settings/execution/status').then((s) => {
+    const fallback = s.hostMode ? '当前使用宿主模式，每次执行都需要你确认。' : '模型代码执行已停用。'
+    statusLine.textContent = s.state === 'ready'
+      ? '当前状态：离线容器可用，模型代码在容器中运行。'
+      : s.state === 'image'
+        ? `当前状态：容器引擎已运行，但缺少执行镜像。在项目目录运行 npm run sandbox:build 构建。${fallback}`
+        : `当前状态：未检测到 Linux 容器引擎。请启动 Docker Desktop 或兼容引擎。${fallback}`
+  }).catch(() => { statusLine.textContent = '无法检测容器状态。' })
+  body.querySelector('#execution-settings').onsubmit = async (event) => {
+    event.preventDefault()
+    const fields = new FormData(event.currentTarget)
+    const hostMode = fields.has('hostMode')
+    if (hostMode && !execution.hostMode && !(await confirmDialog({
+      title: '启用宿主模式', message: '模型代码将获得工作台账户的权限，能够读取或修改项目之外的文件。仅在你信任本次代码时批准执行。', danger: true, confirmText: '确认启用'
+    }))) return
+    try {
+      await put('/api/settings/execution', { engine: fields.get('engine'), image: fields.get('image'), hostMode, confirmHostMode: hostMode })
+      toast('已保存', 'ok')
+      await renderSettings(root)
+    } catch (error) { toast(error.message, 'err') }
+  }
   body.querySelectorAll('select[data-k]').forEach((s) => (s.onchange = async () => { try { await put('/api/settings/defaults', { [s.dataset.k]: s.value }); await store.refresh(); toast('已保存', 'ok') } catch (err) { toast(err.message, 'err') } }))
   body.querySelectorAll('[data-perm]').forEach((b) => (b.onclick = async () => { await put('/api/settings/defaults', { permission: b.dataset.perm }); await store.refresh(); renderSettings(root) }))
 }

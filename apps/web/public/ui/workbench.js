@@ -1,6 +1,7 @@
 // Workbench: project tree, transparent conversation, composer (model / effort / permission / files / @).
 import { $, closePop, fx, go, openPop, store, syncFx } from '../app.js'
-import { ago, api, del, fmtSize, patch, post } from './api.js'
+import { ago, api, apiFetch, del, fmtSize, loadApiImages, patch, post } from './api.js'
+import { openEventStream } from './stream.js'
 import { icon } from './icons.js'
 import { formatToolSummary, md } from './markdown.js'
 import { confirmDialog, esc, openModal, promptDialog, toast } from './modal.js'
@@ -420,9 +421,10 @@ export function initWorkbench () {
       if (!fresh.length || !target) return
       const box = document.createElement('div')
       box.className = 'turn-files'
-      box.innerHTML = fresh.slice(0, 12).map((f) => `<span class="file-chip ${f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) ? 'thumb' : ''}" data-lib="${f.id}" data-path="${esc(f.path)}">${f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) ? `<img src="/api/library/${f.id}/file" alt="">` : icon('file', 14)}<span>${esc(f.path.split('/').pop())}</span></span>`).join('')
+      box.innerHTML = fresh.slice(0, 12).map((f) => `<span class="file-chip ${f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) ? 'thumb' : ''}" data-lib="${f.id}" data-path="${esc(f.path)}">${f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) ? `<img data-api-image="/api/library/${f.id}/file" alt="">` : icon('file', 14)}<span>${esc(f.path.split('/').pop())}</span></span>`).join('')
       box.onclick = (e) => { const c = e.target.closest('[data-lib]'); if (c) openFilePreviewModal(W.current, c.dataset.path, `/api/library/${c.dataset.lib}/file`) }
       target.el.appendChild(box)
+      loadApiImages(box)
     } catch {}
   }
   function setBusy (b) {
@@ -509,6 +511,7 @@ export function initWorkbench () {
         break
       }
       case 'approval': {
+        if ([...inner.querySelectorAll('[data-id]')].some((card) => card.dataset.id === e.id)) break
         const c = document.createElement('div')
         c.className = 'card-inline'
         c.dataset.id = e.id
@@ -622,38 +625,49 @@ export function initWorkbench () {
     W.current = id; W.live = null; W.think = null; W.calls.clear()
     document.body.classList.add('in-session')
     renderTree()
-    try {
-      W.session = await api(`/api/sessions/${id}`)
-    } catch (err) { toast(err.message, 'err'); return W.home() }
-    resetChoices()
-    renderHead(); renderBar(); banner('')
-    inner.innerHTML = ''
-    const byTurn = new Map()
-    for (const ev of W.session.evolve || []) {
-      if (['reflect', 'adjust', 'choice'].includes(ev.kind) || (ev.kind === 'recall' && /^主动检索/.test(ev.text))) continue
-      const k = ev.turn_id ?? 0
-      if (!byTurn.has(k)) byTurn.set(k, [])
-      byTurn.get(k).push(ev)
+    const current = Symbol()
+    W.opening = current
+    const sync = async () => {
+      const snapshot = await api(`/api/sessions/${id}`)
+      if (W.current !== id || W.opening !== current) return false
+      W.session = snapshot
+      W.live = null; W.think = null; W.calls.clear()
+      resetChoices()
+      renderHead(); renderBar(); banner('')
+      inner.innerHTML = ''
+      const byTurn = new Map()
+      for (const ev of W.session.evolve || []) {
+        if (['reflect', 'adjust', 'choice'].includes(ev.kind) || (ev.kind === 'recall' && /^主动检索/.test(ev.text))) continue
+        const k = ev.turn_id ?? 0
+        if (!byTurn.has(k)) byTurn.set(k, [])
+        byTurn.get(k).push(ev)
+      }
+      const turns = W.session.turns || []
+      let ti = -1
+      const flush = (tid, phase) => {
+        for (const ev of (byTurn.get(tid) || []).filter((x) => (phase === 'start') === (x.kind === 'recall' || x.kind === 'observe' || (x.kind === 'preference' && /^记住了/.test(x.text))))) inner.appendChild(evoEl(ev.kind, ev.text, { refs: ev.refs, items: ev.data?.items }))
+      }
+      for (const m of W.session.messages) {
+        if (m.role === 'user' && /^【自检】/.test(m.text)) continue
+        if (m.role === 'user') { if (ti >= 0) flush(turns[ti], 'end'); ti++; renderStored(m); flush(turns[ti], 'start'); continue }
+        renderStored(m)
+      }
+      if (ti >= 0) flush(turns[ti], 'end')
+      const fresh = !W.session.messages.length && !opts.keepComposer
+      if (fresh) inner.innerHTML = '<div class="greet"><h1>今天想研究什么？</h1><p>需要写文件或执行代码时，会按你选的权限模式处理。</p></div>'
+      setFresh(fresh)
+      for (const a of W.session.pendingApprovals || []) handle({ type: 'approval', ...a })
+      for (const choice of W.session.pendingChoices || []) handle({ type: 'choice', ...choice })
+      setBusy(!!W.session.busy)
+      scroll(); syncFx()
+      return true
     }
-    const turns = W.session.turns || []
-    let ti = -1
-    const flush = (tid, phase) => {
-      for (const ev of (byTurn.get(tid) || []).filter((x) => (phase === 'start') === (x.kind === 'recall' || x.kind === 'observe' || (x.kind === 'preference' && /^记住了/.test(x.text))))) inner.appendChild(evoEl(ev.kind, ev.text, { refs: ev.refs, items: ev.data?.items }))
-    }
-    for (const m of W.session.messages) {
-      if (m.role === 'user' && /^【自检】/.test(m.text)) continue
-      if (m.role === 'user') { if (ti >= 0) flush(turns[ti], 'end'); ti++; renderStored(m); flush(turns[ti], 'start'); continue }
-      renderStored(m)
-    }
-    if (ti >= 0) flush(turns[ti], 'end')
-    const fresh = !W.session.messages.length && !opts.keepComposer
-    if (fresh) inner.innerHTML = '<div class="greet"><h1>今天想研究什么？</h1><p>需要写文件或执行代码时，会按你选的权限模式处理。</p></div>'
-    setFresh(fresh)
-    for (const a of W.session.pendingApprovals || []) handle({ type: 'approval', ...a })
-    setBusy(!!W.session.busy)
-    W.es = new EventSource(`/api/sessions/${id}/events`)
-    W.es.onmessage = (ev) => handle(JSON.parse(ev.data))
-    scroll(); syncFx()
+    try { if (!await sync()) return }
+    catch (err) { if (W.opening === current && W.current === id) { toast(err.message, 'err'); W.home() }; return }
+    W.es = openEventStream(
+      (signal) => apiFetch(`/api/sessions/${id}/events`, { signal, headers: { accept: 'text/event-stream' } }),
+      { onEvent: (event) => { if (W.current === id && W.opening === current) handle(event) }, resync: sync }
+    )
     try { history.replaceState(null, '', `?s=${id}`) } catch {}
   }
   document.addEventListener('evo:open-session', (e) => W.open(e.detail))

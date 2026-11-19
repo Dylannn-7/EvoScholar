@@ -3,6 +3,7 @@ import { createChatCompletionsModel } from '@evoscholar/harness/chat-completions
 import { createMessagesModel } from '@evoscholar/harness/messages'
 import { createResponsesModel } from '@evoscholar/harness/responses'
 import type { AuthHeader, EvoConfig, ModelSetting, Protocol, ProviderOverride, ReasoningCapability } from './config'
+import { gatewayTransport, normalizeGatewayBase } from './gateway'
 import { createGeminiModel } from './gemini'
 import presets from './presets.json'
 
@@ -47,6 +48,8 @@ export type ProviderInfo = {
   apiKeyEnv: string
   apiKeyUrl?: string
   hasKey: boolean
+  gatewayApproved: boolean
+  gatewayPrivateAccess: boolean
   modelsSource: 'preset' | 'live'
   modelsFetchedAt?: string
   reasoningEffort?: ReasoningCapability
@@ -85,6 +88,42 @@ export function reasoningParam(protocol: Protocol, provider: string): string {
   return 'reasoning_effort'
 }
 
+function officialBase(base: string, preset?: Preset): boolean {
+  if (!base || !preset) return false
+  const all = [preset.bases, ...(preset.regions ?? []).map((region) => region.bases)]
+  return all.some((bases) => Object.values(bases).includes(base))
+}
+
+function providerKey(info: ProviderInfo, override?: ProviderOverride): string | undefined {
+  if (!info.baseUrl || info.baseUrl.includes('<')) return
+  try {
+    const origin = new URL(info.baseUrl).origin
+    const official = officialBase(info.baseUrl, PRESETS.find((p) => p.id === info.id))
+    const savedOrigin = override?.credentialOrigin
+    if (savedOrigin ? savedOrigin !== origin : !official) return
+    return process.env[info.apiKeyEnv]
+  } catch { return undefined }
+}
+
+function providerTransport(config: EvoConfig, info: ProviderInfo, supplied?: typeof fetch): typeof fetch {
+  const override = config.providers?.[info.id]
+  const preset = PRESETS.find((p) => p.id === info.id)
+  const official = officialBase(info.baseUrl, preset)
+  return async (input, init) => {
+    if (official) {
+      const target = new URL(input instanceof Request ? input.url : input)
+      const trusted = target.origin === new URL(info.baseUrl).origin ||
+        (preset?.modelsListUrl !== undefined && target.href === preset.modelsListUrl)
+      if (!trusted) throw new Error('模型列表地址与已授权的厂商地址不符')
+      return (supplied ?? globalThis.fetch)(input, { ...init, redirect: 'error' })
+    }
+    return gatewayTransport({
+      base: info.baseUrl, approval: override?.gatewayApproval,
+      localPort: config.localHttpPort ?? Number(process.env.EVOSCHOLAR_PORT ?? 4317), fetch: supplied
+    })(input, init)
+  }
+}
+
 function describe(id: string, p: Preset | undefined, o: ProviderOverride | undefined): ProviderInfo {
   const bases = presetBases(p, o?.region)
   const defaultProtocol = p?.defaultProtocol ?? o?.protocol ?? 'chat-completions'
@@ -106,14 +145,18 @@ function describe(id: string, p: Preset | undefined, o: ProviderOverride | undef
       reasoningParam: param
     }
   })
-  return {
+  const baseUrl = o?.baseUrl ?? (o?.endpoint ? legacyBase(o.endpoint) : defaultBaseUrl)
+  const official = officialBase(baseUrl, p)
+  let gatewayApproved = official
+  try { gatewayApproved ||= !!o?.gatewayApproval && o.gatewayApproval.base === normalizeGatewayBase(baseUrl) } catch {}
+  const info: ProviderInfo = {
     id,
     label: o?.label ?? p?.label ?? id,
     custom: !p,
     official: Object.keys(bases) as Protocol[],
     defaultProtocol,
     protocol,
-    baseUrl: o?.baseUrl ?? (o?.endpoint ? legacyBase(o.endpoint) : defaultBaseUrl),
+    baseUrl,
     defaultBaseUrl,
     bases,
     regions: p?.regions,
@@ -121,13 +164,17 @@ function describe(id: string, p: Preset | undefined, o: ProviderOverride | undef
     authHeader: o?.authHeader ?? p?.authHeader ?? (protocol === 'gemini' ? 'x-goog-api-key' : protocol === 'messages' && id === 'anthropic' ? 'x-api-key' : 'bearer'),
     apiKeyEnv: keyEnvFor(id, o),
     apiKeyUrl: p?.apiKeyUrl,
-    hasKey: !!process.env[keyEnvFor(id, o)],
+    hasKey: false,
+    gatewayApproved,
+    gatewayPrivateAccess: !!o?.gatewayApproval?.privateAccess,
     modelsSource: live ? 'live' : 'preset',
     modelsFetchedAt: o?.modelsFetchedAt,
     reasoningEffort: vendorEffort,
     reasoningParam: param,
     models
   }
+  info.hasKey = gatewayApproved && !!providerKey(info, o)
+  return info
 }
 
 /** Old configs stored a full endpoint URL for custom gateways; recover the API root. */
@@ -190,13 +237,14 @@ function authHeaders(style: AuthHeader, key: string): Record<string, string> {
 
 /** The harness adapters always send `Authorization: Bearer`; rewrite it for vendors that want another header. */
 function authFetch(style: AuthHeader, inner: typeof fetch = globalThis.fetch): typeof fetch | undefined {
-  if (style === 'bearer' || style === 'x-goog-api-key') return inner === globalThis.fetch ? undefined : inner
+  if (style === 'bearer' || style === 'x-goog-api-key') return inner
   return (async (url: string | URL | Request, init?: RequestInit) => {
     const h = new Headers(init?.headers)
     const auth = h.get('authorization')
-    const key = auth?.replace(/^Bearer\s+/i, '') ?? h.get('x-api-key') ?? ''
+    const key = auth?.replace(/^Bearer\s+/i, '') ?? h.get('x-api-key') ?? h.get('x-goog-api-key') ?? ''
     h.delete('authorization')
     h.delete('x-api-key')
+    h.delete('x-goog-api-key')
     for (const [k, v] of Object.entries(authHeaders(style, key))) h.set(k, v)
     return inner(url, { ...init, headers: h })
   }) as typeof fetch
@@ -268,11 +316,12 @@ export function parseModelList(json: unknown, protocol: Protocol): ModelSetting[
 export async function fetchProviderModels(
   config: EvoConfig,
   providerId: string,
-  fetchFn: typeof globalThis.fetch = globalThis.fetch
+  fetchFn?: typeof globalThis.fetch
 ): Promise<{ ok: true; models: ModelSetting[]; url: string } | { ok: false; error: string }> {
   const info = providerInfo(config, providerId)
   if (!info) return { ok: false, error: '未知厂商' }
-  const key = process.env[info.apiKeyEnv]
+  if (!info.gatewayApproved) return { ok: false, error: '请先确认网关地址和 API 根路径' }
+  const key = providerKey(info, config.providers?.[providerId])
   if (!key) return { ok: false, error: '还没有填写 API Key' }
   if (!info.baseUrl || info.baseUrl.includes('<')) return { ok: false, error: '还没有填写 Base URL' }
   try {
@@ -281,7 +330,7 @@ export async function fetchProviderModels(
       !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))))
       return { ok: false, error: '模型列表地址必须使用 HTTPS 或本机 HTTP，且不能包含账号密码' }
     if (info.protocol === 'gemini') url.searchParams.set('pageSize', '1000')
-    const res = await fetchFn(url.href, { headers: { ...authHeaders(info.authHeader, key), accept: 'application/json' }, signal: AbortSignal.timeout(10_000), redirect: 'error' })
+    const res = await providerTransport(config, info, fetchFn)(url.href, { headers: { ...authHeaders(info.authHeader, key), accept: 'application/json' }, signal: AbortSignal.timeout(10_000), redirect: 'error' })
     if (!res.ok) {
       await res.body?.cancel().catch(() => {})
       return { ok: false, error: `HTTP ${res.status}${res.status === 401 || res.status === 403 ? '（API Key 无效或没有权限）' : ''}` }
@@ -364,21 +413,23 @@ export function createModel(
   if (!info) throw new Error(`未知厂商「${provider}」`)
   const { url, protocol } = endpointFor(config, provider)
   const apiKey = () => {
-    const k = process.env[info.apiKeyEnv]
+    if (!info.gatewayApproved) throw new Error('请先确认网关地址和 API 根路径')
+    const k = providerKey(info, config.providers?.[provider])
     if (!k) throw new Error(`缺少 ${info.label} 的 API Key，请在「设置 → 模型与密钥」里填写`)
     return k
   }
   const mi = modelInfo(config, ref)
   const parameters = resolveProviderParameters(protocol, provider, opts.parameters, opts.effort ?? config.reasoningEffort?.[ref])
+  const transport = providerTransport(config, info, opts.fetch)
   if (protocol === 'gemini')
-    return createGeminiModel({ baseUrl: url, model, id: `${ref}@gemini`, apiKey, parameters, fetch: opts.fetch, inputCapabilities: { images: mi.vision } })
+    return createGeminiModel({ baseUrl: url, model, id: `${ref}@gemini`, apiKey, parameters, fetch: authFetch(info.authHeader, transport), inputCapabilities: { images: mi.vision } })
   const common = {
     endpoint: url,
     model,
     id: `${ref}@${protocol}`,
     apiKey,
     parameters,
-    fetch: authFetch(info.authHeader, opts.fetch ?? globalThis.fetch),
+    fetch: authFetch(info.authHeader, transport),
     inputCapabilities: { images: mi.vision }
   }
   if (protocol === 'messages') return createMessagesModel(common)

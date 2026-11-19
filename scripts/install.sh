@@ -23,6 +23,7 @@ fi
 [ -f .env ] || cp .env.example .env
 
 echo ""
-echo "完成。启动工作台：npm start   然后打开 http://127.0.0.1:4317"
+echo "完成。启动工作台：npm start   （会自动打开浏览器并配对）"
+echo "让模型代码在离线容器里运行：安装并启动 Docker Desktop，然后运行 npm run sandbox:build"
 echo "第一次使用：在「设置 → 模型与密钥」里选厂商、填 API Key、获取模型。"
 echo "不想先填 Key：npm run demo 打开一个用本地脚本模拟的演示（不联网、不花钱）。"

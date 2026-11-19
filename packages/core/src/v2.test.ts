@@ -1,4 +1,6 @@
 import { test } from 'node:test'
+import { checkGatewayIp } from './gateway'
+
 import assert from 'node:assert/strict'
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -7,7 +9,7 @@ import type { ModelEvent } from '@evoscholar/harness'
 import {
   addProject, createGeminiModel, createModel, endpointFor, indexFiles, listDirs, listLibrary, listProviders, modelFor,
   openRuntime, openWorkspace, parseModelList, permissionGate, projectFiles, providerInfo, saveSettings, setDeliverable,
-  shellFor, testProviderConnection, usageBy, usageTotals, type HarnessGenome
+  shellFor, fetchProviderModels, testProviderConnection, usageBy, usageTotals, type EvoConfig, type HarnessGenome
 } from './index'
 
 const REPO = resolve(__dirname, '../../..')
@@ -68,7 +70,7 @@ test('Azure-style api-key header replaces Bearer; connection test reads the repl
   try {
     process.env.AZURE_API_KEY = 'az-key'
     const ws = openWorkspace(dir)
-    ws.settings.providers.azure = { baseUrl: 'https://res.openai.azure.com/openai/v1', models: [{ id: 'gpt-dep' }] }
+    ws.settings.providers.azure = { baseUrl: 'https://res.openai.azure.com/openai/v1', gatewayApproval: { base: 'https://res.openai.azure.com/openai/v1', privateAccess: false }, credentialOrigin: 'https://res.openai.azure.com', models: [{ id: 'gpt-dep' }] }
     saveSettings(ws)
     let seen: { url: string; headers: Headers; body: Record<string, unknown> } | undefined
     const fetchMock = (async (url: string, init: RequestInit) => {
@@ -257,4 +259,42 @@ test('evolution approval still calls the user in completely permissive mode', as
   assert.equal(await gate?.('run_skill', 'fixture', 'evolution'), false)
   assert.equal(asked, 1)
   assert.equal(await permissionGate(() => 'bypass')?.('run_skill', 'fixture', 'evolution'), false)
+})
+
+test('custom HTTPS supports proxy fake-IP and denies unapproved private or link-local destinations', () => {
+  const publicGateway = new URL('https://gateway.example/v1')
+  assert.doesNotThrow(() => checkGatewayIp(publicGateway, '198.18.9.2', 4317, false))
+  assert.throws(() => checkGatewayIp(publicGateway, '192.168.1.10', 4317, false), /授权/)
+  assert.doesNotThrow(() => checkGatewayIp(publicGateway, '192.168.1.10', 4317, true))
+  assert.throws(() => checkGatewayIp(publicGateway, '169.254.1.2', 4317, true), /链路本地/)
+  assert.throws(() => checkGatewayIp(publicGateway, '::ffff:169.254.1.2', 4317, true), /链路本地/)
+  assert.throws(() => checkGatewayIp(new URL('http://127.0.0.1:4317'), '127.0.0.1', 4317, true), /工作台/)
+})
+
+test('fixed public presets keep the injected transport, and a custom public gateway uses the authorized root', async (t) => {
+  const old = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'fixture-key'
+  t.after(() => {
+    if (old === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = old
+  })
+  const config = { providers: {} } as EvoConfig
+  const fixed = await fetchProviderModels(config, 'deepseek', async (input, init) => {
+    assert.equal(new URL(String(input)).hostname, 'api.deepseek.com')
+    assert.equal(init?.redirect, 'error')
+    return Response.json({ data: [{ id: 'fixture' }] })
+  })
+  assert.equal(fixed.ok, true)
+  const base = 'https://gateway.example/v1'
+  config.providers.fixture = {
+    baseUrl: base, apiKeyEnv: 'DEEPSEEK_API_KEY', credentialOrigin: new URL(base).origin,
+    gatewayApproval: { base, privateAccess: false }
+  }
+  const custom = await fetchProviderModels(config, 'fixture', async (input) => {
+    const url = new URL(String(input))
+    assert.doesNotThrow(() => checkGatewayIp(url, '198.18.0.9', 4317, false))
+    assert.equal(url.pathname, '/v1/models')
+    return Response.json({ data: [{ id: 'fixture' }] })
+  })
+  assert.equal(custom.ok, true)
 })

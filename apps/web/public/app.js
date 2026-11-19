@@ -1,6 +1,6 @@
 // EvoScholar web workbench v2 — no build step, no external requests.
 // Shell: icon rail + view router + shared state. Views live in ui/*.js.
-import { api } from './ui/api.js'
+import { api, forgetToken, post, storeToken } from './ui/api.js'
 import { icon } from './ui/icons.js'
 import { toast } from './ui/modal.js'
 import { initWorkbench } from './ui/workbench.js'
@@ -88,9 +88,14 @@ function renderRail () {
     <button class="rail-btn brand" data-go="workbench" data-home="1" data-tip="EvoScholar 首页" type="button">${icon('brand', 18)}</button>
     ${VIEWS.map((v) => `<button class="rail-btn ${view === v.id ? 'on' : ''}" data-go="${v.id}" data-tip="${v.label}" type="button" aria-label="${v.label}">${icon(v.icon, 19)}${v.id === 'trajectory' && pending ? '<i class="dotmark"></i>' : ''}</button>`).join('')}
     <div class="rail-sp"></div>
+    <button class="rail-btn" id="logout" data-tip="注销" type="button" aria-label="注销">${icon('close', 16)}</button>
     <button class="rail-btn ${view === 'settings' ? 'on' : ''}" data-go="settings" data-tip="设置" type="button" aria-label="设置">${icon('settings', 19)}</button>`
 }
 document.getElementById('rail').addEventListener('click', (e) => {
+  if (e.target.closest('#logout')) {
+    void post('/api/auth/logout').then(() => { forgetToken(); location.reload() }).catch((error) => toast(error.message, 'err'))
+    return
+  }
   const b = e.target.closest('[data-go]')
   if (!b) return
   if (b.dataset.home) { go('workbench'); workbench.home(); return }
@@ -138,11 +143,57 @@ addEventListener('mousedown', (e) => { if (popEl && !popEl.contains(e.target) &&
 addEventListener('keydown', (e) => { if (e.key === 'Escape') closePop() })
 
 // ---------------------------------------------------------------- boot
-store.refresh().then(() => {
+function showPairing(message = '') {
+  workbench?.home()
+  const existing = document.querySelector('#pairing')
+  if (existing) { existing.querySelector('output').textContent = message; return }
+  const dialog = document.createElement('dialog')
+  dialog.id = 'pairing'
+  dialog.className = 'modal'
+  dialog.innerHTML = `<form class="modal-form"><h2>配对 EvoScholar</h2>
+    <p>请输入启动终端显示的配对码。</p>
+    <label class="field-label">配对码 <input class="input" name="code" type="password" inputmode="numeric" autocomplete="off" required></label>
+    <output role="status"></output>
+    <button class="btn primary" type="submit">配对</button></form>`
+  dialog.querySelector('output').textContent = message
+  dialog.addEventListener('cancel', (event) => event.preventDefault())
+  document.body.append(dialog)
+  dialog.showModal()
+  const form = dialog.querySelector('form')
+  form.onsubmit = async (event) => {
+    event.preventDefault()
+    const submit = form.querySelector('button')
+    submit.disabled = true
+    try {
+      await pair(new FormData(form).get('code'))
+      dialog.close(); dialog.remove()
+      await boot()
+    } catch (error) {
+      form.querySelector('output').textContent = error.message
+    } finally { submit.disabled = false }
+  }
+}
+async function pair(code) {
+  const result = await post('/api/auth/pair', { code })
+  storeToken(result.token)
+}
+async function boot() {
+  await store.refresh()
   const sid = new URLSearchParams(location.search).get('s')
   const [hash, sub] = location.hash.slice(1).split(':')
-  workbench = initWorkbench()
+  workbench ??= initWorkbench()
   if (sid) workbench.open(sid)
   else workbench.home()
   go(RENDER[hash] ? hash : 'workbench', sub)
-}).catch((e) => toast(`无法连接后台：${e.message}`, 'err', 8000))
+}
+addEventListener('evo:unpaired', () => showPairing(workbench ? '会话令牌已失效，请重新配对。' : ''))
+void (async () => {
+  const auto = new URLSearchParams(location.hash.slice(1)).get('pair')
+  if (auto) {
+    try { await pair(auto) }
+    catch (error) { showPairing(error.message); return }
+    finally { history.replaceState(null, '', location.pathname + location.search) }
+  }
+  try { await boot() }
+  catch (error) { showPairing(error.status === 401 ? '' : error.message) }
+})()

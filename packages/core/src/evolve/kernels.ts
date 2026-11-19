@@ -4,12 +4,12 @@
 // patch_skill: add a point to a document skill as a new revision (session overlay until approved);
 // propose_rule: a writing rule for the user's own rule pack (trial until the user accepts it).
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, extname, join, relative, sep } from 'node:path'
 import YAML from 'yaml'
 import type { AgentTool, Json } from '@evoscholar/harness'
 import { atomicWriteFile } from '../atomic-file'
 import { inside } from '../tools/sandbox'
-import { pythonBin, runProcess } from '../tools/exec'
+import { pythonBin, runModelProcess } from '../tools/exec'
 import { objectArgs, textResult, type ToolEnv } from '../tools/types'
 import { readSkillFile, saveSkillRevision, skillNameValid, skillSource, writeSkillSource } from '../skills'
 import { validateMemoryText, type EvolveEvent, type EvolveStore } from './store'
@@ -43,7 +43,7 @@ args = json.loads(sys.argv[3])
 res = mod.run(**args)
 print('__EVO_RESULT__' + json.dumps(res, ensure_ascii=False, default=str))`
 const TEST_RUNNER = `import sys
-sys.path.insert(0, '.')
+sys.path.insert(0, sys.argv[1] if len(sys.argv) > 1 else '.')
 import test_kernel as t
 fns = [getattr(t, n) for n in sorted(dir(t)) if n.startswith('test') and callable(getattr(t, n))]
 assert fns, '测试文件里没有 test_ 开头的函数'
@@ -114,7 +114,12 @@ export function kernelTools(h: KernelHooks): AgentTool[] {
         try {
           writeFileSync(join(tmp, 'kernel.py'), a.code)
           writeFileSync(join(tmp, 'test_kernel.py'), a.test)
-          const r = await runProcess(pythonBin(h.env), ['-c', TEST_RUNNER], { ...h.env, cwd: tmp }, 120, signal ?? AbortSignal.timeout(130_000))
+          const job = {
+            host: [pythonBin(h.env), ['-c', TEST_RUNNER]] as [string, string[]],
+            sandbox: ['python', '-c', TEST_RUNNER, '/control/skill'],
+            skillDir: tmp, emptyWorkspace: true
+          }
+          const r = await runModelProcess({ ...h.env, cwd: tmp }, job, 120, signal)
           if (r.code !== 0 || !/__EVO_PASS__/.test(r.stdout)) throw new Error(`测试没有通过：\n${r.out.trim().split('\n').slice(-12).join('\n')}`)
           const n = Number(/__EVO_PASS__ (\d+)/.exec(r.stdout)?.[1] ?? 0)
           const current = skillSource(root, name)
@@ -139,14 +144,38 @@ export function kernelTools(h: KernelHooks): AgentTool[] {
           rmSync(tmp, { recursive: true, force: true })
         }
       }, 'exec'),
-    tool('run_skill', '调用技能库里的可执行技能（自进化锻造的 kernel）。args 是传给 run() 的关键字参数，文件路径相对于工作目录。',
-      { name: { type: 'string' }, args: { type: 'object' } }, ['name'], async (a, signal) => {
+    tool('run_skill', '调用锻造技能的 run 函数，或通过 file 和 argv 运行已启用的导入技能中的 Python 脚本。容器内技能资源只读。args 传给锻造技能，argv 传给附带脚本。',
+      {
+        name: { type: 'string' }, args: { type: 'object' }, file: { type: 'string' },
+        argv: { type: 'array', items: { type: 'string' } }
+      }, ['name'], async (a, signal) => {
         const name = String(a.name)
         if (!skillNameValid(name)) throw new Error('技能名无效')
         const src = skillSource(root, name)
-        const kernel = inside(root, join('skills', name, 'kernel.py'))
+        const dir = inside(root, join('skills', name))
+        if (a.file !== undefined) {
+          if (!['zip', 'github', 'folder'].includes(src.type) || !h.env.skills?.some((skill) => skill.name === name))
+            throw new Error('只有已启用的导入技能可以运行附带脚本')
+          if (typeof a.file !== 'string' || extname(a.file).toLowerCase() !== '.py')
+            throw new Error('只支持运行技能目录中的 Python 脚本')
+          const file = inside(dir, a.file)
+          const argv: unknown = a.argv ?? []
+          if (!Array.isArray(argv) || argv.length > 64 || argv.some((arg) => typeof arg !== 'string'))
+            throw new Error('argv 必须为最多 64 项的字符串数组')
+          const path = relative(dir, file).split(sep).join('/')
+          const result = await runModelProcess(h.env, {
+            host: [pythonBin(h.env), [file, ...argv]], sandbox: ['python', `/control/skill/${path}`, ...argv], skillDir: dir
+          }, 300, signal)
+          if (result.code !== 0) throw new Error(result.out.slice(-2000) || '附带脚本执行失败')
+          return result.out.slice(-6000) || '脚本执行完成'
+        }
+        const kernel = inside(dir, 'kernel.py')
         if (src.type !== 'forged' || !existsSync(kernel)) throw new Error(`没有可执行技能 ${name}`)
-        const r = await runProcess(pythonBin(h.env), ['-c', RUNNER, kernel, name.replace(/-/g, '_'), JSON.stringify(a.args ?? {})], h.env, 300, signal ?? AbortSignal.timeout(310_000))
+        const args = [name.replace(/-/g, '_'), JSON.stringify(a.args ?? {})]
+        const r = await runModelProcess(h.env, {
+          host: [pythonBin(h.env), ['-c', RUNNER, kernel, ...args]],
+          sandbox: ['python', '-c', RUNNER, '/control/skill/kernel.py', ...args], skillDir: dirname(kernel)
+        }, 300, signal)
         const m = /__EVO_RESULT__(.*)$/m.exec(r.stdout)
         if (r.code !== 0 || !m) throw new Error(r.out.trim().split('\n').slice(-10).join('\n') || `退出码 ${r.code}`)
         const current = skillSource(root, name)

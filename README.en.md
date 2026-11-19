@@ -52,11 +52,21 @@ git clone https://github.com/Dylannn-7/EvoScholar.git
 cd EvoScholar; powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-Start it and open http://127.0.0.1:4317 :
+Start it:
 
 ```bash
 npm start
 ```
+
+The browser opens and pairs automatically. Reopening the page in the same browser keeps working; to pair another browser or after the token expires, press Enter in the terminal running `npm start`. Pair again after the workbench restarts.
+
+**Code execution (recommended).** Model-written Python and commands run in an offline Linux container with no access to files outside the project and no network. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (WSL 2 backend on Windows Home), start it, and build the image once:
+
+```bash
+npm run sandbox:build
+```
+
+Behind a restricted network, point `DEBIAN_MIRROR`, `PIP_INDEX_URL` or `BASE_IMAGE` at mirrors, or build elsewhere and use `docker save` / `docker load`. Without a container, model code execution is off; "host mode" in Settings runs it with your account's permissions, asks before every run, and never applies in bypass mode. Built-in checkers (thesis and figure checks) keep using the local Python environment.
 
 1. **Settings → Models & keys**: pick a vendor → a protocol (the vendor's official default is preselected) → confirm the base URL (prefilled, editable) → paste the API key → fetch models → test the connection.
 2. **Add a project**: the "+" in the sidebar picks a local folder. Sessions work inside it; deliverables go to `evoscholar-out/<session>/`, uploads to `evoscholar-in/`, and other files are left alone unless you ask.
@@ -85,7 +95,7 @@ The Plugins page manages skills, tools, rule packs and figure styles. Skills use
 
 ## Data and privacy
 
-Everything stays on your machine: API keys in `.env`; settings in `data/settings.json`; sessions, trajectories, memory, usage and the library index in `data/evoscholar.sqlite`; your own writing rules in `data/rulepacks/user.yaml`; deliverables, uploads and a readable project memory (`.evoscholar/memory.md`) in your project folder. Child processes that run code never receive `*_API_KEY` variables; the web server listens on 127.0.0.1 only and rejects non-loopback Host headers.
+Everything stays on your machine: API keys in `.env`; settings in `data/settings.json`; sessions, trajectories, memory, usage and the library index in `data/evoscholar.sqlite`; your own writing rules in `data/rulepacks/user.yaml`; deliverables, uploads and a readable project memory (`.evoscholar/memory.md`) in your project folder. Model-written code runs in an offline container that sees only a working copy of the project and writes results back to `evoscholar-out/<session>/`; processes that run code never receive `*_API_KEY` variables. The web server listens on 127.0.0.1 only, rejects non-loopback Host headers, and requires the paired token on every API call.
 
 ## Development
 

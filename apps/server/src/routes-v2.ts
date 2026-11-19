@@ -1,14 +1,18 @@
 // v2 routes: model settings, projects, folder picker, library and usage.
+import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  DEFAULT_SANDBOX_IMAGE,
   PERMISSION_LABELS,
   PERMISSION_MODES,
   PROTOCOLS,
   addProject,
   atomicWriteFile,
   keyEnvFor,
+  localGatewayHost,
+  normalizeGatewayBase,
   consolidate,
   deleteUserRule,
   importSkill,
@@ -42,6 +46,7 @@ import {
   type Runtime,
   type UsageGroup
 } from '@evoscholar/core'
+import { serveProjectFile } from './file-preview'
 import { body, httpError, send, serveFile } from './http'
 
 export function setEnvKey(root: string, name: string, value: string) {
@@ -61,12 +66,8 @@ export function setEnvKey(root: string, name: string, value: string) {
 const PROTOCOL_IDS = PROTOCOLS.map((p) => p.id)
 
 function checkBaseUrl(raw: string): string {
-  let u: URL
-  try { u = new URL(raw) } catch { throw httpError(400, 'Base URL 格式不对') }
-  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)))
-    throw httpError(400, '远程地址必须使用 https')
-  if (u.username || u.password || u.search || u.hash) throw httpError(400, 'Base URL 不能包含账号、查询参数或锚点')
-  return u.href.replace(/\/+$/, '')
+  try { return normalizeGatewayBase(raw) }
+  catch (error) { throw httpError(400, (error as Error).message) }
 }
 
 export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Promise<void>; onOverlayChange?: () => void }) {
@@ -75,6 +76,7 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
 
   const modelsPayload = () => ({
     providers: listProviders(ws.config),
+    execution: { engine: 'docker', image: DEFAULT_SANDBOX_IMAGE, hostMode: false, ...settings().execution },
     protocols: PROTOCOLS,
     defaults: settings().defaults,
     efforts: settings().efforts,
@@ -118,8 +120,28 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
         if (!next.baseUrl) throw httpError(400, '自定义厂商需要填写 Base URL')
         if (b.models !== undefined) next.models = String(b.models).split(/[\s,]+/).filter(Boolean).slice(0, 200).map((m) => ({ id: m }))
       }
+      const proposed = providerInfo({ ...ws.config, providers: { ...ws.config.providers, [id]: { ...ws.baseProviders[id], ...next } } }, id)!
+      const base = proposed.baseUrl && !proposed.baseUrl.includes('<') ? checkBaseUrl(proposed.baseUrl) : ''
+      const origin = base ? new URL(base).origin : undefined
+      const official = isPreset && base === proposed.defaultBaseUrl
+      if (base && !official && b.confirmGateway === base) {
+        next.gatewayApproval = { base, privateAccess: b.privateGateway === true || localGatewayHost(new URL(base)) }
+      }
+      if (base && !official && next.gatewayApproval?.base !== base && (b.baseUrl !== undefined || b.key !== undefined))
+        throw httpError(409, '请确认自定义网关的地址和 API 根路径')
       if (b.key !== undefined && typeof b.key !== 'string') throw httpError(400, 'API Key 必须为字符串')
-      if (b.key !== undefined) setEnvKey(ws.root, keyEnvFor(id, next), b.key)
+      if (b.key !== undefined) {
+        if (!origin) throw httpError(400, '请先填写 Base URL')
+        const hostHash = createHash('sha256').update(origin).digest('hex').slice(0, 16).toUpperCase()
+        const envKey = official ? keyEnvFor(id, ws.baseProviders[id]) :
+          `EVO_${id.toUpperCase().replace(/-/g, '_')}_${hostHash}_API_KEY`
+        setEnvKey(ws.root, envKey, b.key)
+        next.apiKeyEnv = envKey
+        next.credentialOrigin = origin
+      } else if (official && next.credentialOrigin !== origin) {
+        delete next.credentialOrigin
+        delete next.apiKeyEnv
+      }
       settings().providers[id] = next
       saveSettings(ws)
       await hooks.resetIdleSessions()
@@ -149,6 +171,32 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
       if (!model) return send(res, 400, { error: '没有可测试的模型，请先获取模型' }), true
       const r = await testProviderConnection(ws.config, `${id}/${model}`)
       return send(res, r.ok ? 200 : 400, r.ok ? r : { error: r.error }), true
+    }
+    if (p === '/api/settings/execution/status' && method === 'GET') {
+      const state = rt.executor.status ? await rt.executor.status() : (await rt.executor.available() ? 'ready' : 'engine')
+      return send(res, 200, { state, hostMode: settings().execution?.hostMode === true }), true
+    }
+    if (p === '/api/settings/execution' && method === 'PUT') {
+      const b = await body(req, 4096)
+      const next = { ...settings().execution }
+      if (b.engine !== undefined) {
+        if (typeof b.engine !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(b.engine))
+          throw httpError(400, '请输入 PATH 中的容器命令名，例如 docker 或 podman')
+        next.engine = b.engine
+      }
+      if (b.image !== undefined) {
+        if (typeof b.image !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,199}$/.test(b.image))
+          throw httpError(400, '请输入有效的 Linux 执行镜像名称')
+        next.image = b.image
+      }
+      if (b.hostMode !== undefined) {
+        if (typeof b.hostMode !== 'boolean' || (b.hostMode && b.confirmHostMode !== true))
+          throw httpError(400, '启用宿主模式需要明确确认风险')
+        next.hostMode = b.hostMode
+      }
+      settings().execution = next
+      saveSettings(ws)
+      return send(res, 200, { execution: next }), true
     }
     if (p === '/api/settings/defaults' && method === 'PUT') {
       const b = await body(req)
@@ -233,7 +281,7 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
     if ((mm = /^\/api\/library\/(\d+)\/file$/.exec(p)) && method === 'GET') {
       const f = libraryPath(rt.db, Number(mm[1]))
       if (!f || !existsSync(f) || statSync(f).isDirectory()) throw httpError(404, '文件不存在（可能已被移动或删除）')
-      return serveFile(res, f, { projectFile: true }), true
+      return await serveProjectFile(rt, res, f, url.searchParams.get('preview') === 'first-page'), true
     }
 
     // ---------- usage ----------

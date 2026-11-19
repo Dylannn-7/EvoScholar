@@ -3,7 +3,9 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rm
 import { basename, extname, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { IMG, body, httpError, send, serveFile } from './http'
+import { serveProjectFile } from './file-preview'
 import { createV2Routes } from './routes-v2'
+import { createLocalAuth } from './local-auth'
 import {
   Bench,
   BudgetError,
@@ -128,8 +130,9 @@ function listCwd(cwd: string) {
   return out
 }
 
-export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: string[] }) {
+export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: string[]; auth?: ReturnType<typeof createLocalAuth> }) {
   const ws = rt.ws
+  const auth = opts.auth ?? createLocalAuth()
   const WEB = resolve(opts.webDir)
   const alerts = opts.alerts ?? []
   const live = new Map<string, Live>()
@@ -445,12 +448,28 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     // Mutations require a custom header, which browsers cannot send cross-site without CORS approval.
     if (req.method !== 'GET' && req.headers['x-evoscholar'] !== '1') return send(res, 403, { error: 'missing x-evoscholar header' })
     // DNS-rebinding guard: the API only answers to loopback host names.
-    const host = String(req.headers.host ?? '').replace(/:\d+$/, '')
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(host)) return send(res, 403, { error: '无效的本机 Host' })
+    const host = /^(127\.0\.0\.1|localhost|\[::1\])(?::(\d+))?$/.exec(req.headers.host ?? '')
+    if (!host || Number(host[2] ?? 80) !== req.socket.localPort)
+      return send(res, 403, { error: '无效的本机 Host' })
     if (p.startsWith('/api/') && (req.headers['sec-fetch-site'] === 'cross-site' ||
       (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)))
       return send(res, 403, { error: '工作台接口仅限同源访问' })
-    if (p.startsWith('/api/') && (await v2(req, res, url))) return
+    if (p === '/api/auth/pair' && req.method === 'POST') {
+      const credentials = await body(req, 1024)
+      const { status, ...result } = auth.exchange(credentials.code)
+      return send(res, status, result)
+    }
+    let grant: string | undefined
+    if (p === '/api' || p.startsWith('/api/')) {
+      grant = auth.verify(req.headers.authorization)
+      if (!grant) return send(res, 401, { error: '请先配对工作台' })
+      ws.config.localHttpPort = req.socket.localPort
+      if (p === '/api/auth/logout' && req.method === 'POST') {
+        auth.revoke(grant)
+        return send(res, 200, { ok: true })
+      }
+      if (await v2(req, res, url)) return
+    }
 
     if (p === '/api/state' && req.method === 'GET') {
       const g = rt.genomes.load()
@@ -629,7 +648,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     mm = m(/^\/api\/sessions\/([\w-]+)\/events$/)
     if (mm && req.method === 'GET') {
       const l = await getLive(mm[1])
-      if (res.destroyed) return
+      if (res.destroyed || !grant || !auth.watch(grant, res)) return
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
       res.write(`data: ${JSON.stringify({ type: 'hello', busy: l.busy })}\n\n`)
       l.clients.add(res)
@@ -771,7 +790,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       const cwd = sessionDirectory(mm[1])
       const f = inside(cwd, url.searchParams.get('path') ?? '')
       if (!existsSync(f) || !statSync(f).isFile()) return send(res, 404, { error: 'not found' })
-      return serveFile(res, f, { projectFile: true })
+      return await serveProjectFile(rt, res, f, url.searchParams.get('preview') === 'first-page')
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/upload$/)
     if (mm && req.method === 'POST') {
