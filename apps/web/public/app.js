@@ -28,6 +28,8 @@ export function setFxQuality (q) {
   syncFx()
 }
 export function syncFx () {
+  const main = document.getElementById('main')?.getBoundingClientRect()
+  if (main?.width) fx.call('setFocus', (main.left + main.width / 2) / innerWidth)
   fx.call('setDim', document.body.classList.contains('in-session') ? 0.4 : view === 'workbench' ? 1 : 0.3)
 }
 
@@ -130,6 +132,7 @@ export function openPop (anchor, items, opts = {}) {
   popEl = el
   return el
 }
+addEventListener('resize', () => syncFx())
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (RENDER[h] && h !== view) go(h) })
 addEventListener('mousedown', (e) => { if (popEl && !popEl.contains(e.target) && !e.target.closest('.tb.open')) closePop() })
 addEventListener('keydown', (e) => { if (e.key === 'Escape') closePop() })
