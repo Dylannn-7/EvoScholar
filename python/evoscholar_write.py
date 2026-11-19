@@ -174,7 +174,7 @@ def load_latex(main: Path) -> Doc:
             doc.notes.append(f'循环 \\input：{f.relative_to(root) if f.is_relative_to(root) else f}')
             return
         seen.add(f)
-        rel = str(f.relative_to(root)) if f.is_relative_to(root) else str(f)
+        rel = f.relative_to(root).as_posix() if f.is_relative_to(root) else str(f)
         doc.files.append(rel)
         try:
             lines = f.read_text(encoding='utf-8', errors='replace').splitlines()
@@ -267,7 +267,7 @@ def load_latex(main: Path) -> Doc:
     for n in names:
         f = root / (n if n.endswith('.bib') else n + '.bib')
         if f.exists() and lit:
-            doc.bib_files.append(str(f.relative_to(root)))
+            doc.bib_files.append(f.relative_to(root).as_posix())
             text = f.read_text(encoding='utf-8', errors='replace')
             for rec in lit.parse_bibtex(text):
                 line = text[: text.find('{' + rec['key'])].count('\n') + 1 if ('{' + rec['key']) in text else 0
@@ -278,7 +278,7 @@ def load_latex(main: Path) -> Doc:
             if bbl is not None:
                 # arXiv-style sources ship only the compiled bibliography.
                 btxt = bbl.read_text(encoding='utf-8', errors='replace')
-                doc.bib_files.append(str(bbl.relative_to(root)))
+                doc.bib_files.append(bbl.relative_to(root).as_posix())
                 items = list(re.finditer(r'\\bibitem\s*(?:\[(?:[^\[\]]|\[[^\]]*\])*\])?\s*\{([^}]+)\}', btxt))
                 for k, bm in enumerate(items):
                     end = items[k + 1].start() if k + 1 < len(items) else btxt.find('\\end{thebibliography}')
@@ -1718,4 +1718,9 @@ def _cli(argv: list[str]) -> int:
 
 
 if __name__ == '__main__':
+    for _s in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page; output is UTF-8 JSON / Chinese
+        try:
+            _s.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
     sys.exit(_cli(sys.argv[1:]))
