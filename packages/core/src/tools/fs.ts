@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, extname, join, relative, sep } from 'node:path'
 import type { Json } from '@evoscholar/harness'
+import { atomicWriteFile } from '../atomic-file'
 import { inside } from './sandbox'
 import { objectArgs, textResult, type ToolFactory } from './types'
 
@@ -29,14 +30,16 @@ export const listFiles: ToolFactory = (env) => ({
     const a = args as { path?: string; depth?: number }
     const root = inside(env.cwd, a.path ?? '.')
     const out: string[] = []
+    const cwd = realpathSync(env.cwd)
     const walk = (dir: string, d: number) => {
-      for (const name of readdirSync(dir).sort()) {
-        if (name === 'node_modules' || name === '.git') continue
-        const full = join(dir, name)
+      const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
+      for (const entry of entries) {
+        if (out.length >= 500) return
+        if (entry.name === 'node_modules' || entry.name === '.git' || entry.isSymbolicLink()) continue
+        const full = join(dir, entry.name)
         const st = statSync(full)
-        const rel = relative(env.cwd, full).split(sep).join('/')   // model-facing paths use / on every OS
+        const rel = relative(cwd, full).split('\\').join('/')   // model-facing paths use / on every OS
         out.push(st.isDirectory() ? `${rel}/` : `${rel}  (${st.size} B)`)
-        if (out.length > 500) return
         if (st.isDirectory() && d > 1) walk(full, d - 1)
       }
     }
@@ -68,7 +71,7 @@ export const readFile: ToolFactory = (env) => ({
     const file = inside(env.cwd, a.path)
     if (!existsSync(file)) return textResult(`文件不存在：${a.path}`, true)
     const st = statSync(file)
-    if (st.isDirectory()) return textResult(`${a.path} 是目录，请用 list_files`, true)
+    if (!st.isFile()) return textResult(`${a.path} 不是普通文件`, true)
     const mime = IMAGE[extname(file).toLowerCase()]
     if (mime) {
       if (st.size > 8 * 1024 * 1024) return textResult('图片超过 8 MB', true)
@@ -107,13 +110,13 @@ export const writeFile: ToolFactory = (env) => ({
     if (typeof a.content !== 'string') throw new Error('content must be a string')
     return a as Json
   },
-  authorize: async (args) => (env.approve ? env.approve('write_file', `写入文件 ${(args as { path: string }).path}`, 'edit') : true),
+  authorize: async (args, ctx) => (env.approve ? env.approve('write_file', `写入文件 ${(args as { path: string }).path}`, 'edit', ctx.signal) : true),
   async execute(args) {
     const a = args as { path: string; content: string }
     const file = inside(env.cwd, a.path)
     mkdirSync(dirname(file), { recursive: true })
     const existed = existsSync(file)
-    writeFileSync(file, a.content, 'utf8')
+    atomicWriteFile(file, a.content)
     env.trace?.({ kind: 'file.write', path: a.path, bytes: Buffer.byteLength(a.content) })
     env.onFiles?.([relative(env.cwd, file).split(sep).join('/')])
     return textResult(`${existed ? '已覆盖' : '已创建'} ${a.path}（${Buffer.byteLength(a.content)} B）`)
@@ -132,7 +135,7 @@ export const editFile: ToolFactory = (env) => ({
   },
   scheduling: 'exclusive',
   validate: (i) => objectArgs(i, ['path', 'old_text', 'new_text'], ['path', 'old_text', 'new_text']) as Json,
-  authorize: async (args) => (env.approve ? env.approve('edit_file', `修改文件 ${(args as { path: string }).path}`, 'edit') : true),
+  authorize: async (args, ctx) => (env.approve ? env.approve('edit_file', `修改文件 ${(args as { path: string }).path}`, 'edit', ctx.signal) : true),
   async execute(args) {
     const a = args as { path: string; old_text: string; new_text: string }
     const file = inside(env.cwd, a.path)
@@ -140,7 +143,7 @@ export const editFile: ToolFactory = (env) => ({
     const text = readFileSync(file, 'utf8')
     const count = text.split(a.old_text).length - 1
     if (count !== 1) return textResult(`old_text 出现了 ${count} 次，需要恰好 1 次`, true)
-    writeFileSync(file, text.replace(a.old_text, () => a.new_text), 'utf8')
+    atomicWriteFile(file, text.replace(a.old_text, () => a.new_text))
     env.trace?.({ kind: 'file.edit', path: a.path })
     env.onFiles?.([relative(env.cwd, file).split(sep).join('/')])
     return textResult(`已修改 ${a.path}`)

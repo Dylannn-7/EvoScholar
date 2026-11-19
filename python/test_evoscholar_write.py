@@ -58,6 +58,16 @@ See Section~\ref{sec:nope} and Eq.~\eqref{eq:1}.
     def tearDown(self):
         shutil.rmtree(self.d, ignore_errors=True)
 
+    def test_include_stays_within_manuscript_directory(self):
+        with tempfile.TemporaryDirectory() as sibling:
+            fixture = Path(sibling) / 'notes.tex'
+            fixture.write_text(r'\section{Fixture}', encoding='utf-8')
+            main = self.d / 'boundary.tex'
+            main.write_text(r'\input{' + fixture.as_posix() + '}', encoding='utf-8')
+            doc = Wr.load_latex(main)
+            self.assertEqual(doc.files, ['boundary.tex'])
+            self.assertIn('找不到', '\n'.join(doc.notes))
+
     def test_structure_and_locations(self):
         doc = Wr.load(self.d / 'main.tex')
         self.assertEqual(doc.files, ['main.tex', 'sections/methods.tex', 'sections/results.tex'])

@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, realpathSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { AgentTool, Json, ToolContext } from '@evoscholar/harness'
-import { TOOL_FACTORIES, checkCommand, guarded, inside, stopAllProcesses, type ToolEnv } from './tools'
+import { TOOL_FACTORIES, childEnv, checkCommand, guarded, inside, runProcess, stopAllProcesses, type ToolEnv } from './tools'
 import { BudgetError } from './budget'
 
 const ctx = (): ToolContext => ({ sessionId: 's', runId: 'r', invocationId: 'i', signal: new AbortController().signal, update() {} })
@@ -113,4 +113,43 @@ test('tool exceptions become error results; budget errors still propagate', asyn
   assert.equal(r.isError, true)
   assert.match(r.content[0].text, /t 出错：bad json/)
   await assert.rejects(boom(new BudgetError('cap', 'round')).execute({}, ctx), BudgetError)
+})
+
+test('file listings skip linked directories at the project boundary', async (t) => {
+  const { cwd, call } = setup()
+  const sibling = mkdtempSync(join(tmpdir(), 'evo-linked-'))
+  t.after(() => {
+    rmSync(cwd, { recursive: true, force: true })
+    rmSync(sibling, { recursive: true, force: true })
+  })
+  writeFileSync(join(sibling, 'linked-fixture.txt'), 'fixture')
+  symlinkSync(sibling, join(cwd, 'linked'), process.platform === 'win32' ? 'junction' : 'dir')
+  assert.doesNotMatch(text(await call('list_files', {})), /linked-fixture/)
+  rmSync(sibling, { recursive: true })
+  assert.throws(() => inside(cwd, join('linked', 'new.txt')))
+})
+
+test('child environment omits provider keys regardless of casing', (t) => {
+  const { cwd, env } = setup()
+  t.after(() => rmSync(cwd, { recursive: true, force: true }))
+  const key = 'EvoTest_Api_Key'
+  t.mock.method(Object, 'entries', ((original) => (value: object) =>
+    original(value === process.env ? { ...value, [key]: 'fixture' } : value))(Object.entries))
+  assert.equal(childEnv(env)[key], undefined)
+})
+
+test('a pre-cancelled process call does not start a child', async (t) => {
+  const { cwd, env } = setup()
+  t.after(() => rmSync(cwd, { recursive: true, force: true }))
+  const signal = AbortSignal.abort()
+  await assert.rejects(async () => runProcess(process.execPath, ['-e', 'process.exit(0)'], env, 10, signal), { name: 'AbortError' })
+})
+
+test('a child response that exceeds the stdout budget is rejected', async (t) => {
+  const { cwd, env } = setup()
+  t.after(() => rmSync(cwd, { recursive: true, force: true }))
+  const result = await runProcess(process.execPath, ['-e', 'process.stdout.write(Buffer.alloc(9 * 1024 * 1024))'], env, 10, AbortSignal.timeout(11_000))
+  assert.notEqual(result.code, 0)
+  assert.match(result.out, /输出超过/)
+  assert.ok(Buffer.byteLength(result.stdout) <= 8 * 1024 * 1024)
 })

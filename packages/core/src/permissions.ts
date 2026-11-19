@@ -13,15 +13,22 @@ export const PLAN_MODE_NOTE = '【计划模式】本回合只读：可以阅读�
 
 /**
  * Wrap the UI approval callback with the session's permission mode.
- * Undefined `ask` keeps unattended semantics (auto-approve) for evaluation runs.
+ * Unattended runs auto-approve ordinary operations outside plan mode.
  */
 export function permissionGate(mode: () => PermissionMode, ask?: ToolEnv['approve']): ToolEnv['approve'] {
-  if (!ask) return undefined
-  return async (tool: string, summary: string, kind: ApprovalKind = 'exec') => {
+  return async (tool: string, summary: string, kind: ApprovalKind = 'exec', signal) => {
+    if (signal?.aborted) return false
     const m = mode()
-    if (m === 'bypass') return true
     if (m === 'plan') return false
-    if (m === 'acceptEdits' && kind === 'edit') return true
-    return ask(tool, summary, kind)
+    if (kind !== 'evolution' && (m === 'bypass' || (m === 'acceptEdits' && kind === 'edit'))) return true
+    if (!ask) return kind !== 'evolution'
+    if (!signal) return ask(tool, summary, kind)
+    return new Promise<boolean>((resolve, reject) => {
+      const cancel = () => resolve(false)
+      signal.addEventListener('abort', cancel, { once: true })
+      Promise.resolve().then(() => signal.aborted ? false : ask(tool, summary, kind, signal))
+        .then(resolve, reject)
+        .finally(() => signal.removeEventListener('abort', cancel))
+    })
   }
 }
