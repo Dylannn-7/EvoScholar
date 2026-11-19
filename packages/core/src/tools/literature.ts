@@ -2,8 +2,10 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { runLitHelper } from './exec'
+import { setTimeout as delay } from 'node:timers/promises'
 import { atomicWriteFile } from '../atomic-file'
-import { inside } from './sandbox'
+import { MiB, readJson, readText } from '../http-body'
+import { modelPath } from './sandbox'
 import { objectArgs, textResult, type ToolEnv, type ToolFactory } from './types'
 
 export type Work = {
@@ -48,10 +50,17 @@ async function getJson(ctx: Ctx, source: string, url: string, headers: Record<st
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await fetch(url, { headers: { 'User-Agent': UA(), ...headers }, signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(20000)]) })
     ctx.env.trace?.({ kind: 'search', source, status: res.status })
-    if (res.status === 429 && attempt === 0) { await new Promise((r) => setTimeout(r, 1500)); continue }
-    if (!res.ok) throw new Error(`${source} HTTP ${res.status}`)
+    if (res.status === 429 && attempt === 0) {
+      await res.body?.cancel().catch(() => {})
+      await delay(1500, undefined, { signal: ctx.signal })
+      continue
+    }
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {})
+      throw new Error(`${source} HTTP ${res.status}`)
+    }
     const type = res.headers.get('content-type') ?? ''
-    return type.includes('json') ? res.json() : res.text()
+    return type.includes('json') ? readJson(res, 8 * MiB, `${source} 响应`) : readText(res, 8 * MiB, `${source} 响应`)
   }
 }
 
@@ -226,7 +235,7 @@ export const litSearch: ToolFactory = (env) => ({
     const save = !env.readOnly && (await env.approve?.('lit_search', '保存最近一次文献检索结果', 'edit', c.signal) ?? true)
     if (save) {
       c.signal.throwIfAborted()
-      const file = inside(env.cwd, join('.evoscholar', 'last_search.json'))
+      const file = modelPath(env, join('.evoscholar', 'last_search.json'))
       mkdirSync(dirname(file), { recursive: true })
       atomicWriteFile(file, JSON.stringify({ query: a, works }, null, 2))
     }
@@ -299,7 +308,7 @@ export const litVerify: ToolFactory = (env) => ({
     const a = args as { references?: Ref[]; file?: string }
     let refs: Ref[] = a.references ?? []
     if (a.file) {
-      const parsed = JSON.parse(await runLitHelper(env, ['parse', inside(env.cwd, a.file)], c.signal)) as { records: any[] }
+      const parsed = JSON.parse(await runLitHelper(env, ['parse', modelPath(env, a.file)], c.signal)) as { records: any[] }
       refs = parsed.records.map((r, i) => ({ id: r.key ?? String(i + 1), title: r.title, doi: r.doi, year: r.year, first_author: r.authors?.[0], arxiv: r.eprint }))
     }
     const ctx = { env, signal: c.signal }
@@ -350,7 +359,7 @@ export const pdfText: ToolFactory = (env) => ({
   authorize: async () => true,
   async execute(args, c) {
     const a = args as { path: string; pages?: number[] }
-    const file = inside(env.cwd, a.path)
+    const file = modelPath(env, a.path)
     if (!existsSync(file)) return textResult(`文件不存在：${a.path}`, true)
     const pages = JSON.parse(await runLitHelper(env, ['pages', file, (a.pages ?? []).join(',')], c.signal)) as { page: number; text: string; has_text: boolean }[]
     let out = `${basename(file)}：${pages.length} 页`
@@ -376,8 +385,8 @@ export const pdfPageImage: ToolFactory = (env) => ({
   authorize: async (args, ctx) => env.approve?.('pdf_page_image', `渲染 ${(args as { path: string }).path} 的页面`, 'edit', ctx.signal) ?? true,
   async execute(args, c) {
     const a = args as { path: string; page: number; dpi?: number }
-    const file = inside(env.cwd, a.path)
-    const out = inside(env.cwd, join('.evoscholar', 'pages', `${basename(file, '.pdf')}-p${a.page}.png`))
+    const file = modelPath(env, a.path)
+    const out = modelPath(env, join('.evoscholar', 'pages', `${basename(file, '.pdf')}-p${a.page}.png`))
     mkdirSync(dirname(out), { recursive: true })
     await runLitHelper(env, ['render', file, String(a.page), out, String(a.dpi ?? 130)], c.signal)
     return { content: [{ type: 'text', text: `${basename(file)} 第 ${a.page} 页：` }, { type: 'image', mimeType: 'image/png', source: `data:image/png;base64,${readFileSync(out).toString('base64')}`, filename: basename(out) }] }
@@ -399,9 +408,9 @@ export const litImport: ToolFactory = (env) => ({
   authorize: async (args, ctx) => env.approve?.('lit_import', `保存 ${(args as { path: string }).path} 的规范化题录`, 'edit', ctx.signal) ?? true,
   async execute(args, c) {
     const a = args as { path: string; save_as?: string }
-    const file = inside(env.cwd, a.path)
+    const file = modelPath(env, a.path)
     const r = JSON.parse(await runLitHelper(env, ['parse', file], c.signal)) as { format: string; records: any[] }
-    const target = inside(env.cwd, a.save_as ?? `${a.path.replace(/\.[^.]+$/, '')}.records.json`)
+    const target = modelPath(env, a.save_as ?? `${a.path.replace(/\.[^.]+$/, '')}.records.json`)
     atomicWriteFile(target, JSON.stringify(r.records, null, 2))
     const bad = r.records.filter((x) => x.parse_error).length
     const preview = r.records.slice(0, 10).map((x, i) => `${i + 1}. ${x.title ?? x.raw}${x.year ? ` (${x.year})` : ''}${x.venue ? ` · ${x.venue}` : ''}${x.doi ? ` · ${x.doi}` : ''}`).join('\n')

@@ -38,7 +38,11 @@ const P = {
   key: '<circle cx="7" cy="12.5" r="3.5"/><path d="M9.5 10l6-6M13.5 6l2 2"/>',
   palette: '<path d="M10 3.5a6.5 6.5 0 1 0 0 13c1 0 1.5-.6 1.5-1.4 0-.9-.8-1.2-.8-2s.6-1.3 1.6-1.3H14a2.5 2.5 0 0 0 2.5-2.5c0-3.3-2.9-5.8-6.5-5.8Z"/><circle cx="6.5" cy="9" r=".9"/><circle cx="9" cy="6.5" r=".9"/><circle cx="12.5" cy="7" r=".9"/>',
   info: '<circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6.5v.2"/>',
-  dot: '<circle cx="10" cy="10" r="3" fill="currentColor" stroke="none"/>'
+  dot: '<circle cx="10" cy="10" r="3" fill="currentColor" stroke="none"/>',
+  grid: '<rect x="3.5" y="3.5" width="5.5" height="5.5" rx="1.2"/><rect x="11" y="3.5" width="5.5" height="5.5" rx="1.2"/><rect x="3.5" y="11" width="5.5" height="5.5" rx="1.2"/><rect x="11" y="11" width="5.5" height="5.5" rx="1.2"/>',
+  list: '<path d="M7.5 5.5h9M7.5 10h9M7.5 14.5h9"/><circle cx="4" cy="5.5" r=".9" fill="currentColor" stroke="none"/><circle cx="4" cy="10" r=".9" fill="currentColor" stroke="none"/><circle cx="4" cy="14.5" r=".9" fill="currentColor" stroke="none"/>',
+  upload: '<path d="M10 13V4M6 8l4-4 4 4M4 16.5h12"/>',
+  eye: '<path d="M2.5 10s2.7-5 7.5-5 7.5 5 7.5 5-2.7 5-7.5 5-7.5-5-7.5-5Z"/><circle cx="10" cy="10" r="2.2"/>'
 }
 
 export function icon(name, size = 18, cls = '') {

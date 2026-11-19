@@ -6,7 +6,9 @@ import { join, resolve } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
 import {
   checkKernelCode, consolidate, fetchGithubSkill, installSkillFiles, kernelTools, openRuntime, openWorkspace, parseGithubUrl,
-  promote, readFolder, readUserRules, readZip, setSkillEnabled, skillSource, type ToolEnv
+  promote, readFolder, readUserRules, readZip, recordCandidateVerification, setSkillEnabled, skillSource, verifyCandidateOffline,
+  kernelIndex, readSkillText, setKernelEnabled, setSkillTrusted, skillDetail, skillUntrusted,
+  type ExecutionBackend, type ToolEnv
 } from './index'
 
 const REPO = resolve(__dirname, '../../..')
@@ -50,8 +52,20 @@ test('forged skills need approval after two successful reuses; patch_skill and p
   const cwd = join(dir, 'work'); mkdirSync(cwd)
   writeFileSync(join(cwd, 'm.csv'), 'a,b\n1,2\n3,4\n')
   const events: { kind: string; text: string }[] = []
+  const executor: ExecutionBackend = {
+    available: async () => true,
+    start: async () => { throw new Error('Unexpected daemon') },
+    run: async (_env, job) => {
+      assert.ok(job.skillDir)
+      const verify = job.emptyWorkspace
+      assert.ok(job.sandbox.some((arg) => arg.startsWith('/control/skill')))
+      const fail = verify && readFileSync(join(job.skillDir, 'test_kernel.py'), 'utf8').includes('3.0')
+      const out = verify ? (fail ? 'fixture mismatch' : '__EVO_PASS__ 1') : '__EVO_RESULT__{"n": 2, "sum_b": 6.0}'
+      return { code: fail ? 1 : 0, signal: null, out, stdout: out, timedOut: false }
+    }
+  }
   const make = (sid: string, approve?: ToolEnv['approve']) => {
-    const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => 'dev', approve }
+    const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => 'dev', approve, executor }
     const tools = kernelTools({ store: rt.evolve, sessionId: sid, env, emit: (e) => events.push(e), addOverlay: (op, target, value, reason) => rt.evolve.addOverlay({ sessionId: sid, op, target, value, reason }) })
     return (name: string, args: unknown) => tools.find((x) => x.name === name)!.execute(args as never, {} as never) as Promise<{ content: { type: string; text?: string }[]; isError?: boolean }>
   }
@@ -140,9 +154,25 @@ test('skill import from folder, zip and GitHub; enable/disable is a genome chang
   assert.match(rt.genomes.text(cand.instructions.system), /写文件后先重读一遍[\s\S]*先列目录确认真实文件名/)
   assert.equal(rt.evolve.overlays(undefined, true).find((o) => o.id === oid)!.status, 'promoted')
   assert.throws(() => consolidate(rt, { overlayIds: [oid] }), /至少一项/)
-  promote(rt, c.genome)
+  assert.throws(() => promote(rt, c.genome), /未通过离线验证/)
+  promote(rt, c.genome, { confirmUnverified: true })
   assert.equal(rt.genomes.activeId(), c.genome)
   assert.ok(readFileSync(join(dir, cand.instructions.system), 'utf8').includes('经用户批准'))
+})
+
+test('consolidated candidates require offline loopback gateway for verification and record evidence', async (t) => {
+  const dir = ws()
+  const rt = openRuntime(openWorkspace(dir))
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  const oid = rt.evolve.addOverlay({ sessionId: 's-ver', op: 'prompt.note', value: '输出 JSON 保持数值类型', reason: 'test' })
+  rt.evolve.setOverlay(oid, 'kept', 0.9)
+  const c = consolidate(rt, { overlayIds: [oid] })
+  // Remote default endpoint is refused by offline verifier.
+  await assert.rejects(() => verifyCandidateOffline(rt, c.genome), /离线 mock 网关/)
+  // Recording offline verification evidence allows promotion without confirmUnverified.
+  recordCandidateVerification(rt, c.genome, { runId: 'verify-offline-1', pass: 3, total: 3, scope: '公开示例评测集（3 题）' })
+  promote(rt, c.genome)
+  assert.equal(rt.genomes.activeId(), c.genome)
 })
 
 test('folder imports skip linked directories and enforce the input byte limit', (t) => {
@@ -169,4 +199,35 @@ test('approval requires a pending candidate record after an interrupted write', 
   rt.genomes.save(candidate)
   assert.throws(() => promote(rt, candidate.id), /缺少.*记录/)
   assert.equal(rt.genomes.activeId(), active.id)
+})
+
+test('bundled and trusted skills do not taint memories; forged skills can be switched off; detail is readable', (t) => {
+  const dir = ws()
+  const rt = openRuntime(openWorkspace(dir))
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  // Skills shipped with the app are reviewed with each release.
+  assert.equal(skillSource(dir, 'matplotlib').bundled, true)
+  assert.equal(skillUntrusted(skillSource(dir, 'matplotlib')), false)
+  assert.throws(() => setSkillTrusted(rt, 'matplotlib', false), /只有导入的技能/)
+  assert.throws(() => setSkillTrusted(rt, 'data-tables', true), /只有导入的技能/)
+  // A user import stays untrusted until the user vouches for it.
+  const files = (o: Record<string, string>) => new Map(Object.entries(o).map(([k, v]) => [k, Buffer.from(v)]))
+  installSkillFiles(dir, files({ 'SKILL.md': '---\nname: third-party\ndescription: x\n---\nbody', 'scripts/run.py': 'print(1)' }), { type: 'zip', importedAt: new Date().toISOString() })
+  writeFileSync(join(dir, 'skills', 'third-party', 'bin.dat'), 'x')
+  assert.equal(skillUntrusted(skillSource(dir, 'third-party')), true)
+  setSkillTrusted(rt, 'third-party', true)
+  assert.equal(skillUntrusted(skillSource(dir, 'third-party')), false)
+  const detail = skillDetail(dir, 'third-party')!
+  assert.match(detail.body, /body/)
+  assert.deepEqual(detail.files.map((f) => [f.path, f.text]), [['bin.dat', false], ['scripts/run.py', true]])
+  assert.equal(readSkillText(dir, 'third-party', 'scripts/run.py'), 'print(1)')
+  assert.throws(() => readSkillText(dir, 'third-party', 'bin.dat'), /文本文件/)
+  assert.throws(() => readSkillText(dir, 'third-party', '../matplotlib/SKILL.md'))
+  // Forged skills: switched off, they leave the model's list and run_skill refuses them.
+  installSkillFiles(dir, files({ 'SKILL.md': '---\nname: fit-peaks\ndescription: 拟合峰\n---\n', 'kernel.py': 'def run():\n    return 1\n', 'test_kernel.py': 'def test_run():\n    pass\n' }), { type: 'forged', kernel: true, status: 'trial' })
+  assert.match(kernelIndex(dir, ['fit-peaks']), /fit-peaks/)
+  assert.equal(skillDetail(dir, 'fit-peaks')!.kernel!['kernel.py'], 'def run():\n    return 1\n')
+  setKernelEnabled(rt, 'fit-peaks', false)
+  assert.equal(kernelIndex(dir, ['fit-peaks']), '')
+  assert.throws(() => setKernelEnabled(rt, 'third-party', false), /锻造/)
 })

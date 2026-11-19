@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { atomicWriteFile } from './atomic-file'
+import { withTransaction, type Db } from './db'
 import { inside } from './tools/sandbox'
 import { createHash } from 'node:crypto'
 import YAML from 'yaml'
@@ -40,9 +41,45 @@ export class GenomeRepo {
   activeId(): string {
     return readFileSync(inside(this.dir, 'ACTIVE'), 'utf8').trim()
   }
+  tryActiveId(): string | undefined {
+    try {
+      const id = readFileSync(inside(this.dir, 'ACTIVE'), 'utf8').trim()
+      return id || undefined
+    } catch {
+      return undefined
+    }
+  }
   setActive(id: string): void {
     this.load(id)
     atomicWriteFile(inside(this.dir, 'ACTIVE'), id + '\n')
+  }
+  /**
+   * Commit point for switching the active genome: re-reads the current active version
+   * inside BEGIN IMMEDIATE, verifies compare-and-swap against `expectedId`, executes
+   * `onCommit`, records `nextId` in `genome_state`, and only after SQLite COMMIT updates
+   * files via `afterCommit` and replaces ACTIVE via atomicWriteFile.
+   */
+  commitActiveSwitch(
+    db: Db,
+    expectedId: string,
+    nextId: string,
+    opts: { onCommit?: () => void; afterCommit?: () => void } = {}
+  ): void {
+    this.load(nextId)
+    const now = new Date().toISOString()
+    withTransaction(db, () => {
+      const row = db.prepare(`SELECT value FROM genome_state WHERE key = 'active'`).get() as { value: string } | undefined
+      const fileActive = this.tryActiveId()
+      const current = row?.value ?? fileActive
+      if (current !== expectedId || (fileActive && fileActive !== expectedId)) {
+        throw new Error(`生效版本已并发变更为 ${current ?? fileActive}（预期 ${expectedId}），已放弃切换，请刷新后重试`)
+      }
+      opts.onCommit?.()
+      db.prepare(`INSERT INTO genome_state (key, value, updated_at) VALUES ('active', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(nextId, now)
+    })
+    opts.afterCommit?.()
+    atomicWriteFile(inside(this.dir, 'ACTIVE'), nextId + '\n')
   }
   list(): string[] {
     return readdirSync(this.dir).filter((f) => f.endsWith('.yaml')).map((f) => f.slice(0, -5)).sort()
@@ -64,21 +101,51 @@ export class GenomeRepo {
     const nums = this.list().map((id) => Number(/^g-(\d+)$/.exec(id)?.[1] ?? -1))
     return `g-${String(Math.max(-1, ...nums) + 1).padStart(4, '0')}`
   }
-  /** Manual edit (e.g. switching models in Settings) recorded as a child genome, then activated. */
-  deriveManual(patch: (g: HarnessGenome) => void, note: string): HarnessGenome {
+  /** Manual edit (e.g. switching models or skills) recorded as a child genome, then activated. */
+  deriveManual(patch: (g: HarnessGenome) => void, note: string, db?: Db): HarnessGenome {
     const parent = this.load()
-    const child: HarnessGenome = JSON.parse(JSON.stringify(parent))
-    child.id = this.nextId()
-    child.parent = parent.id
-    child.createdBy = 'manual'
-    child.createdAt = new Date().toISOString()
+    if (!db) {
+      const child: HarnessGenome = JSON.parse(JSON.stringify(parent))
+      child.id = this.nextId()
+      child.parent = parent.id
+      child.createdBy = 'manual'
+      child.createdAt = new Date().toISOString()
+      child.status = 'active'
+      child.note = note
+      patch(child)
+      this.save(child)
+      parent.status = 'archived'
+      this.save(parent)
+      this.setActive(child.id)
+      return child
+    }
+    const now = new Date().toISOString()
+    let child!: HarnessGenome
+    withTransaction(db, () => {
+      const row = db.prepare(`SELECT value FROM genome_state WHERE key = 'active'`).get() as { value: string } | undefined
+      const fileActive = this.tryActiveId()
+      const current = row?.value ?? fileActive
+      if (current !== parent.id || (fileActive && fileActive !== parent.id)) {
+        throw new Error(`生效版本已并发变更为 ${current ?? fileActive}（预期 ${parent.id}），已放弃更改，请刷新后重试`)
+      }
+      child = JSON.parse(JSON.stringify(parent))
+      child.id = this.nextId()
+      child.parent = parent.id
+      child.createdBy = 'manual'
+      child.createdAt = now
+      child.status = 'candidate'
+      child.note = note
+      patch(child)
+      this.save(child)
+      this.hash(child)
+      db.prepare(`INSERT INTO genome_state (key, value, updated_at) VALUES ('active', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(child.id, now)
+    })
     child.status = 'active'
-    child.note = note
-    patch(child)
     this.save(child)
     parent.status = 'archived'
     this.save(parent)
-    this.setActive(child.id)
+    atomicWriteFile(inside(this.dir, 'ACTIVE'), child.id + '\n')
     return child
   }
   /** Read a prompt reference like "prompts/system@v1.md" (or inline text). */

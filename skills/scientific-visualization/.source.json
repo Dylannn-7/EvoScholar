@@ -2,5 +2,6 @@
   "type": "github",
   "origin": "https://github.com/K-Dense-AI/scientific-agent-skills/tree/main/skills/scientific-visualization",
   "license": "MIT",
-  "importedAt": "2026-11-18T17:07:33.881Z"
+  "importedAt": "2026-11-18T17:07:33.881Z",
+  "bundled": true
 }

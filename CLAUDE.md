@@ -19,7 +19,11 @@ npm install && npm run build        # tsc -b for harness, core, cli, server
 npm test                            # node:test suites (core + server)
 (cd python && python3 -m unittest)  # Python toolkit tests (or data/pyenv-*/bin/python)
 npm run setup:python                # per-platform venv: data/pyenv-<platform>-<arch>
-npm start                           # web workbench at http://127.0.0.1:4317
+npm start                           # web workbench at http://127.0.0.1:4317 (auto-pairs the browser)
+npm run app                         # desktop app (Electron, apps/desktop)
+npm run dist                        # desktop installers into release/ (dmg, exe; unsigned)
+npm run app:smoke                   # desktop smoke test (no pairing, API auth still enforced)
+npm run sandbox:build               # offline Linux image for model-written code (needs Docker)
 npm run es -- <cmd>                 # CLI: chat | ask | budget | providers | genome
 npm run es -- ask --category dev --yes --cwd <dir> "<prompt>"   # one-shot, auto-approve tools
 npm run demo                        # zero-cost interactive demo: scripted model + sample project
@@ -44,8 +48,12 @@ Evaluation tasks (private, local only; regression guard, not the evolution drive
   usage only. The harness per-turn step limit stays, to stop runaway loops.
 - Evolution must never modify `evoscholar.config.json`, permission policy, guards, or raise
   step limits; persisting harness changes to a genome always needs the user's approval.
-- Tools stay sandboxed to the session cwd (= the project folder; `inside()`, `checkCommand()`),
-  validate their input, and route side effects through `env.approve` (permission modes decide).
+- Tools stay sandboxed to the session cwd (= the project folder; model-facing paths go through
+  `modelPath()`, which also refuses the app's own files), validate their input, and route side
+  effects through `env.approve` (permission modes decide).
+- Model-written code (run_python, run_command, start_process, run_skill) goes through the
+  execution backend: offline container by default, host mode only when the user opted in.
+- Every HTTP API call needs the per-launch bearer token; never add an unauthenticated route.
 - Model-facing child processes never receive `*_API_KEY` env vars (`childEnv`).
 - Must work on macOS and Windows: use `node:path`, no shell-specific syntax in tools.
 - Every change: `npm run build && npm test` green; add tests for new tools (mock network).

@@ -1,0 +1,7 @@
+# matplotlib indexes only the first face of a .ttc, so Debian's Noto CJK collections
+# register as "Noto Sans/Serif CJK JP". They still cover simplified Chinese.
+backend: Agg
+font.family: sans-serif
+font.sans-serif: Noto Sans CJK JP, Noto Sans CJK SC, DejaVu Sans
+font.serif: Noto Serif CJK JP, Noto Serif CJK SC, DejaVu Serif
+axes.unicode_minus: False

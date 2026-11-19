@@ -1,12 +1,17 @@
 import type { AgentTool } from '@evoscholar/harness'
 import type { Ledger } from '../budget'
-import type { BudgetCategory, Workspace } from '../config'
+import type { ExecutionBackend } from '../execution'
+import type { BudgetCategory, PermissionMode, Workspace } from '../config'
 import type { SkillRef } from '../skills'
 
 export type ToolEnv = {
   ws: Workspace
   /** Session working directory; file and process tools cannot leave it. */
   cwd: string
+  executor?: ExecutionBackend
+  permission?: () => PermissionMode
+  /** Unattended calls cannot opt in to host execution. */
+  hostExecutionAllowed?: () => boolean
   ledger: Ledger
   category: () => BudgetCategory
   sessionId?: string

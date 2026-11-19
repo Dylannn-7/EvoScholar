@@ -1,22 +1,30 @@
 // Workbench: project tree, transparent conversation, composer (model / effort / permission / files / @).
 import { $, closePop, fx, go, openPop, store, syncFx } from '../app.js'
-import { ago, api, del, fmtSize, patch, post } from './api.js'
+import { ago, api, apiFetch, del, fmtSize, loadApiImages, patch, post } from './api.js'
+import { openEventStream } from './stream.js'
 import { icon } from './icons.js'
 import { formatToolSummary, md } from './markdown.js'
 import { confirmDialog, esc, openModal, promptDialog, toast } from './modal.js'
+import { chooseFolder } from './folder-picker.js'
 import { openFilePreviewModal, openReportReviewModal } from './review.js'
 
 const PERMS = {
-  ask: { label: '询问', desc: '写文件和执行命令前都先问你', icon: 'shield' },
-  acceptEdits: { label: '自动接受编辑', desc: '写文件自动进行，执行命令前问你', icon: 'edit' },
-  plan: { label: '计划', desc: '只读分析，先给计划，确认后再执行', icon: 'brain' },
-  bypass: { label: '完全放行', desc: '全部自动执行（仍限制在项目文件夹内）', icon: 'bolt' }
+  ask: { label: '询问', desc: '写文件和执行前询问', icon: 'shield' },
+  acceptEdits: { label: '自动接受编辑', desc: '自动写文件，执行前询问', icon: 'edit' },
+  plan: { label: '计划', desc: '只读，先给计划', icon: 'brain' },
+  bypass: { label: '完全放行', desc: '全部自动执行', icon: 'bolt' }
 }
-const EXAMPLES = [
-  ['文献', '检索 2024 年以来片上光学神经网络的综述，按年份列出 5 篇并核验引用'],
-  ['出图', '把附件里的透射谱拟合成洛伦兹线型，给出中心波长、FWHM 和 Q 值，按 Optica 规范出图'],
-  ['写作', '按华科博士论文规范检查 @main.tex，列出问题和依据']
+// Runtime messages that can reach the transcript, in the user's language.
+const ERRORS = [
+  [/Resolve pending tools|Reconcile uncertain tool effects|Missing pending tool/, '上一轮被中途停止，请重新发送'],
+  [/requires explicit recovery|Recovery identity changed/, '会话状态需要恢复，请重新打开这个会话'],
+  [/aborted|AbortError/i, '已停止'],
+  [/fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|network/i, '无法连接模型服务，请检查网络和厂商设置']
 ]
+const readableError = (message = '') => {
+  const hit = ERRORS.find(([re]) => re.test(message))
+  return hit ? hit[1] : /[\u4e00-\u9fa5]/.test(message) ? message : `出错了：${message}`
+}
 const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v) } catch {} }
 
 export function initWorkbench () {
@@ -69,13 +77,13 @@ export function initWorkbench () {
       const open = W.openProjects.has(g.id) || list.some((s) => s.id === W.current)
       const isCur = (W.project || 'drafts') === g.id
       return `<div class="proj ${open ? 'open' : ''} ${isCur ? 'current' : ''}" data-p="${esc(g.id)}">
-        <div class="proj-row" title="${esc(g.path || '没有归属项目的会话（存放在 EvoScholar 数据目录）')}">
+        <div class="proj-row" title="${esc(g.path || '')}">
           <span class="caret">${icon('chevron', 13)}</span>${icon(g.id === 'drafts' ? 'file' : 'folder', 15)}<span class="name">${esc(g.name)}</span>
-          <span class="acts"><button class="icon-btn" data-act="new" data-tip="在此项目新建会话" type="button">${icon('plus', 14)}</button>${g.id !== 'drafts' ? `<button class="icon-btn" data-act="pmenu" type="button">${icon('more', 14)}</button>` : ''}</span>
+          <span class="acts"><button class="icon-btn" data-act="new" data-tip="在此项目新建会话" type="button">${icon('plus', 14)}</button>${g.id !== 'drafts' ? `<button class="icon-btn" data-act="pmenu" title="项目操作" type="button">${icon('more', 14)}</button>` : ''}</span>
         </div>
         <div class="sess-list">${list.length ? list.map((s) => `<div class="sess ${s.id === W.current ? 'on' : ''}" data-s="${esc(s.id)}">
             ${s.running ? '<i class="run"></i>' : ''}<span class="t">${esc(s.title || s.id)}</span><span class="when">${esc(ago(s.last || s.created_at))}</span>
-            <button class="icon-btn menu" data-act="smenu" type="button">${icon('more', 14)}</button></div>`).join('') : '<div class="sess-empty">还没有会话</div>'}</div>
+            <button class="icon-btn menu" data-act="smenu" title="会话操作" type="button">${icon('more', 14)}</button></div>`).join('') : '<div class="sess-empty">还没有会话</div>'}</div>
       </div>`
     }).join('')
   }
@@ -99,16 +107,16 @@ export function initWorkbench () {
     openPop(anchor, [
       { label: '重命名', icon: 'edit', onPick: async () => { const n = await promptDialog({ title: '重命名项目', defaultValue: p.name }); if (n) { await patch(`/api/projects/${pid}`, { name: n }); await refresh() } } },
       { label: '在资料空间查看', icon: 'library', onPick: () => go('library', { project: pid }) },
-      { label: '从列表移除', desc: '只移除记录，不会删除文件夹里的任何文件', icon: 'archive', onPick: async () => { await patch(`/api/projects/${pid}`, { archived: true }); if (W.project === pid) { W.project = null; LS('evo.project', null) } await refresh() } }
+      { label: '从列表移除', desc: '不删除文件', icon: 'archive', onPick: async () => { await patch(`/api/projects/${pid}`, { archived: true }); if (W.project === pid) { W.project = null; LS('evo.project', null) } await refresh() } }
     ])
   }
   function sessionMenu (anchor, sid) {
     const s = S().sessions.find((x) => x.id === sid)
     openPop(anchor, [
-      { label: '重命名', icon: 'edit', onPick: async () => { const n = await promptDialog({ title: '重命名会话', defaultValue: s.title }); if (n) { await patch(`/api/sessions/${sid}`, { title: n }); await refresh() } } },
+      { label: '重命名', icon: 'edit', onPick: async () => { const n = await promptDialog({ title: '重命名会话', defaultValue: s.title }); if (n) { await patch(`/api/sessions/${sid}`, { title: n }); if (W.current === sid && W.session) { W.session.title = n; renderHead() } await refresh() } } },
       { label: s.pinned ? '取消置顶' : '置顶', icon: 'pin', onPick: async () => { await patch(`/api/sessions/${sid}`, { pinned: !s.pinned }); await refresh() } },
       { label: '会话文件', icon: 'library', onPick: () => go('library', { session: sid }) },
-      { label: '删除会话', icon: 'trash', desc: s.projectId ? '项目文件夹里的文件会保留' : '会同时删除草稿文件夹', onPick: async () => {
+      { label: '删除会话', icon: 'trash', desc: s.projectId ? '保留项目文件' : '同时删除草稿文件', onPick: async () => {
         if (!(await confirmDialog({ title: '删除会话', message: `删除「${s.title || sid}」？对话记录不可恢复。`, confirmText: '删除', danger: true }))) return
         await del(`/api/sessions/${sid}`)
         if (W.current === sid) W.home()
@@ -118,51 +126,26 @@ export function initWorkbench () {
   }
   async function refresh () { await store.refresh(); renderTree(); renderBar() }
 
-  // ------------------------------------------------------------ folder picker
-  function pickFolder () {
-    let cur = null
-    openModal({
-      title: '添加项目文件夹',
-      wide: true,
-      bodyHtml: `<p class="modal-msg">选择一个本地文件夹作为项目。会话在这个文件夹里工作，交付文件写到 <code>evoscholar-out/</code>，上传的文件放在 <code>evoscholar-in/</code>，不会改动其他已有文件（除非你明确要求）。</p>
-        <div class="inline" style="margin:12px 0"><input class="input" id="fpPath" placeholder="也可以直接粘贴文件夹的完整路径"><button class="btn ghost small" id="fpGo" type="button">前往</button></div>
-        <div id="fpRoots" class="seg-tabs"></div>
-        <div id="fpList" style="max-height:46vh;overflow:auto;border-radius:12px;background:rgba(0,0,0,.25);padding:4px"></div>
-        <div class="modal-actions"><span class="muted" id="fpSel" style="margin-right:auto;font-size:12px"></span><button class="btn ghost" data-x type="button">取消</button><button class="btn primary" id="fpOk" type="button">添加这个文件夹</button></div>`,
-      onMount: (el, close) => {
-        const load = async (path) => {
-          try {
-            const r = await api(`/api/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`)
-            cur = r.path
-            el.querySelector('#fpPath').value = r.path
-            el.querySelector('#fpSel').textContent = r.path
-            el.querySelector('#fpRoots').innerHTML = r.roots.map((x) => `<button type="button" data-d="${esc(x)}">${esc(x)}</button>`).join('')
-            el.querySelector('#fpList').innerHTML = (r.parent ? `<div class="sess" data-d="${esc(r.parent)}">${icon('chevron', 13)}<span class="t">上一级</span></div>` : '') +
-              (r.dirs.length ? r.dirs.map((d) => `<div class="sess" data-d="${esc(d.path)}">${icon('folder', 15)}<span class="t">${esc(d.name)}</span></div>`).join('') : '<div class="sess-empty">没有子文件夹</div>')
-          } catch (err) { toast(err.message, 'err') }
-        }
-        el.addEventListener('click', (e) => { const d = e.target.closest('[data-d]'); if (d) load(d.dataset.d) })
-        el.querySelector('#fpGo').onclick = () => load(el.querySelector('#fpPath').value.trim())
-        el.querySelector('[data-x]').onclick = close
-        el.querySelector('#fpOk').onclick = async () => {
-          try {
-            const r = await post('/api/projects', { path: el.querySelector('#fpPath').value.trim() || cur })
-            W.project = r.project.id
-            LS('evo.project', W.project)
-            W.openProjects.add(r.project.id)
-            close()
-            await refresh()
-            toast(`已添加项目「${r.project.name}」`, 'ok')
-            W.home()
-          } catch (err) { toast(err.message, 'err') }
-        }
-        load(null)
-      }
-    })
+  // ------------------------------------------------------------ add a project folder
+  async function pickFolder () {
+    const path = await chooseFolder({ title: '添加项目文件夹', confirmText: '添加这个文件夹' })
+    if (!path) return
+    try {
+      const r = await post('/api/projects', { path })
+      W.project = r.project.id
+      LS('evo.project', W.project)
+      W.openProjects.add(r.project.id)
+      await refresh()
+      toast(`已添加项目「${r.project.name}」`, 'ok')
+      W.home()
+    } catch (err) { toast(err.message, 'err') }
   }
 
   // ------------------------------------------------------------ composer bar
   function renderBar () {
+    // A remembered project can disappear (removed, or another workspace); fall back to drafts.
+    const projects = S().projects
+    if (W.project && projects && !projects.some((p) => p.id === W.project)) { W.project = null; LS('evo.project', null) }
     const m = findModel(W.model)
     const effCap = m?.m.reasoningEffort
     const proj = (S().projects || []).find((p) => p.id === (W.session ? W.session.projectId : W.project))
@@ -187,7 +170,7 @@ export function initWorkbench () {
     if (k === 'project') {
       return openPop(b, [
         ...(S().projects || []).map((p) => ({ label: p.name, desc: p.path, icon: 'folder', checked: W.project === p.id, onPick: () => { W.project = p.id; LS('evo.project', p.id); renderBar(); renderTree() } })),
-        { label: '草稿', desc: '不归属任何项目', icon: 'file', checked: !W.project, onPick: () => { W.project = null; LS('evo.project', null); renderBar(); renderTree() } },
+        { label: '草稿', icon: 'file', checked: !W.project, onPick: () => { W.project = null; LS('evo.project', null); renderBar(); renderTree() } },
         { label: '添加项目文件夹…', icon: 'folderPlus', onPick: pickFolder }
       ])
     }
@@ -201,7 +184,7 @@ export function initWorkbench () {
     if (k === 'effort') {
       const m = findModel(W.model)
       const vals = m?.m.reasoningEffort?.values || []
-      return openPop(b, [{ group: `思考程度 · ${m?.m.reasoningParam || ''}` }, { label: '默认', desc: '不发送该参数，使用厂商默认', checked: !W.effort, onPick: () => { W.effort = null; renderBar() } },
+      return openPop(b, [{ group: `思考程度 · ${m?.m.reasoningParam || ''}` }, { label: '默认', checked: !W.effort, onPick: () => { W.effort = null; renderBar() } },
         ...vals.map((v) => ({ label: v, checked: W.effort === v, onPick: () => { W.effort = v; renderBar() } }))])
     }
     if (k === 'model') {
@@ -257,7 +240,7 @@ export function initWorkbench () {
       if (pid) files = (await api(`/api/projects/${pid}/files?q=${encodeURIComponent(query)}`)).files
       else if (W.current) files = (await api(`/api/sessions/${W.current}/files`)).files.map((f) => ({ path: f.path, size: f.size }))
     } catch {}
-    if (!files.length) return toast(pid || W.current ? '没有可引用的文件' : '草稿会话还没有文件；可以先选择一个项目', 'info')
+    if (!files.length) return toast(pid || W.current ? '没有可引用的文件' : '没有可引用的文件', 'info')
     openPop(anchor, files.slice(0, 200).map((f) => ({ label: f.path, right: fmtSize(f.size), icon: /\.(png|jpe?g|svg|gif|webp)$/i.test(f.path) ? 'image' : 'file', onPick: () => {
       if (!W.refs.includes(f.path)) W.refs.push(f.path)
       input.value = input.value.replace(/@[^\s@]*$/, '')
@@ -374,10 +357,15 @@ export function initWorkbench () {
     return d
   }
   function finishStep (d, text, isError) {
+    const denied = isError && /^(Permission denied|Host guard denied)/.test(text || '')
+    const stopped = isError && /^已停止：/.test(text || '')
     d.classList.add(isError ? 'err' : 'done')
+    if (denied || stopped) d.classList.add('denied')
     $('.res', d).textContent = text || ''
     if (!isError && ['note_lesson', 'tune_harness', 'patch_skill', 'propose_rule'].includes(d.dataset.evo)) revertBtn(d, text)
-    if (d.dataset.t0) $('.ms', d).textContent = `${((Date.now() - Number(d.dataset.t0)) / 1000).toFixed(1)}s`
+    if (denied) $('.ms', d).textContent = '已拦截'
+    else if (stopped) $('.ms', d).textContent = '已停止'
+    else if (d.dataset.t0) $('.ms', d).textContent = `${((Date.now() - Number(d.dataset.t0)) / 1000).toFixed(1)}s`
   }
   function feedbackEl () {
     const f = document.createElement('div')
@@ -420,9 +408,10 @@ export function initWorkbench () {
       if (!fresh.length || !target) return
       const box = document.createElement('div')
       box.className = 'turn-files'
-      box.innerHTML = fresh.slice(0, 12).map((f) => `<span class="file-chip ${f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) ? 'thumb' : ''}" data-lib="${f.id}" data-path="${esc(f.path)}">${f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) ? `<img src="/api/library/${f.id}/file" alt="">` : icon('file', 14)}<span>${esc(f.path.split('/').pop())}</span></span>`).join('')
+      box.innerHTML = fresh.slice(0, 12).map((f) => `<span class="file-chip ${f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) ? 'thumb' : ''}" data-lib="${f.id}" data-path="${esc(f.path)}">${f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) ? `<img data-api-image="/api/library/${f.id}/file" alt="">` : icon('file', 14)}<span>${esc(f.path.split('/').pop())}</span></span>`).join('')
       box.onclick = (e) => { const c = e.target.closest('[data-lib]'); if (c) openFilePreviewModal(W.current, c.dataset.path, `/api/library/${c.dataset.lib}/file`) }
       target.el.appendChild(box)
+      loadApiImages(box)
     } catch {}
   }
   function setBusy (b) {
@@ -509,6 +498,7 @@ export function initWorkbench () {
         break
       }
       case 'approval': {
+        if ([...inner.querySelectorAll('[data-id]')].some((card) => card.dataset.id === e.id)) break
         const c = document.createElement('div')
         c.className = 'card-inline'
         c.dataset.id = e.id
@@ -516,16 +506,24 @@ export function initWorkbench () {
           <div class="acts">${e.kind === 'edit' ? '<button class="btn ghost small" data-a="edits" type="button">本会话自动接受编辑</button>' : ''}<button class="btn ghost small" data-a="deny" type="button">拒绝</button><button class="btn primary small" data-a="allow" type="button">允许</button></div>`
         c.onclick = async (ev) => {
           const a = ev.target.closest('[data-a]')?.dataset.a
-          if (!a) return
-          if (a === 'edits') { W.permission = 'acceptEdits'; renderBar(); await patch(`/api/sessions/${W.current}/settings`, { permission: 'acceptEdits' }) }
-          await post(`/api/sessions/${W.current}/approve/${e.id}`, { allow: a !== 'deny' })
+          if (!a || c.classList.contains('done') || c.dataset.busy) return
+          c.dataset.busy = '1'
+          c.querySelectorAll('button').forEach((b) => { b.disabled = true })
+          try {
+            if (a === 'edits') { W.permission = 'acceptEdits'; renderBar(); await patch(`/api/sessions/${W.current}/settings`, { permission: 'acceptEdits' }) }
+            await post(`/api/sessions/${W.current}/approve/${e.id}`, { allow: a !== 'deny' })
+          } catch (err) {
+            delete c.dataset.busy
+            c.querySelectorAll('button').forEach((b) => { b.disabled = false })
+            toast(err.message, 'err')
+          }
         }
         inner.appendChild(c)
         break
       }
       case 'approval-resolved': {
         const c = inner.querySelector(`.card-inline[data-id="${e.id}"]`)
-        if (c) { c.classList.add('done'); $('.head span', c).textContent = e.allow ? '已允许' : '已拒绝' }
+        if (c) { c.classList.add('done'); c.querySelectorAll('button').forEach((b) => { b.disabled = true }); $('.head span', c).textContent = e.allow ? '已允许' : '已拒绝' }
         fx.call('setState', 'thinking')
         break
       }
@@ -541,27 +539,37 @@ export function initWorkbench () {
         const c = document.createElement('div')
         c.className = 'card-inline choice'
         c.dataset.id = e.id
-        c.innerHTML = `<div class="head">${icon('brain', 15)}<span>${esc(e.question)}</span></div><div class="opts">${e.options.map((o, i) => `<button type="button" class="opt" data-i="${i}"><b>${esc(o.label)}</b>${o.detail ? `<span>${esc(o.detail)}</span>` : ''}</button>`).join('')}</div><div class="hint">你的选择会记为偏好，以后同类决定会参考它。</div>`
+        c.innerHTML = `<div class="head">${icon('brain', 15)}<span>${esc(e.question)}</span></div><div class="opts">${e.options.map((o, i) => `<button type="button" class="opt" data-i="${i}"><b>${esc(o.label)}</b>${o.detail ? `<span>${esc(o.detail)}</span>` : ''}</button>`).join('')}</div>`
         c.onclick = async (ev) => {
           const b = ev.target.closest('[data-i]')
-          if (!b || c.classList.contains('done')) return
+          if (!b || c.classList.contains('done') || c.dataset.busy) return
+          c.dataset.busy = '1'
           b.classList.add('on')
-          await post(`/api/sessions/${W.current}/choice/${e.id}`, { index: Number(b.dataset.i) })
+          try { await post(`/api/sessions/${W.current}/choice/${e.id}`, { index: Number(b.dataset.i) }) }
+          catch (err) { delete c.dataset.busy; b.classList.remove('on'); toast(err.message, 'err') }
         }
         inner.appendChild(c)
         break
       }
       case 'choice-resolved': {
         const c = inner.querySelector(`.card-inline[data-id="${e.id}"]`)
-        if (c) c.classList.add('done')
+        if (c) { c.classList.add('done'); c.querySelectorAll('button').forEach((b) => { b.disabled = true }) }
         fx.call('setState', 'thinking')
         break
       }
-      case 'compaction': if (e.status === 'started') banner('上下文较长，正在压缩早期对话……'); else banner(''); break
+      case 'compaction': if (e.status === 'started') banner('正在压缩上下文…'); else banner(''); break
       case 'warning': banner(e.message); break
-      case 'error': inner.insertAdjacentHTML('beforeend', `<div class="error-line">${esc(e.message)}</div>`); break
-      case 'status': if (e.status === 'running') setBusy(true); break
+      case 'error': inner.insertAdjacentHTML('beforeend', `<div class="error-line">${esc(readableError(e.message))}</div>`); break
+      case 'status':
+        if (e.status === 'running') setBusy(true)
+        else if (e.status === 'cancelled' || e.status === 'blocked') inner.insertAdjacentHTML('beforeend', '<div class="stop-line">已停止</div>')
+        break
       case 'done': {
+        // Unanswered cards cannot be answered once the turn has ended.
+        for (const c of inner.querySelectorAll('.card-inline:not(.done)')) {
+          c.classList.add('done', 'expired')
+          c.querySelectorAll('button').forEach((b) => { b.disabled = true })
+        }
         if (W.think) { W.think.classList.add('done'); W.think = null }
         const ans = W.live || W.answer
         if (ans) { ans.el.innerHTML = md(ans.text); ans.el.appendChild(feedbackEl()) }
@@ -575,16 +583,12 @@ export function initWorkbench () {
     if (thread.scrollHeight - thread.scrollTop - thread.clientHeight < 240) scroll()
   }
   function banner (text) { const b = $('#banner'); b.hidden = !text; b.innerHTML = esc(text || '') }
-  function setFresh (on) { document.body.classList.toggle('fresh', on); renderSuggest(on) }
-  function renderSuggest (show) {
-    $('#suggest').innerHTML = show ? EXAMPLES.map(([k, t]) => `<button type="button" class="sg"><span>${k}</span>${esc(t)}</button>`).join('') : ''
-    $('#suggest').querySelectorAll('.sg').forEach((b) => (b.onclick = () => { input.value = b.lastChild.textContent; autosize(); input.focus() }))
-  }
+  function setFresh (on) { document.body.classList.toggle('fresh', on) }
   function renderHead () {
     const s = W.session
     if (!s) { $('#convHead').innerHTML = ''; return }
     const proj = (S().projects || []).find((p) => p.id === s.projectId)
-    $('#convHead').innerHTML = `<div class="tt"><h2>${esc(s.title || s.id)}</h2><div class="meta" title="${esc(s.cwd)}">${esc(proj ? proj.name : '草稿')} · ${esc(s.genome)}</div></div>
+    $('#convHead').innerHTML = `<div class="tt"><h2>${esc(s.title || s.id)}</h2><div class="meta" title="${esc(s.cwd)}">${esc(proj ? proj.name : '草稿')}</div></div>
       <button class="icon-btn" data-h="files" title="本会话的文件" type="button">${icon('library', 17)}</button>
       <button class="icon-btn" data-h="more" title="更多" type="button">${icon('more', 17)}</button>`
   }
@@ -610,7 +614,7 @@ export function initWorkbench () {
     banner('')
     $('#convHead').innerHTML = ''
     const hasModel = !!W.model
-    inner.innerHTML = `<div class="greet"><div class="eyebrow">EVOSCHOLAR · ${esc(S().genome?.id || '')}</div><h1>今天想研究什么？</h1><p>${hasModel ? '文献检索与核验、数据处理与出图、论文规范检查。每次改进都写进可审计的 genome，经你批准才上线。' : '先在设置里接入一个模型厂商，填好 API Key 就能开始。'}</p>${hasModel ? '' : '<p style="margin-top:14px"><button class="btn primary" id="goSetup" type="button">接入模型</button></p>'}</div>`
+    inner.innerHTML = `<div class="greet"><h1>今天想研究什么？</h1>${hasModel ? '' : '<p style="margin-top:14px"><button class="btn primary" id="goSetup" type="button">接入模型</button></p>'}</div>`
     $('#goSetup')?.addEventListener('click', () => go('settings', 'models'))
     setFresh(true)
     renderBar(); renderTree(); syncFx()
@@ -622,38 +626,49 @@ export function initWorkbench () {
     W.current = id; W.live = null; W.think = null; W.calls.clear()
     document.body.classList.add('in-session')
     renderTree()
-    try {
-      W.session = await api(`/api/sessions/${id}`)
-    } catch (err) { toast(err.message, 'err'); return W.home() }
-    resetChoices()
-    renderHead(); renderBar(); banner('')
-    inner.innerHTML = ''
-    const byTurn = new Map()
-    for (const ev of W.session.evolve || []) {
-      if (['reflect', 'adjust', 'choice'].includes(ev.kind) || (ev.kind === 'recall' && /^主动检索/.test(ev.text))) continue
-      const k = ev.turn_id ?? 0
-      if (!byTurn.has(k)) byTurn.set(k, [])
-      byTurn.get(k).push(ev)
+    const current = Symbol()
+    W.opening = current
+    const sync = async () => {
+      const snapshot = await api(`/api/sessions/${id}`)
+      if (W.current !== id || W.opening !== current) return false
+      W.session = snapshot
+      W.live = null; W.think = null; W.calls.clear()
+      resetChoices()
+      renderHead(); renderBar(); banner('')
+      inner.innerHTML = ''
+      const byTurn = new Map()
+      for (const ev of W.session.evolve || []) {
+        if (['reflect', 'adjust', 'choice'].includes(ev.kind) || (ev.kind === 'recall' && /^主动检索/.test(ev.text))) continue
+        const k = ev.turn_id ?? 0
+        if (!byTurn.has(k)) byTurn.set(k, [])
+        byTurn.get(k).push(ev)
+      }
+      const turns = W.session.turns || []
+      let ti = -1
+      const flush = (tid, phase) => {
+        for (const ev of (byTurn.get(tid) || []).filter((x) => (phase === 'start') === (x.kind === 'recall' || x.kind === 'observe' || (x.kind === 'preference' && /^记住了/.test(x.text))))) inner.appendChild(evoEl(ev.kind, ev.text, { refs: ev.refs, items: ev.data?.items }))
+      }
+      for (const m of W.session.messages) {
+        if (m.role === 'user' && /^【自检】/.test(m.text)) continue
+        if (m.role === 'user') { if (ti >= 0) flush(turns[ti], 'end'); ti++; renderStored(m); flush(turns[ti], 'start'); continue }
+        renderStored(m)
+      }
+      if (ti >= 0) flush(turns[ti], 'end')
+      const fresh = !W.session.messages.length && !opts.keepComposer
+      if (fresh) inner.innerHTML = '<div class="greet"><h1>今天想研究什么？</h1></div>'
+      setFresh(fresh)
+      for (const a of W.session.pendingApprovals || []) handle({ type: 'approval', ...a })
+      for (const choice of W.session.pendingChoices || []) handle({ type: 'choice', ...choice })
+      setBusy(!!W.session.busy)
+      scroll(); syncFx()
+      return true
     }
-    const turns = W.session.turns || []
-    let ti = -1
-    const flush = (tid, phase) => {
-      for (const ev of (byTurn.get(tid) || []).filter((x) => (phase === 'start') === (x.kind === 'recall' || x.kind === 'observe' || (x.kind === 'preference' && /^记住了/.test(x.text))))) inner.appendChild(evoEl(ev.kind, ev.text, { refs: ev.refs, items: ev.data?.items }))
-    }
-    for (const m of W.session.messages) {
-      if (m.role === 'user' && /^【自检】/.test(m.text)) continue
-      if (m.role === 'user') { if (ti >= 0) flush(turns[ti], 'end'); ti++; renderStored(m); flush(turns[ti], 'start'); continue }
-      renderStored(m)
-    }
-    if (ti >= 0) flush(turns[ti], 'end')
-    const fresh = !W.session.messages.length && !opts.keepComposer
-    if (fresh) inner.innerHTML = '<div class="greet"><h1>今天想研究什么？</h1><p>需要写文件或执行代码时，会按你选的权限模式处理。</p></div>'
-    setFresh(fresh)
-    for (const a of W.session.pendingApprovals || []) handle({ type: 'approval', ...a })
-    setBusy(!!W.session.busy)
-    W.es = new EventSource(`/api/sessions/${id}/events`)
-    W.es.onmessage = (ev) => handle(JSON.parse(ev.data))
-    scroll(); syncFx()
+    try { if (!await sync()) return }
+    catch (err) { if (W.opening === current && W.current === id) { toast(err.message, 'err'); W.home() }; return }
+    W.es = openEventStream(
+      (signal) => apiFetch(`/api/sessions/${id}/events`, { signal, headers: { accept: 'text/event-stream' } }),
+      { onEvent: (event) => { if (W.current === id && W.opening === current) handle(event) }, resync: sync }
+    )
     try { history.replaceState(null, '', `?s=${id}`) } catch {}
   }
   document.addEventListener('evo:open-session', (e) => W.open(e.detail))

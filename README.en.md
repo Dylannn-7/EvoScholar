@@ -28,11 +28,23 @@ What evolves is the **harness** (prompts, skills, tool descriptions, routing, wo
 
 Lessons start in trial and become active once they prove useful; content derived from web pages or PDFs can only produce entries that need human confirmation, so prompt injection cannot become long-term memory. Every entry can be traced to its source session, edited, pinned or reverted in the Trajectory page.
 
-## Quick start
+## Install
 
-Requires [Node.js](https://nodejs.org/) ≥ 22.13; literature, data and figure features also need Python 3.10+ ([uv](https://docs.astral.sh/uv/) makes setup faster).
+**Download (recommended).** Get the installer from [Releases](https://github.com/Dylannn-7/EvoScholar/releases): `EvoScholar-<version>-arm64.dmg` (Apple silicon) or `-x64.dmg` (Intel) on macOS, `EvoScholar-Setup-<version>.exe` on Windows. Open it like any app: no terminal, no pairing step.
 
-**macOS / Linux**
+The installers are not code-signed yet, so the first launch needs one extra step:
+
+- **macOS**: right-click EvoScholar in Applications → Open → Open, or click "Open Anyway" in System Settings → Privacy & Security.
+- **Windows**: when SmartScreen appears, choose "More info" → "Run anyway".
+
+**First run.** Open Settings → Defaults & permissions → Runtime:
+
+- **Python**: click Install. Literature, figure checks and manuscript checks need it. With [uv](https://docs.astral.sh/uv/) installed it provisions Python 3.12; otherwise Python 3.10+ must be on the machine.
+- **Sandbox image**: install and start [Docker Desktop](https://www.docker.com/products/docker-desktop/) (WSL 2 backend on Windows Home), then click Build. Model-written Python and commands run in this offline container, with no access to files outside the project and no network.
+
+Without Docker, model code execution is off; host mode under Code execution runs it with your account's permissions, asks before every run, and never applies in bypass mode. Built-in checkers are unaffected. Behind a restricted network, point `DEBIAN_MIRROR`, `PIP_INDEX_URL` or `BASE_IMAGE` at mirrors, or build elsewhere and use `docker save` / `docker load`.
+
+**From source.** Requires [Node.js](https://nodejs.org/) ≥ 22.13.
 
 ```bash
 git clone https://github.com/Dylannn-7/EvoScholar.git
@@ -42,28 +54,16 @@ git clone https://github.com/Dylannn-7/EvoScholar.git
 cd EvoScholar && sh scripts/install.sh
 ```
 
-**Windows (PowerShell)**
+On Windows use `powershell -ExecutionPolicy Bypass -File scripts\install.ps1`. Then `npm run app` opens the desktop app, or `npm start` serves it in your browser (the browser opens and pairs automatically; press Enter in that terminal to pair again).
 
-```bash
-git clone https://github.com/Dylannn-7/EvoScholar.git
-```
-
-```bash
-cd EvoScholar; powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-```
-
-Start it and open http://127.0.0.1:4317 :
-
-```bash
-npm start
-```
+## Getting started
 
 1. **Settings → Models & keys**: pick a vendor → a protocol (the vendor's official default is preselected) → confirm the base URL (prefilled, editable) → paste the API key → fetch models → test the connection.
 2. **Add a project**: the "+" in the sidebar picks a local folder. Sessions work inside it; deliverables go to `evoscholar-out/<session>/`, uploads to `evoscholar-in/`, and other files are left alone unless you ask.
 3. **New session**: choose model, reasoning effort and permission mode in the composer; drop files or images, type `@` to reference project files.
 4. Deliverables are always one click away in the **Library**.
 
-**No key yet?** The demo mode runs a scripted local model and a sample project — no network, no cost — and shows thinking, tool calls, reflection after a failure, lessons, choice cards and deliverables.
+**No key yet?** From source, the demo mode runs a scripted local model and a sample project — no network, no cost — and shows thinking, tool calls, reflection after a failure, lessons, choice cards and deliverables.
 
 ```bash
 npm run demo
@@ -85,7 +85,7 @@ The Plugins page manages skills, tools, rule packs and figure styles. Skills use
 
 ## Data and privacy
 
-Everything stays on your machine: API keys in `.env`; settings in `data/settings.json`; sessions, trajectories, memory, usage and the library index in `data/evoscholar.sqlite`; your own writing rules in `data/rulepacks/user.yaml`; deliverables, uploads and a readable project memory (`.evoscholar/memory.md`) in your project folder. Child processes that run code never receive `*_API_KEY` variables; the web server listens on 127.0.0.1 only and rejects non-loopback Host headers.
+Everything stays on your machine. The desktop app keeps its data in `workspace/` under the user data folder (`~/Library/Application Support/EvoScholar` on macOS, `%APPDATA%\\EvoScholar` on Windows; Settings → About opens it); from source it is the repository folder. API keys in `.env`; settings in `data/settings.json`; sessions, trajectories, memory, usage and the library index in `data/evoscholar.sqlite`; your own writing rules in `data/rulepacks/user.yaml`; deliverables, uploads and a readable project memory (`.evoscholar/memory.md`) in your project folder. Model-written code runs in an offline container that sees only a working copy of the project and writes results back to `evoscholar-out/<session>/`; processes that run code never receive `*_API_KEY` variables. The workbench listens on 127.0.0.1 only and every API call needs the token issued at launch, so other local programs cannot call it. See [SECURITY.md](SECURITY.md) for the trust boundaries.
 
 ## Development
 
@@ -101,7 +101,7 @@ npm test
 cd python && python -m unittest
 ```
 
-`packages/harness` is the agent kernel from [aipoch/open-science](https://github.com/aipoch/open-science) (kept identical to upstream); `packages/core` holds sessions, tools, vendors and protocols (including a Gemini adapter), in-loop evolution (`src/evolve/`), plugins, projects, library and usage; `apps/server` and `apps/web` are the local server and the build-free web workbench; `python/` contains the literature, figure, writing-check and style helpers. Design notes: [docs/PLAN.md](docs/PLAN.md), [docs/in-loop-evolution.md](docs/in-loop-evolution.md).
+`packages/harness` is the agent kernel from [aipoch/open-science](https://github.com/aipoch/open-science) (kept identical to upstream); `packages/core` holds sessions, tools, vendors and protocols (including a Gemini adapter), in-loop evolution (`src/evolve/`), plugins, projects, library and usage; `apps/server` and `apps/web` are the local server and the build-free web workbench; `apps/desktop` is the Electron shell (`npm run app`, `npm run dist` for installers in `release/`, `npm run app:smoke`); `sandbox/` builds the offline image for model code; `python/` contains the literature, figure, writing-check and style helpers. Design notes: [docs/PLAN.md](docs/PLAN.md), [docs/in-loop-evolution.md](docs/in-loop-evolution.md).
 
 ## License
 

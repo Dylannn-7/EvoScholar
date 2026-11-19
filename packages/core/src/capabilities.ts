@@ -13,6 +13,9 @@ export type SkillSummary = {
   license?: string
   kernel?: boolean
   reuses?: number
+  bundled?: boolean
+  trusted?: boolean
+  disabled?: boolean
   name: string
   version: number
   description: string
@@ -128,5 +131,5 @@ export function getCapabilities(rt: Runtime): CapabilitiesSummary {
 function provenance(root: string, name: string) {
   const src = skillSource(root, name)
   const source = src.type === 'builtin' ? 'builtin' as const : src.type === 'forged' ? 'evolved' as const : 'imported' as const
-  return { source, status: src.status, origin: src.origin, license: src.license, kernel: src.kernel, reuses: src.reuses?.length }
+  return { source, status: src.status, origin: src.origin, license: src.license, kernel: src.kernel, reuses: src.reuses?.length, bundled: !!src.bundled, trusted: !!src.trusted, disabled: !!src.disabled }
 }

@@ -1,11 +1,54 @@
 // Fetch helpers. Mutations carry x-evoscholar so cross-site pages cannot forge them.
 const H = { 'content-type': 'application/json', 'x-evoscholar': '1' }
 
+// The token lives until the server restarts, so localStorage lets new tabs reuse it.
+// File previews run in opaque-origin sandboxes and cannot read it.
+const TOKEN_KEY = 'evoscholar.session'
+const store = () => { try { return localStorage } catch { return sessionStorage } }
+export const forgetToken = () => { try { store().removeItem(TOKEN_KEY); sessionStorage.removeItem(TOKEN_KEY) } catch {} }
+export const storeToken = (value) => { try { store().setItem(TOKEN_KEY, value) } catch {} }
+const readToken = () => { try { return store().getItem(TOKEN_KEY) } catch { return null } }
+
+export async function apiFetch(path, opts = {}) {
+  const url = new URL(path, location.origin)
+  if (url.origin !== location.origin || !url.pathname.startsWith('/api/')) throw new Error('无效的工作台地址')
+  const headers = new Headers({ ...H, ...(opts.headers || {}) })
+  const token = readToken()
+  if (token && url.pathname !== '/api/auth/pair') headers.set('authorization', `Bearer ${token}`)
+  const r = await fetch(url, { ...opts, headers, redirect: 'error', cache: 'no-store' })
+  if (r.status === 401 && url.pathname !== '/api/auth/pair') {
+    forgetToken()
+    dispatchEvent(new Event('evo:unpaired'))
+  }
+  return r
+}
+
 async function call(path, opts = {}) {
-  const r = await fetch(path, { ...opts, headers: { ...H, ...(opts.headers || {}) } })
+  const r = await apiFetch(path, opts)
   const j = await r.json().catch(() => ({}))
   if (!r.ok) throw Object.assign(new Error(j.error || r.statusText), { status: r.status })
   return j
+}
+
+export function loadApiImages(root) {
+  for (const img of root.querySelectorAll('img[data-api-image]')) {
+    const path = img.dataset.apiImage
+    delete img.dataset.apiImage
+    void apiFetch(path).then(async (res) => {
+      if (!res.ok || !res.headers.get('content-type')?.startsWith('image/')) return
+      const blob = await res.blob()
+      if (!img.isConnected) return
+      const url = URL.createObjectURL(blob)
+      const clear = () => {
+        img.removeEventListener('load', clear)
+        img.removeEventListener('error', clear)
+        URL.revokeObjectURL(url)
+      }
+      img.addEventListener('load', clear)
+      img.addEventListener('error', clear)
+      img.src = url
+    }).catch(() => {})
+  }
 }
 export const api = (path) => call(path)
 export const post = (path, body) => call(path, { method: 'POST', body: JSON.stringify(body || {}) })

@@ -80,6 +80,8 @@ try {
   config.providers = {
     deepseek: {
       endpoint: `http://127.0.0.1:${gateway.address().port}/v1/chat/completions`,
+      gatewayApproval: { base: `http://127.0.0.1:${gateway.address().port}/v1`, privateAccess: true },
+      credentialOrigin: `http://127.0.0.1:${gateway.address().port}`,
       protocol: 'chat-completions',
       apiKeyEnv: 'EVOSCHOLAR_DEMO_API_KEY'
     }

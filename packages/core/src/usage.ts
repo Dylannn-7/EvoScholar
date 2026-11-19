@@ -21,7 +21,7 @@ const GROUP_SQL: Record<UsageGroup, { key: string; label: string }> = {
 /** Aggregate model requests from the ledger table over the last `days` days. */
 export function usageBy(db: Db, group: UsageGroup, opts: { days?: number; sessionId?: string; projectId?: string } = {}): UsageRow[] {
   const g = GROUP_SQL[group]
-  const where = ["l.kind = 'model'", "s.category IS NOT 'dev'", "l.category IN ('usage', 'evolution')"]
+  const where = ["l.kind = 'model'", "s.category IS NOT 'dev'", "l.category = 'usage'"]
   const args: (string | number)[] = []
   if (opts.days) { where.push('l.ts >= ?'); args.push(new Date(Date.now() - opts.days * 86_400_000).toISOString()) }
   if (opts.sessionId) { where.push('l.session_id = ?'); args.push(opts.sessionId) }
@@ -37,17 +37,25 @@ export function usageBy(db: Db, group: UsageGroup, opts: { days?: number; sessio
 }
 
 export function usageTotals(db: Db, days?: number) {
-  const rows = usageBy(db, 'model', { days })
-  const sum = (k: keyof UsageRow) => rows.reduce((a, r) => a + Number(r[k]), 0)
+  const where = ["l.kind = 'model'", "s.category IS NOT 'dev'", "l.category = 'usage'"]
+  const args: (string | number)[] = []
+  const since = days ? new Date(Date.now() - days * 86_400_000).toISOString() : undefined
+  if (since) { where.push('l.ts >= ?'); args.push(since) }
+  const agg = db.prepare(`SELECT COUNT(*) AS requests,
+        COALESCE(SUM(l.input_tokens), 0) AS inputTokens, COALESCE(SUM(l.output_tokens), 0) AS outputTokens,
+        COALESCE(SUM(l.cache_read_tokens), 0) AS cacheReadTokens
+      FROM ledger l LEFT JOIN sessions s ON s.id = l.session_id
+      WHERE ${where.join(' AND ')}`)
+    .get(...args) as { requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number }
   const turns = db.prepare(`SELECT COUNT(*) AS turns, COALESCE(SUM(tool_calls), 0) AS toolCalls, COALESCE(SUM(tool_errors), 0) AS toolErrors
-      FROM turns t JOIN sessions s ON s.id = t.session_id WHERE s.category = 'usage' ${days ? 'AND t.ts_start >= ?' : ''}`)
-    .get(...(days ? [new Date(Date.now() - days * 86_400_000).toISOString()] : [])) as { turns: number; toolCalls: number; toolErrors: number }
-  const input = sum('inputTokens')
-  const cache = sum('cacheReadTokens')
+      FROM turns t JOIN sessions s ON s.id = t.session_id WHERE s.category = 'usage' ${since ? 'AND t.ts_start >= ?' : ''}`)
+    .get(...(since ? [since] : [])) as { turns: number; toolCalls: number; toolErrors: number }
+  const input = Number(agg.inputTokens)
+  const cache = Number(agg.cacheReadTokens)
   return {
-    requests: sum('requests'),
+    requests: Number(agg.requests),
     inputTokens: input,
-    outputTokens: sum('outputTokens'),
+    outputTokens: Number(agg.outputTokens),
     cacheReadTokens: cache,
     cacheHitRate: input ? cache / input : 0,
     ...turns
