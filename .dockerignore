@@ -1,0 +1,13 @@
+**
+!sandbox/
+!sandbox/Dockerfile
+!sandbox/requirements.lock
+!sandbox/matplotlibrc
+!sandbox/probe.py
+!python/
+!python/evoscholar_*.py
+!rulepacks/
+!rulepacks/figures/
+!rulepacks/figures/*.yaml
+!rulepacks/writing/
+!rulepacks/writing/*.yaml

@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
 import {
   checkKernelCode, consolidate, fetchGithubSkill, installSkillFiles, kernelTools, openRuntime, openWorkspace, parseGithubUrl,
-  promote, readFolder, readUserRules, readZip, setSkillEnabled, skillSource, type ToolEnv
+  promote, readFolder, readUserRules, readZip, setSkillEnabled, skillSource, type ExecutionBackend, type ToolEnv
 } from './index'
 
 const REPO = resolve(__dirname, '../../..')
@@ -50,8 +50,20 @@ test('forged skills need approval after two successful reuses; patch_skill and p
   const cwd = join(dir, 'work'); mkdirSync(cwd)
   writeFileSync(join(cwd, 'm.csv'), 'a,b\n1,2\n3,4\n')
   const events: { kind: string; text: string }[] = []
+  const executor: ExecutionBackend = {
+    available: async () => true,
+    start: async () => { throw new Error('Unexpected daemon') },
+    run: async (_env, job) => {
+      assert.ok(job.skillDir)
+      const verify = job.emptyWorkspace
+      assert.ok(job.sandbox.some((arg) => arg.startsWith('/control/skill')))
+      const fail = verify && readFileSync(join(job.skillDir, 'test_kernel.py'), 'utf8').includes('3.0')
+      const out = verify ? (fail ? 'fixture mismatch' : '__EVO_PASS__ 1') : '__EVO_RESULT__{"n": 2, "sum_b": 6.0}'
+      return { code: fail ? 1 : 0, signal: null, out, stdout: out, timedOut: false }
+    }
+  }
   const make = (sid: string, approve?: ToolEnv['approve']) => {
-    const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => 'dev', approve }
+    const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => 'dev', approve, executor }
     const tools = kernelTools({ store: rt.evolve, sessionId: sid, env, emit: (e) => events.push(e), addOverlay: (op, target, value, reason) => rt.evolve.addOverlay({ sessionId: sid, op, target, value, reason }) })
     return (name: string, args: unknown) => tools.find((x) => x.name === name)!.execute(args as never, {} as never) as Promise<{ content: { type: string; text?: string }[]; isError?: boolean }>
   }

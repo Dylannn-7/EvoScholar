@@ -32,7 +32,14 @@ test('in-loop evolution: fail -> forced reflection -> guard -> lesson -> reuse i
   const oldKey = process.env.DEEPSEEK_API_KEY
   const realFetch = globalThis.fetch
   process.env.DEEPSEEK_API_KEY = 'sk-test'
-  const rt = openRuntime(openWorkspace(dir))
+  const rt = openRuntime(openWorkspace(dir), undefined, {
+    available: async () => true,
+    start: async () => { throw new Error('Unexpected daemon') },
+    run: async (_env, job) => {
+      assert.deepEqual(job.sandbox, ['/bin/sh', '-c', 'exit 3'])
+      return { code: 3, signal: null, out: '', stdout: '', timedOut: false }
+    }
+  })
   t.after(() => { globalThis.fetch = realFetch; if (oldKey === undefined) delete process.env.DEEPSEEK_API_KEY; else process.env.DEEPSEEK_API_KEY = oldKey; rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
 
   const reqs: Req[] = []

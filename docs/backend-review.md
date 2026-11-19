@@ -24,6 +24,8 @@
 | 14 中 | `packages/core/src/session.ts:100`、`packages/core/src/metering.ts:61`、`packages/core/src/budget.ts:145`、`apps/cli/src/main.ts:81` | A2 的旧开关可为日常请求启用人民币硬限。即使关闭，仍按价格表记录日常费用，CLI 普通回合还会打印累计金额。 | 日常模型请求记录 token，忽略旧金额开关。日常搜索和抓取跳过金额预留。CLI 普通回合只显示状态，开发和离线验证费用仍受现有约束。测试验证旧配置带硬限时，日常请求始终可记录零金额用量，开发限制仍有效。 |
 | 15 高 | `packages/core/src/evolve/kernels.ts:113`、`packages/core/src/evolve/kernels.ts:129` | 锻造技能在两个会话复用后自动转正，也能覆盖已生效的技能版本。PLAN §3 要求技能转正有人确认。 | 复用达标后使用现有确认卡。完全放行模式也走人工批准，未批准的技能继续试用。替换已生效的可执行技能也需确认。测试先验证无人值守复用不转正，再验证批准后转正。 |
 | 17 低 | `packages/core/src/projects.ts:77`、`apps/server/src/server.ts:86`、`apps/server/src/server.ts:699` | 部分文件列表跟随链接，冷重启后的文件接口把项目会话误当草稿会话。附件同名候选耗尽时可覆盖最后一个文件。 | 文件列表跳过链接与特殊文件，冷会话从 SQLite 读 cwd。附件用独占创建，重名耗尽返回 409。补充冷会话下载测试，原有上传和资料库测试通过。 |
+| 18 高 | `packages/core/src/execution.ts`、`packages/core/src/docker-executor.ts`、`packages/core/src/staged-project.ts`、`packages/core/src/tools/exec.ts`、`packages/core/src/evolve/kernels.ts` | Shell、Python 和生成的技能以宿主账户运行。项目 cwd、静态正则和父进程回收无法约束任意代码访问宿主文件、网络或启动后代进程。 | 模型写的代码（`run_python`、`run_command`、`start_process`、锻造和导入技能脚本）改在离线 Linux 容器执行，见下文实施记录。内置检查脚本仍在宿主运行。没有容器时默认停用，可显式开启宿主模式。 |
+| 19 高 | `apps/server/src/local-auth.ts`、`apps/server/src/server.ts`、`apps/web/public/ui/api.js`、`apps/web/public/ui/stream.js`、`packages/core/src/gateway.ts`、`packages/core/src/tools/exec.ts` | 工作台只绑定回环，但任意本机进程能直接请求 API。自定义网关和模型访问本机测试服务扩大了内网访问面。 | 一次性配对换 Bearer 令牌，所有业务 API、SSE、预览和下载统一鉴权。自定义网关按 origin 授权并固定校验过的连接地址。`http_get` 只访问本会话登记的服务。见下文实施记录。 |
 
 ## 未修
 
@@ -41,15 +43,39 @@
 
 | 编号 / 严重程度 | 位置 | 问题和触发条件 | 待选方案 |
 | --- | --- | --- | --- |
-| 18 高 | `packages/core/src/tools/sandbox.ts:23`、`packages/core/src/tools/exec.ts:72`、`packages/core/src/evolve/kernels.ts:15` | Shell、Python 和生成的技能以宿主账户运行。项目 cwd、静态正则和父进程回收都无法约束任意代码访问宿主文件、网络或启动后代进程。进化对配置和 guard 的保护仍依赖该执行边界。 | 选择 macOS 和 Windows 的系统级隔离后端并定义项目挂载、依赖、网络和后台服务范围。另一种方案是在隔离后端不可用时停用任意代码执行。 |
-| 19 高 | `apps/server/src/main.ts:17`、`apps/server/src/server.ts:388`、`packages/core/src/tools/exec.ts:284`、`packages/core/src/providers.ts:264` | 默认绑定回环，无 CORS 放行，Host、Origin 与自定义头挡住浏览器跨站请求。其他本地进程仍可直接请求 API。自定义网关和模型访问本机测试服务是既有功能，也扩大了内网访问面。 | 为本机访问选择启动令牌或沿用操作系统用户边界。决定是否把 `http_get` 限定到本会话启动的服务，以及是否按厂商单独允许私有网关。 |
 | 20 中 | `packages/core/src/providers.ts:157`、`packages/core/src/providers.ts:309`、`apps/server/src/routes-v2.ts:60` | Azure 已覆盖 `api-key` 请求头及现有路径形态。版本化的部署 URL 缺少 `api-version` 配置通道。Gemini、Anthropic 数值型思考预算与字符串 effort 共用的能力结构还未定。 | 明确 Azure 版本化部署的端点和版本字段。决定数值预算的类型、显示及已有字符串设置的兼容方式后，再加对应模拟测试。 |
 | 21 中 | `packages/core/src/usage.ts:22`、`apps/server/src/server.ts:412`、`apps/cli/src/main.ts:37` | 旧账本和 token 用量共用 SQLite。历史金额及查询仍可读取。上游统一 usage 类型只有输入、输出、缓存计数，无法直接报告独立的推理 token。 | 保留历史查询、降为开发入口或移除旧接口并迁移。若要补推理维度，决定是在 core 内采集有协议支持的字段，还是等上游适配器统一支持。 |
 | 22 低 | `packages/core/src/tools/fs.ts:84`、`apps/server/src/server.ts:609` | 文本工具先读全文件再分页，会话图片只限制单项。一组较大图片或超长日志会放大内存。 | 确定单文件和单回合总量及超限反馈，再统一 CLI、HTTP、工具与流式分页行为。 |
 
+## 18、19 实施记录
+
+### 19. 本机鉴权与网关访问
+
+- **配对。** 启动时自动打开带 `#pair=<一次性码>` 的地址，页面用同源 POST 换取令牌后立即用 `replaceState` 抹掉片段。自动码 60 秒有效。交互终端另显示 6 位手动码，10 分钟有效，失败 5 次锁定，每次失败后限速 1 秒。码在首次成功配对后作废。在运行 `npm start` 的终端按回车会签发新的配对码并重新打开浏览器，已签发的令牌保持有效。
+- **令牌。** 32 字节随机令牌，服务端只存摘要，比较用 `timingSafeEqual`。浏览器存在 `localStorage`，同一次服务运行内新标签页可复用，服务重启后全部失效。文件预览运行在 `sandbox=""` 的 blob iframe 中，为不透明源，读不到令牌。注销会关闭该令牌打开的 SSE。
+- **请求。** 静态页面公开，其余 API 都要求 Bearer，包括只读接口、SSE、缩略图、预览和下载。原有 Host、Origin 和写入请求头检查保留。SSE 改为带鉴权头的流式 `fetch`，断线重连后重新同步会话快照和待审批项。
+- **网关。** 内置厂商按域名信任。用户自填的网关需在设置里按 origin 和 API 根路径授权，回环和私网地址需单独勾选。建连时用 Node 内置 HTTP／HTTPS transport 固定校验过的地址并保留 TLS 主机名。拒绝重定向、链路本地地址和工作台自身端口。改到其他 origin 后需要重新确认，密钥不跟随。fake-IP 代理（198.18.0.0/15）有离线分类测试。
+- **`http_get`。** 只接受本会话 `start_process` 登记过的端口。容器服务经容器内固定探针访问，限制大小和时间，拒绝重定向，不携带任何令牌或 Key。
+
+### 18. 命令隔离
+
+- **范围。** `run_python`、`run_command`、`start_process`、`read_process`、`stop_process`、锻造技能的测试和运行、导入技能的附带脚本，统一经 `runModelProcess` 和 `ExecutionBackend` 执行。论文检查、出图检查、文献工具等内置 Python 脚本仍在宿主虚拟环境运行。
+- **三种状态。** 容器可用时始终走容器，包括完全放行模式。容器不可用时默认停用并返回中文提示。设置里的「宿主模式」默认关闭，开启需要二次确认。它只在有人工审批回调、且不是完全放行或计划模式时生效，每次执行仍走审批。设置页显示当前状态：容器可用、引擎未运行或镜像缺失。
+- **引擎。** 只调用 `docker` 兼容命令行，命令名可配置（Podman、Colima、OrbStack 可用）。用 `docker info` 确认 Linux 引擎，再用 `image inspect` 确认镜像。探测超时为 15 秒，因为 Docker Desktop 的资源节省模式会在闲置后暂停虚拟机，唤醒需要几秒。守护进程未运行时探测仍会立即失败。不写 Docker Desktop 后端专用逻辑：macOS 由 Docker Desktop 自选虚拟化方式，Windows 专业版可用 Hyper-V 或 WSL 2，家庭版用 WSL 2。
+- **容器参数。** `--network none`、`--read-only`、用户 `65532:65532`、`--cap-drop ALL`、`no-new-privileges`、进程数 128、内存 1 GiB、2 CPU、`--init`、128 MiB 的 `/tmp` tmpfs、日志 1 MiB、`--pull=never`。只挂载会话工作副本 `/work` 和只读控制目录 `/control`。不挂载 `docker.sock`、应用目录、`data/`、用户主目录和 `.env`，不发布端口。容器带工作区、会话和宿主 PID 标签，启动时回收宿主进程已退出的遗留容器，会话关闭时清理。
+- **工作副本。** 项目根与应用目录、应用数据目录重叠，或包含用户主目录时拒绝。复制时排除隐藏文件、`.git`、`.evoscholar`、`node_modules`、虚拟环境和链接，上限 5000 个文件、256 MiB，按文件指纹增量同步。项目自己的 `data/` 照常进入工作副本。容器内新增或修改的文件只回写到 `evoscholar-out/<会话>/`，回写前检查链接、重名和覆盖冲突。原项目文件不会被容器直接修改。
+- **镜像。** `sandbox/Dockerfile` 固定基础镜像摘要（`python:3.13-slim-bookworm`）、Noto CJK 字体和 `sandbox/requirements.lock`，构建上下文由 `.dockerignore` 白名单限定。`npm run sandbox:build` 负责构建，支持 `DEBIAN_MIRROR`、`PIP_INDEX_URL`、`BASE_IMAGE` 镜像源，也可 `docker save` / `docker load` 离线导入。matplotlib 只索引 TTC 的第一个字面，所以中文字体按「Noto Sans CJK JP」注册。它覆盖简体中文，但个别汉字采用日本字形。
+
+### 仍未覆盖
+
+- Windows 真机：容器执行、路径大小写、WSL 2 文件共享性能和 `rundll32` 打开浏览器均未实测。
+- 首次配对依赖自动打开浏览器。非交互终端（如图形启动器）不显示手动码，自动打开失败时只能重启。
+- 容器资源上限固定为 1 GiB 内存和 2 CPU，大数据集可能不够，尚无设置项。
+- 宿主模式的风险与原来的执行方式相同，只靠审批约束。
+
 ## 保护项核对
 
-- `evoscholar.config.json`、权限和 guards。声明式变异与会话覆盖层只选择特定字段，权限门和 guard 由宿主装配。任意 Shell / Python 仍能触达宿主账户可访问的文件，见 18、25。
+- `evoscholar.config.json`、权限和 guards。声明式变异与会话覆盖层只选择特定字段，权限门和 guard 由宿主装配。容器可用时，模型代码碰不到应用目录、配置和宿主文件。宿主模式下仍可触达宿主账户可访问的文件，需逐次审批，见 18、25。
 - 步数上限。genome 加载要求有效上限，候选上线不能提高父版本或现行版本上限。自检复用主回合的剩余步数。工作流子代理仍各自使用原有独立上限。
 - 持久化。沉淀写候选，激活要求待审批记录和显式操作。可执行技能转正、替换已生效的可执行技能及正式规则生效由人工操作触发。会话试用产物仍可落盘。
 - Untrusted。已标记的外部记忆保持试用或由用户显式处置，不能自动转为 active，也不能作为可信经验沉淀；来源识别的缺口见 23。
@@ -58,4 +84,5 @@
 ## 验证
 
 - 基线 46 项 Node 测试、44 项 Python 测试通过。系统 Python 缺少 SciPy、python-docx 等项目依赖。Python 验证使用项目已有的 macOS 虚拟环境，通过 PATH 运行同一条 `python3 -m unittest`。
-- 最终构建通过，Node 63/63、Python 45/45。各批均运行构建与两套离线测试。真实 API 调用 0 次。未新增依赖，未提交或推送。harness 源码与分支基线逐字节一致，受保护配置文件哈希与基线一致。
+- 第一轮修复（提交 `35b4cc2`）：构建通过，Node 63/63、Python 45/45。各批均运行构建与两套离线测试。真实 API 调用 0 次。未新增依赖。harness 源码与分支基线逐字节一致，受保护配置文件哈希与基线一致。
+- 第 18、19 项：构建通过，Node 74/74（含前端流测试），Python 45/45。macOS 上 Docker Desktop 29.9.2 构建了 `evoscholar-sandbox:1`（1.04 GB），真容器测试不再跳过，实测断网、根文件系统只读、非 root、看不到宿主项目路径和 `docker.sock`、没有 `*_API_KEY`、中文图表无缺字、后台服务经探针访问，以及停止后无遗留容器。浏览器中用演示模式验证了自动配对与片段清除、新标签页复用令牌、无令牌请求 401、SSE 全程推送与审批卡、SVG 预览在 `sandbox=""` 的 blob iframe 中渲染，以及设置页的容器状态行。真实模型 API 调用 0 次，未新增 npm 依赖。harness 源码与 `evoscholar.config.json` 与 HEAD 一致。

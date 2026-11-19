@@ -28,6 +28,8 @@ export type ProviderOverride = {
   endpoint?: string
   authHeader?: AuthHeader
   modelsListUrl?: string
+  gatewayApproval?: { base: string; privateAccess: boolean }
+  credentialOrigin?: string
   reasoningEffort?: ReasoningCapability
   label?: string
   /** User-added provider (not a preset). */
@@ -39,13 +41,17 @@ export type ProviderOverride = {
 export type PermissionMode = 'ask' | 'acceptEdits' | 'plan' | 'bypass'
 export const PERMISSION_MODES: PermissionMode[] = ['ask', 'acceptEdits', 'plan', 'bypass']
 /** Per-user settings in <dataDir>/settings.json (never committed). */
+export type ExecutionSettings = { engine?: string; image?: string; hostMode?: boolean }
 export type UserSettings = {
   providers: Record<string, ProviderOverride>
+  execution?: ExecutionSettings
   defaults: { model?: string; effort?: string; fast?: string; vision?: string; permission?: PermissionMode; figureStyle?: string }
   /** Remembered reasoning effort per model ref. */
   efforts: Record<string, string>
 }
 export type EvoConfig = {
+  /** Effective server port for outbound self-request checks. */
+  localHttpPort?: number
   dataDir: string
   currency: 'CNY' | 'USD'
   usdToCny: number
@@ -108,6 +114,7 @@ export function loadSettings(dataDir: string, config?: EvoConfig): UserSettings 
   return {
     providers: raw.providers ?? {},
     defaults: raw.defaults ?? {},
+    execution: raw.execution,
     // One-time migration: efforts used to live in the repo config.
     efforts: raw.efforts ?? { ...(config?.reasoningEffort ?? {}) }
   }

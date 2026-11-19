@@ -4,7 +4,7 @@
 import { createServer } from 'node:http'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(fileURLToPath(import.meta.url), '../..')
@@ -29,19 +29,20 @@ const ANSWER = `## 拟合结果
 - 拟合参数已写入交付目录的 \`fit_results.csv\`，在「资料空间」里可以找到
 - 这是演示模式：回答由本地脚本生成，不调用任何模型，也不产生费用`
 
-const PLOT = (out) => `import os
-os.makedirs(${JSON.stringify(out)}, exist_ok=True)
-import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-x = np.linspace(1549, 1551.5, 800)
-y = 1 - sum(a / (1 + ((x - c) / w) ** 2) for a, c, w in [(0.8, 1549.32, 0.02), (0.9, 1550.11, 0.019), (0.7, 1550.87, 0.022)])
-fig, ax = plt.subplots(figsize=(3.46, 2.4), dpi=200)
-ax.plot(x, y, lw=1)
-ax.set_xlabel("Wavelength (nm)"); ax.set_ylabel("Transmission")
-fig.tight_layout(); fig.savefig(${JSON.stringify(out)} + "/fig1_spectrum.png")
-print("saved")`
+const PLOT = (out) => `# 演示绘图目标：${out}/fig1_spectrum.svg`
+function fixturePlot() {
+  const wave = Array.from({ length: 500 }, (_, i) => {
+    const nm = 1549 + 2.5 * i / 499
+    const y = 1 - [[0.8, 1549.32, 0.02], [0.9, 1550.11, 0.019], [0.7, 1550.87, 0.022]]
+      .reduce((sum, [a, c, w]) => sum + a / (1 + ((nm - c) / w) ** 2), 0)
+    return `${(70 + i).toFixed(1)},${(30 + (1 - y) * 250).toFixed(1)}`
+  }).join(' ')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="350" viewBox="0 0 600 350">
+<rect width="600" height="350" fill="white"/><path d="M70 25V290H575" fill="none" stroke="#334155"/>
+<polyline points="${wave}" fill="none" stroke="#176785" stroke-width="2"/>
+<g font-size="15" fill="#17293d"><text x="235" y="325">波长（nm）</text><text x="100" y="60">微环透射谱示例</text>
+<text x="65" y="310">1549</text><text x="260" y="310">1550</text><text x="460" y="310">1551</text></g></svg>`
+}
 
 function script (body) {
   const msgs = body.messages ?? []
@@ -105,7 +106,7 @@ const venv = `pyenv-${process.platform}-${process.arch}`
 if (existsSync(join(ROOT, 'data', venv))) link(join(ROOT, 'data', venv), join(ws, 'data', venv))
 writeFileSync(join(ws, '.env'), 'DEMO_API_KEY=demo\n')
 writeFileSync(join(ws, 'data', 'settings.json'), JSON.stringify({
-  providers: { demo: { custom: true, label: '演示模型（本地脚本）', protocol: 'chat-completions', baseUrl: `http://127.0.0.1:${MOCK_PORT}/v1`, apiKeyEnv: 'DEMO_API_KEY', models: [{ id: 'demo-model', contextWindow: 128000, reasoningEffort: { supported: true, values: ['low', 'medium', 'high'] } }], modelsFetchedAt: new Date().toISOString() } },
+  providers: { demo: { custom: true, label: '演示模型（本地脚本）', protocol: 'chat-completions', baseUrl: `http://127.0.0.1:${MOCK_PORT}/v1`, gatewayApproval: { base: `http://127.0.0.1:${MOCK_PORT}/v1`, privateAccess: true }, credentialOrigin: `http://127.0.0.1:${MOCK_PORT}`, apiKeyEnv: 'DEMO_API_KEY', models: [{ id: 'demo-model', contextWindow: 128000, reasoningEffort: { supported: true, values: ['low', 'medium', 'high'] } }], modelsFetchedAt: new Date().toISOString() } },
   defaults: { model: 'demo/demo-model', permission: 'ask' },
   efforts: {}
 }, null, 2))
@@ -116,14 +117,29 @@ writeFileSync(join(project, 'README.md'), '# 微环谐振器透射谱\n\n演示�
 
 process.chdir(ws)
 process.env.DEMO_API_KEY = 'demo'
-const { openRuntime, openWorkspace, addProject } = await import(join(ROOT, 'packages/core/dist/index.js'))
+const { openRuntime, openWorkspace, addProject, inside } = await import(join(ROOT, 'packages/core/dist/index.js'))
 const { createServerApp } = await import(join(ROOT, 'apps/server/dist/server.js'))
-const rt = openRuntime(openWorkspace(ws))
+const demoExecutor = {
+  available: async () => true,
+  start: async () => { throw new Error('演示不启动后台进程') },
+  run: async (env, job) => {
+    const match = /^# 演示绘图目标：(.+\/fig1_spectrum\.svg)$/.exec(job.code ?? '')
+    const result = (code, out, files = []) => ({ code, out, stdout: out, signal: null, timedOut: false, files })
+    if (!match) return result(1, '找不到 data/spectrum.txt')
+    const path = inside(env.cwd, match[1])
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, fixturePlot())
+    return result(0, '已写入演示图', [match[1]])
+  }
+}
+const rt = openRuntime(openWorkspace(ws), undefined, demoExecutor)
 addProject(rt.ws, rt.db, project, '示例项目 · 微环光谱')
-const app = createServerApp(rt, { webDir: join(ROOT, 'apps/web/public') })
+const { announcePairing, createLocalAuth } = await import(join(ROOT, 'apps/server/dist/local-auth.js'))
+const auth = createLocalAuth()
+const app = createServerApp(rt, { webDir: join(ROOT, 'apps/web/public'), auth })
 const server = createServer(app.handler)
 mock.listen(MOCK_PORT, '127.0.0.1', () => server.listen(PORT, '127.0.0.1', () => {
-  console.log(`\nEvoScholar 演示模式：http://127.0.0.1:${PORT}`)
+  announcePairing(PORT, auth)
   console.log('不需要 API Key，不联网，不产生费用。左侧「示例项目」里新建会话，输入：')
   console.log('  把 data 里的透射谱拟合成洛伦兹线型并出图')
   console.log('可以看到思考、工具调用、失败后的反思、记经验、选项卡和交付文件；再开一个会话问同样的问题，会回忆刚学到的经验。')

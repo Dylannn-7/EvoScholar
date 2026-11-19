@@ -1,6 +1,6 @@
 // Pages: plugins, library (资料空间), usage, trajectory.
 import { go, store } from '../app.js'
-import { ago, api, fmtSize, fmtTokens, patch, post } from './api.js'
+import { ago, api, del, fmtSize, fmtTokens, loadApiImages, patch, post, put } from './api.js'
 import { icon } from './icons.js'
 import { confirmDialog, esc, openModal, promptDialog, toast } from './modal.js'
 import { openFilePreviewModal } from './review.js'
@@ -47,12 +47,13 @@ export async function renderPlugins (root, arg) {
       const groups = [...new Set(st.styles.map((x) => x.group))]
       pl.innerHTML = `<p class="muted" style="margin-top:-4px">风格决定图的外观，期刊规则包决定尺寸和字号；两者组合使用。设为默认后，新会话出图会优先用它（你在对话里另有要求时以对话为准）。</p>
         ${groups.map((g) => `<div class="section-t">${esc(g)}</div><div class="cards style-cards">${st.styles.filter((x) => x.group === g).map((x) => `<div class="pcard style ${st.current === x.id ? 'cur' : ''}" data-style="${esc(x.id)}">
-          <div class="sprev"><img loading="lazy" src="/api/styles/${esc(x.id)}/preview?v=2" alt="${esc(x.label)} 样图"></div>
+          <div class="sprev"><img loading="lazy" data-api-image="/api/styles/${esc(x.id)}/preview?v=2" alt="${esc(x.label)} 样图"></div>
           <div class="top"><span class="nm">${esc(x.label)}</span><span class="badge">${esc(x.library)}</span>${st.current === x.id ? '<span class="badge accent">默认</span>' : ''}</div>
           <div class="ds">${esc(x.description)}</div>
           ${styleFacts(x.meta)}
           <div class="ft"><code>${esc(x.id)}</code><span>${esc(x.license)}</span>${x.cite ? `<span title="${esc(x.cite)}">需引用</span>` : ''}<span class="page-actions"><button class="btn ghost small" data-copy="${esc(x.id)}" type="button">复制用法</button>${st.current === x.id ? '<button class="btn ghost small" data-def="" type="button">取消默认</button>' : `<button class="btn primary small" data-def="${esc(x.id)}" type="button">设为默认</button>`}</span></div></div>`).join('')}</div>`).join('')}`
     }
+    loadApiImages(pl)
   }
   draw()
   body.onclick = async (e) => {
@@ -62,13 +63,13 @@ export async function renderPlugins (root, arg) {
       const en = e.target.closest('[data-en]')
       if (en) { await patch(`/api/plugins/skills/${en.dataset.en}`, { enabled: !en.classList.contains('on') }); await store.refresh(); toast('已更新，生成了新的 harness 版本', 'ok'); return renderPlugins(root) }
       const d = e.target.closest('[data-del]')
-      if (d) { if (!(await confirmDialog({ title: '删除技能', message: `删除 ${d.dataset.del}？`, confirmText: '删除', danger: true }))) return; await fetch(`/api/plugins/skills/${d.dataset.del}`, { method: 'DELETE', headers: { 'x-evoscholar': '1' } }); return renderPlugins(root) }
+      if (d) { if (!(await confirmDialog({ title: '删除技能', message: `删除 ${d.dataset.del}？`, confirmText: '删除', danger: true }))) return; await del(`/api/plugins/skills/${d.dataset.del}`); return renderPlugins(root) }
       const rs = e.target.closest('[data-rs]')
       if (rs) { await patch(`/api/plugins/rules/${rs.closest('[data-rule]').dataset.rule}`, { status: rs.dataset.rs }); return renderPlugins(root) }
       const rd = e.target.closest('[data-rdel]')
-      if (rd) { await fetch(`/api/plugins/rules/${rd.closest('[data-rule]').dataset.rule}`, { method: 'DELETE', headers: { 'x-evoscholar': '1' } }); return renderPlugins(root) }
+      if (rd) { await del(`/api/plugins/rules/${rd.closest('[data-rule]').dataset.rule}`); return renderPlugins(root) }
       const df = e.target.closest('[data-def]')
-      if (df) { await fetch('/api/settings/defaults', { method: 'PUT', headers: { 'content-type': 'application/json', 'x-evoscholar': '1' }, body: JSON.stringify({ figureStyle: df.dataset.def }) }); toast(df.dataset.def ? '已设为默认出图风格' : '已取消默认', 'ok'); return renderPlugins(root) }
+      if (df) { await put('/api/settings/defaults', { figureStyle: df.dataset.def }); toast(df.dataset.def ? '已设为默认出图风格' : '已取消默认', 'ok'); return renderPlugins(root) }
       const cp = e.target.closest('[data-copy]')
       if (cp) { await navigator.clipboard.writeText(`import evoscholar_styles as S\nS.use('${cp.dataset.copy}', venue='nature')`); toast('已复制', 'ok') }
     } catch (err) { toast(err.message, 'err') }
@@ -151,12 +152,13 @@ export async function renderLibrary (root, arg) {
       ${files.length ? `<div class="flist">${files.map((f) => {
         const img = f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) && f.exists
         return `<div class="frow ${f.exists ? '' : 'missing'}" data-id="${f.id}" data-path="${esc(f.path)}" data-type="${f.type}" title="${esc(f.root)}/${esc(f.path)}">
-          <div class="fi">${img ? `<img src="/api/library/${f.id}/file" loading="lazy" alt="">` : icon(f.type === 'data' ? 'data' : f.type === 'code' ? 'code' : f.type === 'figure' ? 'image' : 'file', 17)}</div>
+          <div class="fi">${img ? `<img data-api-image="/api/library/${f.id}/file" loading="lazy" alt="">` : icon(f.type === 'data' ? 'data' : f.type === 'code' ? 'code' : f.type === 'figure' ? 'image' : 'file', 17)}</div>
           <div class="fn"><b>${esc(f.path.split('/').pop())}</b><span>${esc(f.path)}${f.exists ? '' : ' · 文件已移动或删除'}</span></div>
           <div class="src">${f.kind === 'upload' ? '上传 · ' : ''}${f.session_id ? `<a data-sess="${esc(f.session_id)}">${esc(f.session_title || f.session_id)}</a>` : ''}<span class="faint"> · ${esc(f.project_name || '草稿')}</span></div>
           <div class="sz">${fmtSize(f.size)}</div><div class="tm">${esc(ago(f.updated_at))}</div>
           <button class="icon-btn star ${f.deliverable ? 'on' : ''}" data-star="${f.id}" title="${f.deliverable ? '取消交付物标记' : '标为交付物'}" type="button">${icon('star', 16)}</button></div>`
       }).join('')}</div>` : '<div class="empty-state"><b>还没有文件</b>会话里生成的图、表、文稿和你上传的文件都会出现在这里。</div>'}`
+    loadApiImages(root)
     let t
     body.querySelector('#lq').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { lib.q = e.target.value.trim(); draw() }, 250) }
     body.querySelector('.seg').onclick = (e) => { const b = e.target.closest('[data-type]'); if (b) { lib.type = b.dataset.type; draw() } }
@@ -296,7 +298,7 @@ export async function renderTrajectory (root, arg) {
         if (act.dataset.act === 'retire') await patch(`/api/memory/${id}`, { status: 'retired' })
         if (act.dataset.act === 'restore') await patch(`/api/memory/${id}`, { status: 'active' })
         if (act.dataset.act === 'edit') { const c = await promptDialog({ title: `编辑 ${id}`, message: m.trigger, defaultValue: m.content, multiline: true }); if (!c) return; await patch(`/api/memory/${id}`, { content: c }) }
-        if (act.dataset.act === 'del') { if (!(await confirmDialog({ title: '删除条目', message: `删除 ${id}？`, confirmText: '删除', danger: true }))) return; await fetch(`/api/memory/${id}`, { method: 'DELETE', headers: { 'x-evoscholar': '1' } }) }
+        if (act.dataset.act === 'del') { if (!(await confirmDialog({ title: '删除条目', message: `删除 ${id}？`, confirmText: '删除', danger: true }))) return; await del(`/api/memory/${id}`) }
         return renderTrajectory(root)
       }
       const rev = e.target.closest('[data-rev]'); if (rev) { await post(`/api/overlays/${rev.dataset.rev}/revert`); return renderTrajectory(root) }

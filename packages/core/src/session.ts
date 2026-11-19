@@ -10,6 +10,8 @@ import {
   type ModelRequest,
   type RunStatus
 } from '@evoscholar/harness'
+import { DockerExecutor } from './docker-executor'
+import type { ExecutionBackend } from './execution'
 import { Ledger } from './budget'
 import type { BudgetCategory, Workspace } from './config'
 import { openDb, type Db } from './db'
@@ -19,7 +21,7 @@ import { createModel, defaultModelRef, modelInfo } from './providers'
 import { inside } from './tools/sandbox'
 import { permissionGate } from './permissions'
 import type { PermissionMode } from './config'
-import { TOOL_FACTORIES, buildTools, stopAllProcesses, type ToolEnv } from './tools'
+import { TOOL_FACTORIES, buildTools, runProcess, stopAllProcesses, type ToolEnv } from './tools'
 import { TrajectoryRecorder, textOf } from './trajectory'
 import { skillIndex } from './skills'
 import { openWorkflow } from './workflow'
@@ -28,11 +30,16 @@ import { EvolveStore } from './evolve/store'
 import { extraSkills, listSkills, type SkillRef } from './skills'
 import { kernelIndex } from './evolve/kernels'
 
-export type Runtime = { ws: Workspace; db: Db; ledger: Ledger; genomes: GenomeRepo; evolve: EvolveStore }
+export type Runtime = { ws: Workspace; db: Db; ledger: Ledger; genomes: GenomeRepo; evolve: EvolveStore; executor: ExecutionBackend }
 
-export function openRuntime(ws: Workspace, onAlert?: (m: string) => void): Runtime {
+export function openRuntime(ws: Workspace, onAlert?: (m: string) => void, executor?: ExecutionBackend): Runtime {
   const db = openDb(ws.dataDir)
-  return { ws, db, ledger: new Ledger(db, ws.config, onAlert), genomes: new GenomeRepo(ws.root), evolve: new EvolveStore(db, ws.dataDir) }
+  const ledger = new Ledger(db, ws.config, onAlert)
+  const engineEnv: ToolEnv = { ws, cwd: ws.root, ledger, category: () => 'usage' }
+  return {
+    ws, db, ledger, genomes: new GenomeRepo(ws.root), evolve: new EvolveStore(db, ws.dataDir),
+    executor: executor ?? new DockerExecutor(ws, (command, args, timeout, signal) => runProcess(command, args, engineEnv, timeout, signal))
+  }
 }
 
 export type ResearchSession = {
@@ -110,7 +117,13 @@ export async function openResearchSession(
   const approve = permissionGate(opts.permission ?? (() => 'ask'), opts.approve)
   let loop: EvolveLoop | undefined
   const onFiles = (paths: string[]) => { loop?.noteFiles(paths); opts.onFiles?.(paths) }
-  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, skills: genome.skills, approve, trace, model: ref, onFiles }
+  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, skills: genome.skills, approve, trace, model: ref, onFiles,
+    executor: rt.executor, permission: opts.permission,
+    hostExecutionAllowed: () => {
+      const mode = opts.permission?.()
+      return !!opts.approve && mode !== 'bypass' && mode !== 'plan'
+    }
+  }
   if (opts.evolve) {
     loop = installEvolveLoop({
       store: opts.evolve.store, sessionId, projectId: opts.evolve.projectId, stage: opts.stage, cwd,
@@ -118,7 +131,7 @@ export async function openResearchSession(
       toolNames: genome.tools.enabled, skillNames: listSkills(rt.ws.root).map((x) => x.name), env
     })
   }
-  const platform = process.platform === 'win32' ? 'Windows（命令用 PowerShell 语法）' : process.platform === 'darwin' ? 'macOS' : 'Linux'
+  const platform = '模型代码默认在 Linux 容器用 POSIX 命令语法执行；宿主和容器通过项目相对路径交换文件。'
   const outputNote = opts.outputDir ? `\n- 交付文件（图、表、文稿、数据结果）写到 ${opts.outputDir}/ 下；用户上传的文件在 evoscholar-in/ 下；不要改动项目里其他已有文件，除非用户明确要求` : ''
   const workflow = openWorkflow(genome, env, model, opts.stage)
   const envNote = `\n\n## 当前环境\n- 工作目录：${cwd}（文件与进程工具只能访问这里，路径请用相对路径）${outputNote}\n- 系统：${platform}\n- 日期：${new Date().toISOString().slice(0, 10)}`
@@ -225,8 +238,11 @@ export async function openResearchSession(
       }
     },
     async dispose() {
-      await stopAllProcesses(sessionId)
-      try { await session.dispose() } finally { await workflow?.dispose() }
+      try { await session.dispose() } finally {
+        await stopAllProcesses(sessionId)
+        await rt.executor.disposeSession?.(sessionId)
+        await workflow?.dispose()
+      }
     }
   }
 }
