@@ -50,6 +50,7 @@ export type ProviderInfo = {
   authHeader: AuthHeader
   /** True when the user or the preset chose the header; false for the protocol-derived default. */
   authHeaderExplicit: boolean
+  apiVersion?: string
   apiKeyEnv: string
   apiKeyUrl?: string
   hasKey: boolean
@@ -72,6 +73,32 @@ const VISION: Record<string, boolean> = {
 }
 const VISION_VENDORS = new Set(['openai', 'anthropic', 'gemini', 'azure'])
 const PRESETS = presets as Preset[]
+
+export const API_VERSION_RE = /^\d{4}-\d{2}-\d{2}(-preview)?$/
+export function validApiVersion(value: string): boolean {
+  return API_VERSION_RE.test(value)
+}
+
+/** Central effort -> numeric thinking token budget table for protocols/models that use token budgets. */
+export const THINKING_BUDGET_TOKENS: Readonly<Record<string, number>> = Object.freeze({
+  none: 0,
+  minimal: 1024,
+  low: 1024,
+  medium: 4096,
+  high: 16384,
+  xhigh: 24576,
+  max: 32768
+})
+
+export function thinkingBudgetFor(effort: string, maxOutputTokens?: number): number | undefined {
+  const raw = THINKING_BUDGET_TOKENS[effort]
+  if (raw === undefined) return undefined
+  if (raw === 0) return 0
+  if (maxOutputTokens !== undefined && Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0) {
+    return Math.min(raw, Math.max(1, maxOutputTokens - 1))
+  }
+  return raw
+}
 
 export function presetIds(): string[] {
   return PRESETS.map((p) => p.id)
@@ -168,6 +195,7 @@ function describe(id: string, p: Preset | undefined, o: ProviderOverride | undef
     region: o?.region ?? p?.regions?.[0]?.id,
     authHeader: o?.authHeader ?? p?.authHeader ?? (protocol === 'gemini' ? 'x-goog-api-key' : protocol === 'messages' && id === 'anthropic' ? 'x-api-key' : 'bearer'),
     authHeaderExplicit: !!(o?.authHeader ?? p?.authHeader),
+    ...(o?.apiVersion ? { apiVersion: o.apiVersion } : {}),
     apiKeyEnv: keyEnvFor(id, o),
     apiKeyUrl: p?.apiKeyUrl,
     hasKey: false,
@@ -264,6 +292,35 @@ function authFetch(protocol: Protocol, style: AuthHeader, explicit: boolean, inn
   }) as typeof fetch
 }
 
+function apiVersionFetch(apiVersion: string | undefined, inner: typeof fetch): typeof fetch {
+  if (!apiVersion) return inner
+  if (!validApiVersion(apiVersion)) throw new Error(`API 版本格式不正确：${apiVersion}（示例：2024-10-21 或 2024-12-01-preview）`)
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const target = new URL(input instanceof Request ? input.url : input)
+    if (!target.searchParams.has('api-version')) target.searchParams.set('api-version', apiVersion)
+    return inner(target.href, init)
+  }) as typeof fetch
+}
+
+function clampThinkingBudgetFetch(inner: typeof fetch): typeof fetch {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    if (typeof init?.body === 'string') {
+      try {
+        const parsed = JSON.parse(init.body) as { max_tokens?: unknown; thinking?: Record<string, unknown> }
+        const max = typeof parsed.max_tokens === 'number' && Number.isSafeInteger(parsed.max_tokens) && parsed.max_tokens > 0
+          ? parsed.max_tokens : undefined
+        const budget = parsed.thinking?.budget_tokens
+        if (max !== undefined && typeof budget === 'number' && budget >= max) {
+          // The per-request max_tokens can be smaller than the model's; too small a budget is invalid.
+          parsed.thinking = max - 1 >= ANTHROPIC_MIN_BUDGET ? { ...parsed.thinking, budget_tokens: max - 1 } : { type: 'disabled' }
+          return inner(input, { ...init, body: JSON.stringify(parsed) })
+        }
+      } catch { /* forward unmodified body */ }
+    }
+    return inner(input, init)
+  }) as typeof fetch
+}
+
 function parseLiveVision(raw: Record<string, unknown>): boolean | undefined {
   const mods = raw.input_modalities ?? (raw.architecture as Record<string, unknown> | undefined)?.input_modalities
   if (Array.isArray(mods)) return mods.some((x) => String(x).toLowerCase() === 'image')
@@ -344,6 +401,10 @@ export async function fetchProviderModels(
       !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))))
       return { ok: false, error: '模型列表地址必须使用 HTTPS 或本机 HTTP，且不能包含账号密码' }
     if (info.protocol === 'gemini') url.searchParams.set('pageSize', '1000')
+    if (info.apiVersion) {
+      if (!validApiVersion(info.apiVersion)) return { ok: false, error: `API 版本格式不正确：${info.apiVersion}` }
+      if (!url.searchParams.has('api-version')) url.searchParams.set('api-version', info.apiVersion)
+    }
     const res = await providerTransport(config, info, fetchFn)(url.href, { headers: { ...authHeaders(info.authHeader, key), accept: 'application/json' }, signal: AbortSignal.timeout(10_000), redirect: 'error' })
     if (!res.ok) {
       await res.body?.cancel().catch(() => {})
@@ -378,32 +439,55 @@ export function modelInfo(config: EvoConfig, ref: string) {
 }
 
 const THINKING_TOGGLE_VENDORS = new Set(['deepseek', 'zhipu', 'minimax', 'volcengine'])
+// Numeric budgets only for model families known to need them; anything else (including future
+// models) keeps the level/adaptive request that worked before.
+const GEMINI_BUDGET_MODEL = /^(?:models\/)?gemini-[12](?:[.-]|$)/i
+const ANTHROPIC_BUDGET_MODEL = /^claude-(?:3(?:[.-]|$)|(?:opus|sonnet|haiku)-4(?:-[0-5])?(?:-\d{8})?$)/i
+/** Anthropic rejects extended-thinking budgets below this. */
+const ANTHROPIC_MIN_BUDGET = 1024
 
 /** Translate a raw effort value into the vendor/protocol-specific request parameters. */
 export function resolveProviderParameters(
   protocol: Protocol,
   provider: string,
   raw?: Record<string, Json>,
-  fallbackEffort?: string
+  fallbackEffort?: string,
+  opts?: { model?: string; maxOutputTokens?: number }
 ): Record<string, Json> | undefined {
   const { effort: rawEffort, ...rest } = raw ?? {}
   const effort = typeof rawEffort === 'string' && rawEffort ? rawEffort : fallbackEffort
   if (!effort || effort === 'default') return Object.keys(rest).length ? rest : undefined
+  const model = opts?.model
 
   if (protocol === 'gemini') {
-    if (rest.thinkingConfig === undefined) rest.thinkingConfig = effort === 'none' ? { thinkingBudget: 0 } : { thinkingLevel: effort }
+    if (rest.thinkingConfig === undefined) {
+      if (effort === 'none') rest.thinkingConfig = { thinkingBudget: 0 }
+      else if (model && GEMINI_BUDGET_MODEL.test(model)) {
+        const budget = thinkingBudgetFor(effort, opts?.maxOutputTokens)
+        rest.thinkingConfig = budget !== undefined ? { thinkingBudget: budget } : { thinkingLevel: effort }
+      } else {
+        rest.thinkingConfig = { thinkingLevel: effort }
+      }
+    }
   } else if (protocol === 'responses') {
     if (rest.reasoning === undefined) rest.reasoning = { effort }
   } else if (protocol === 'messages') {
     if (effort === 'none') {
       if (rest.thinking === undefined) rest.thinking = { type: 'disabled' }
     } else if (provider === 'anthropic') {
-      if (rest.thinking === undefined) rest.thinking = { type: 'adaptive' }
-      if (rest.output_config === undefined) rest.output_config = { effort }
+      if (model && ANTHROPIC_BUDGET_MODEL.test(model)) {
+        const budget = thinkingBudgetFor(effort, opts?.maxOutputTokens)
+        if (rest.thinking === undefined) rest.thinking = budget === undefined ? { type: 'adaptive' }
+          : budget < ANTHROPIC_MIN_BUDGET ? { type: 'disabled' } : { type: 'enabled', budget_tokens: budget }
+      } else {
+        if (rest.thinking === undefined) rest.thinking = { type: 'adaptive' }
+        if (rest.output_config === undefined) rest.output_config = { effort }
+      }
     } else if (provider === 'deepseek') {
       if (rest.thinking === undefined) rest.thinking = { type: 'enabled' }
       if (rest.output_config === undefined) rest.output_config = { effort }
     } else if (rest.thinking === undefined) {
+      // Anthropic-compatible vendor endpoints have always received this shape; keep it.
       rest.thinking = { type: 'enabled' }
     }
   } else {
@@ -433,17 +517,25 @@ export function createModel(
     return k
   }
   const mi = modelInfo(config, ref)
-  const parameters = resolveProviderParameters(protocol, provider, opts.parameters, opts.effort ?? config.reasoningEffort?.[ref])
-  const transport = providerTransport(config, info, opts.fetch)
+  const parameters = resolveProviderParameters(protocol, provider, opts.parameters, opts.effort ?? config.reasoningEffort?.[ref], {
+    model, maxOutputTokens: mi.maxOutputTokens
+  })
+  let transport = providerTransport(config, info, opts.fetch)
+  transport = apiVersionFetch(info.apiVersion, transport)
+  transport = authFetch(protocol, info.authHeader, info.authHeaderExplicit, transport)
+  const thinkingObj = parameters?.thinking as Record<string, unknown> | undefined
+  if (protocol === 'messages' && provider === 'anthropic' && typeof thinkingObj?.budget_tokens === 'number') {
+    transport = clampThinkingBudgetFetch(transport)
+  }
   if (protocol === 'gemini')
-    return createGeminiModel({ baseUrl: url, model, id: `${ref}@gemini`, apiKey, parameters, fetch: authFetch(protocol, info.authHeader, info.authHeaderExplicit, transport), inputCapabilities: { images: mi.vision } })
+    return createGeminiModel({ baseUrl: url, model, id: `${ref}@gemini`, apiKey, parameters, fetch: transport, inputCapabilities: { images: mi.vision } })
   const common = {
     endpoint: url,
     model,
     id: `${ref}@${protocol}`,
     apiKey,
     parameters,
-    fetch: authFetch(protocol, info.authHeader, info.authHeaderExplicit, transport),
+    fetch: transport,
     inputCapabilities: { images: mi.vision }
   }
   if (protocol === 'messages') return createMessagesModel(common)

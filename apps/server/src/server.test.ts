@@ -5,7 +5,7 @@ import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } fro
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import { join, resolve } from 'node:path'
-import { consolidate, openRuntime, openWorkspace, recordCandidateVerification } from '@evoscholar/core'
+import { FILE_LIMITS, consolidate, openRuntime, openWorkspace, recordCandidateVerification } from '@evoscholar/core'
 import { createLocalAuth } from './local-auth'
 import { createServerApp } from './server'
 import { body, send } from './http'
@@ -525,4 +525,96 @@ test('candidate approval requires confirmation when unverified and returns verif
   const ok = await localFetch(`${base}/api/evolution/${c2.genome}/promote`, { method: 'POST', headers: H, body: JSON.stringify({}) })
   assert.equal(ok.status, 200)
   assert.equal(rt.genomes.activeId(), c2.genome)
+
+  // Azure apiVersion validation via PUT /api/providers/azure.
+  const badVer = await localFetch(`${base}/api/providers/azure`, {
+    method: 'PUT', headers: H, body: JSON.stringify({ apiVersion: 'not-a-date' })
+  })
+  assert.equal(badVer.status, 400)
+  const goodVer = await localFetch(`${base}/api/providers/azure`, {
+    method: 'PUT', headers: H, body: JSON.stringify({ apiVersion: '2024-10-21' })
+  })
+  assert.equal(goodVer.status, 200)
+  assert.equal((await goodVer.json() as { provider: { apiVersion?: string } }).provider.apiVersion, '2024-10-21')
+  const previewVer = await localFetch(`${base}/api/providers/azure`, {
+    method: 'PUT', headers: H, body: JSON.stringify({ apiVersion: '2025-01-01-preview' })
+  })
+  assert.equal(previewVer.status, 200)
+  assert.equal((await previewVer.json() as { provider: { apiVersion?: string } }).provider.apiVersion, '2025-01-01-preview')
+  const clearVer = await localFetch(`${base}/api/providers/azure`, {
+    method: 'PUT', headers: H, body: JSON.stringify({ apiVersion: '' })
+  })
+  assert.equal(clearVer.status, 200)
+  assert.equal((await clearVer.json() as { provider: { apiVersion?: string } }).provider.apiVersion, undefined)
+
+  // Item 21: /api/budget marks itself as dev/history data; /api/usage returns tokens only (no money fields).
+  rt.ledger.record({ category: 'usage', kind: 'model', provider: 'deepseek', model: 'deepseek/deepseek-flash', inputTokens: 120, outputTokens: 30, costUsd: 0 })
+  const budget = await (await localFetch(`${base}/api/budget`)).json() as { scope?: string; notice?: string; summary: unknown }
+  assert.equal(budget.scope, 'dev-and-history')
+  assert.match(budget.notice ?? '', /开发与历史/)
+  const usage = await (await localFetch(`${base}/api/usage?group=model&days=30`)).json() as { totals: Record<string, unknown>; rows: Record<string, unknown>[] }
+  const moneyKeys = ['cost', 'costCny', 'costUsd', 'cost_cny', 'cost_usd']
+  for (const k of moneyKeys) {
+    assert.equal(k in usage.totals, false, `/api/usage totals must not expose ${k}`)
+    for (const row of usage.rows) assert.equal(k in row, false, `/api/usage rows must not expose ${k}`)
+  }
+  assert.equal(usage.totals.inputTokens, 120)
+})
+
+test('session ask returns 413 when images exceed per-image, count or total limits', async (t) => {
+  const dir = tempWorkspace()
+  const rt = openRuntime(openWorkspace(dir), () => {})
+  const auth = createLocalAuth()
+  const app = createServerApp(rt, { webDir: WEB, auth })
+  const srv = createServer(app.handler)
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve))
+  t.after(async () => {
+    await app.dispose()
+    await new Promise<void>((resolve) => srv.close(() => resolve()))
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+  const localFetch = await localhostClient(base, auth)
+  const H = { 'content-type': 'application/json', 'x-evoscholar': '1' }
+
+  const sess = await (await localFetch(`${base}/api/sessions`, {
+    method: 'POST', headers: H, body: JSON.stringify({ title: 'img-limits', model: 'deepseek/deepseek-flash' })
+  })).json() as { id: string; cwd: string }
+  const inDir = join(sess.cwd, 'evoscholar-in')
+  mkdirSync(inDir, { recursive: true })
+
+  // 1. Single image attachment > 10 MB -> 413.
+  writeFileSync(join(inDir, 'huge.png'), Buffer.alloc(FILE_LIMITS.imageBytes + 1024, 1))
+  const r1 = await localFetch(`${base}/api/sessions/${sess.id}/ask`, {
+    method: 'POST', headers: H, body: JSON.stringify({ text: '看图', attachments: ['evoscholar-in/huge.png'] })
+  })
+  assert.equal(r1.status, 413)
+  assert.match((await r1.json() as { error: string }).error, /10 MB/)
+
+  // 2. More than 8 images in one message -> 413.
+  const tinyPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64').toString('base64')
+  const r2 = await localFetch(`${base}/api/sessions/${sess.id}/ask`, {
+    method: 'POST', headers: H,
+    body: JSON.stringify({ text: '多图', images: Array.from({ length: FILE_LIMITS.messageImagesMax + 1 }, () => ({ mimeType: 'image/png', data: tinyPng })) })
+  })
+  assert.equal(r2.status, 413)
+  assert.match((await r2.json() as { error: string }).error, /8 张/)
+
+  // 3. Combined image attachments > 20 MB (3 x 7 MB = 21 MB) -> 413.
+  const sevenMb = Buffer.alloc(7 * 1024 * 1024, 1)
+  for (const name of ['a.png', 'b.png', 'c.png']) writeFileSync(join(inDir, name), sevenMb)
+  const r3 = await localFetch(`${base}/api/sessions/${sess.id}/ask`, {
+    method: 'POST', headers: H,
+    body: JSON.stringify({ text: '大图组', attachments: ['evoscholar-in/a.png', 'evoscholar-in/b.png', 'evoscholar-in/c.png'] })
+  })
+  assert.equal(r3.status, 413)
+  assert.match((await r3.json() as { error: string }).error, /20 MB/)
+
+  // 4. A referenced project image that does not fit is passed by path instead of failing the message.
+  const r4 = await localFetch(`${base}/api/sessions/${sess.id}/ask`, {
+    method: 'POST', headers: H, body: JSON.stringify({ text: '看看这张图', refs: ['evoscholar-in/huge.png'] })
+  })
+  assert.notEqual(r4.status, 413)
+  await r4.body?.cancel()
 })

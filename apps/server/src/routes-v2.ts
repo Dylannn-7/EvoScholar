@@ -40,6 +40,7 @@ import {
   updateProject,
   usageBy,
   usageTotals,
+  validApiVersion,
   type PermissionMode,
   type Protocol,
   type ProviderOverride,
@@ -112,6 +113,16 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
       if (b.authHeader !== undefined) {
         if (!['bearer', 'x-api-key', 'api-key', 'x-goog-api-key'].includes(b.authHeader)) throw httpError(400, '不支持的认证方式')
         next.authHeader = b.authHeader
+      }
+      if (b.apiVersion !== undefined) {
+        if (typeof b.apiVersion !== 'string') throw httpError(400, 'API 版本必须为字符串')
+        const v = b.apiVersion.trim()
+        if (v) {
+          if (!validApiVersion(v)) throw httpError(400, 'API 版本格式不正确（示例：2024-10-21 或 2024-12-01-preview）')
+          next.apiVersion = v
+        } else {
+          delete next.apiVersion
+        }
       }
       if (!isPreset) {
         next.custom = true

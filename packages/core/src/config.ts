@@ -27,6 +27,8 @@ export type ProviderOverride = {
   /** Legacy custom gateway: full endpoint URL. */
   endpoint?: string
   authHeader?: AuthHeader
+  /** Optional query parameter ?api-version=<value> (used by versioned Azure OpenAI deployments). */
+  apiVersion?: string
   modelsListUrl?: string
   gatewayApproval?: { base: string; privateAccess: boolean }
   credentialOrigin?: string

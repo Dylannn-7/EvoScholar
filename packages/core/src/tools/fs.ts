@@ -1,17 +1,108 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { open } from 'node:fs/promises'
 import { basename, dirname, extname, join, relative } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { atomicWriteFile } from '../atomic-file'
+import { FILE_LIMITS, KiB, MiB_BYTES } from '../limits'
 import { appPrivate, modelPath } from './sandbox'
 import { objectArgs, textResult, type ToolFactory } from './types'
 
 const IMAGE: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }
-const TEXT_LIMIT = 200_000
+const STREAM_CHUNK_BYTES = 64 * KiB
 
-function isProbablyText(buf: Buffer): boolean {
-  const n = Math.min(buf.length, 4096)
-  for (let i = 0; i < n; i++) if (buf[i] === 0) return false
-  return true
+function isProbablyTextFile(file: string, size: number): boolean {
+  const len = Math.min(size, 4096)
+  if (len <= 0) return true
+  const probe = Buffer.allocUnsafe(len)
+  const fd = openSync(file, 'r')
+  try {
+    const read = readSync(fd, probe, 0, len, 0)
+    for (let i = 0; i < read; i++) if (probe[i] === 0) return false
+    return true
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function sliceUtf8Bytes(s: string, maxBytes: number): string {
+  if (maxBytes <= 0) return ''
+  const buf = Buffer.from(s, 'utf8')
+  if (buf.length <= maxBytes) return s
+  let end = maxBytes
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--
+  return buf.subarray(0, end).toString('utf8')
+}
+
+async function readTextRange(
+  file: string,
+  offset = 1,
+  limit?: number,
+  maxBytes = FILE_LIMITS.textReadBytes
+): Promise<{ text: string; truncated: boolean; line: number }> {
+  const start = Math.max(1, offset)
+  const end = limit ? start + limit - 1 : Infinity
+  // Reserve room so even with the truncation notice, total returned UTF-8 bytes stay <= maxBytes.
+  const noticeReserve = 160
+  const bodyBudget = Math.max(256, maxBytes - noticeReserve)
+  const chunks: string[] = []
+  let outBytes = 0
+  let lineNo = 1
+  let started = false
+  let truncated = false
+  let done = false
+
+  const decoder = new TextDecoder('utf-8')
+  const buf = Buffer.allocUnsafe(STREAM_CHUNK_BYTES)
+  const fh = await open(file, 'r')
+  const appendPiece = (piece: string) => {
+    const parts = piece.split('\n')
+    for (let i = 0; i < parts.length; i++) {
+      const seg = parts[i]
+      if (lineNo >= start && lineNo <= end) {
+        if (started && i > 0) {
+          if (outBytes + 1 > bodyBudget) { truncated = true; done = true; return }
+          chunks.push('\n')
+          outBytes += 1
+        }
+        started = true
+        if (seg.length > 0) {
+          const segBytes = Buffer.byteLength(seg, 'utf8')
+          if (outBytes + segBytes <= bodyBudget) {
+            chunks.push(seg)
+            outBytes += segBytes
+          } else {
+            chunks.push(sliceUtf8Bytes(seg, bodyBudget - outBytes))
+            truncated = true
+            done = true
+            return
+          }
+        }
+      }
+      if (i < parts.length - 1) {
+        lineNo++
+        if (lineNo > end) { done = true; return }
+      }
+    }
+  }
+
+  try {
+    for (;;) {
+      const { bytesRead } = await fh.read(buf, 0, buf.length, null)
+      if (bytesRead === 0) break
+      appendPiece(decoder.decode(buf.subarray(0, bytesRead), { stream: true }))
+      if (done) break
+    }
+    if (!done) {
+      const tail = decoder.decode()
+      if (tail) appendPiece(tail)
+    }
+  } finally {
+    await fh.close()
+  }
+
+  if (!truncated) return { text: chunks.join(''), truncated: false, line: lineNo }
+  const notice = `\n…（已截断，超过 ${Math.round(maxBytes / KiB)} KB；当前到第 ${lineNo} 行，请用 offset 和 limit 分页继续读取）`
+  return { text: chunks.join('') + notice, truncated: true, line: lineNo }
 }
 
 export const listFiles: ToolFactory = (env) => ({
@@ -75,22 +166,23 @@ export const readFile: ToolFactory = (env) => ({
     if (!st.isFile()) return textResult(`${a.path} 不是普通文件`, true)
     const mime = IMAGE[extname(file).toLowerCase()]
     if (mime) {
-      if (st.size > 8 * 1024 * 1024) return textResult('图片超过 8 MB', true)
+      if (st.size > FILE_LIMITS.imageBytes) {
+        return textResult(
+          `图片超过 ${Math.round(FILE_LIMITS.imageBytes / MiB_BYTES)} MB（当前 ${(st.size / MiB_BYTES).toFixed(1)} MB），请先缩小后再读取`,
+          true
+        )
+      }
       // The harness media layer accepts data: URLs (or http URLs) and slash-free filenames.
       const dataUrl = `data:${mime};base64,${readFileSync(file).toString('base64')}`
       return {
         content: [
-          { type: 'text', text: `图片 ${a.path}（${(st.size / 1024).toFixed(1)} KB）：` },
+          { type: 'text', text: `图片 ${a.path}（${(st.size / KiB).toFixed(1)} KB）：` },
           { type: 'image', mimeType: mime, source: dataUrl, filename: basename(file) }
         ]
       }
     }
-    const buf = readFileSync(file)
-    if (!isProbablyText(buf)) return textResult(`${a.path} 是二进制文件（${st.size} B），请用 run_python 处理`, true)
-    const lines = buf.toString('utf8').split('\n')
-    const start = (a.offset ?? 1) - 1
-    const slice = lines.slice(start, a.limit ? start + a.limit : undefined).join('\n')
-    const text = slice.length > TEXT_LIMIT ? slice.slice(0, TEXT_LIMIT) + `\n…（已截断；共 ${lines.length} 行，请用 offset/limit 分页）` : slice
+    if (!isProbablyTextFile(file, st.size)) return textResult(`${a.path} 是二进制文件（${st.size} B），请用 run_python 处理`, true)
+    const { text } = await readTextRange(file, a.offset ?? 1, a.limit, FILE_LIMITS.textReadBytes)
     return textResult(text)
   }
 })
