@@ -30,7 +30,8 @@ test('paths cannot escape the working directory', () => {
   assert.throws(() => inside(cwd, '../x'))
   assert.throws(() => inside(cwd, '/etc/passwd'))
   mkdirSync(join(cwd, 'a'))
-  symlinkSync('/etc', join(cwd, 'a', 'link'))
+  const outside = mkdtempSync(join(tmpdir(), 'evo-outside-'))
+  symlinkSync(outside, join(cwd, 'a', 'link'), process.platform === 'win32' ? 'junction' : 'dir')
   assert.throws(() => inside(cwd, 'a/link/passwd'))
   assert.ok(inside(cwd, 'a/new/file.txt').startsWith(realpathSync(cwd)))
   assert.equal(inside(cwd, join(cwd, 'a', 'x.txt')), join(realpathSync(cwd), 'a', 'x.txt'))
@@ -85,7 +86,7 @@ with socketserver.TCPServer(('127.0.0.1', 0), H) as s:
     print(f'http://127.0.0.1:{s.server_address[1]}', flush=True)
     s.serve_forever()
 `)
-  let output = text(await call('start_process', { command: 'python3 srv.py', wait_s: 0 }))
+  let output = text(await call('start_process', { command: `${process.platform === 'win32' ? 'python' : 'python3'} srv.py`, wait_s: 0 }))
   const processId = /进程 (\S+)：/.exec(output)
   assert.ok(processId, output)
   const [, id] = processId

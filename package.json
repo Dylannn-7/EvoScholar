@@ -1,8 +1,8 @@
 {
   "name": "evoscholar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "A self-evolving personal research workbench (harness-level evolution) built on a fork of aipoch/open-science agent-harness",
+  "description": "EvoScholar: a self-evolving personal research workbench (literature, data and figures, manuscript checks) whose agent harness evolves in the loop",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=22.13.0"
@@ -20,7 +20,8 @@
     "es": "node --no-warnings apps/cli/dist/main.js",
     "demo:evolution": "node scripts/demo-evolution.mjs",
     "setup:python": "node scripts/setup-python.mjs",
-    "test": "node --no-warnings --test packages/core/dist/*.test.js apps/server/dist/*.test.js"
+    "test": "node --no-warnings --test packages/core/dist/*.test.js apps/server/dist/*.test.js",
+    "demo": "node --no-warnings scripts/demo.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",

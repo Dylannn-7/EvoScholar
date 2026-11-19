@@ -1,0 +1,16 @@
+# Scientific stack used by run_python and the bundled helpers (npm run setup:python installs the same list).
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+scienceplots
+tueplots
+cmcrameri
+aquarel
+python-docx
+bibtexparser
+pymupdf
+openpyxl
+pyyaml
+pillow
