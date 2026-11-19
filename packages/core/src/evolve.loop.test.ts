@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createMessagesModel } from '@evoscholar/harness/messages'
 import { createResponsesModel } from '@evoscholar/harness/responses'
 import type { AgentMessage } from '@evoscholar/harness'
-import { betaScore, openResearchSession, openRuntime, openWorkspace, validateMemoryText } from './index'
+import { betaScore, EvolveStore, openDb, openResearchSession, openRuntime, openWorkspace, validateMemoryText } from './index'
 import { externalCallSource, externalContextSource, installEvolveLoop } from './evolve/loop'
 
 const REPO = resolve(__dirname, '../../..')
@@ -139,6 +139,78 @@ test('automatic updates preserve the trust and scope of existing memories', (t) 
   assert.equal(rt.evolve.get(approved.id)?.status, 'active')
 })
 
+test('editing a project rule excludes its old model notes from a new session', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-project-rule-'))
+  const data = join(dir, 'data')
+  const project = join(dir, 'project')
+  mkdirSync(project)
+  const db = openDb(data)
+  t.after(() => { db.close(); rmSync(dir, { recursive: true, force: true }) })
+  db.prepare('INSERT INTO projects (id, name, path, created_at) VALUES (?, ?, ?, ?)').run('demo', '简报', project, new Date().toISOString())
+  const store = new EvolveStore(db, data)
+  const oldOrder = '把本项目温漂组会简报的两个小节依次写成「已确认结果、待复测样品」，按本批 CSV 状态分组'
+  const newOrder = '把本项目温漂组会简报的两个小节依次写成「待复测样品、已确认结果」，按本批 CSV 状态分组'
+  const scope = { kind: 'preference' as const, projectId: 'demo' }
+  const rule = store.upsert({ ...scope, trigger: '用户明确要求', content: oldOrder, source: 'user', pinned: true }).item
+  const stale = {
+    trigger: '写本项目「温漂组会简报」时',
+    content: '两个小节固定为已确认结果在前、待复测样品在后，按本批 CSV 的状态列分组'
+  }
+  const projectNote = store.upsert({ ...scope, ...stale, source: 'model' }).item
+  const globalNote = store.upsert({ kind: 'preference', ...stale, source: 'model' }).item
+  const otherProject = store.upsert({ ...scope, ...stale, projectId: 'other', source: 'model' }).item
+  const unrelated = store.upsert({
+    ...scope, trigger: '绘制温漂数据折线图时', content: '按器件系列区分线型，导出 PDF', source: 'model'
+  }).item
+  store.setStatus(projectNote.id, 'active')
+
+  store.edit(rule.id, { content: newOrder })
+  assert.equal(store.get(projectNote.id)?.status, 'retired')
+  assert.equal(store.get(otherProject.id)?.status, 'trial')
+  assert.equal(store.get(unrelated.id)?.status, 'trial')
+  assert.equal(store.get(globalNote.id)?.status, 'trial')
+  assert.ok(store.recallable('other').some(m => m.id === globalNote.id))
+  assert.ok(!store.recallable('demo').some(m => m.id === globalNote.id))
+  const mirror = readFileSync(join(project, '.evoscholar', 'memory.md'), 'utf8')
+  assert.ok(mirror.includes(newOrder))
+  assert.ok(mirror.includes(unrelated.id))
+  assert.ok(!mirror.includes(projectNote.id))
+
+  const loop = installEvolveLoop({ store, sessionId: 'new', projectId: 'demo', cwd: project, turnId: () => 1, toolNames: [], skillNames: [] })
+  const user: AgentMessage = { id: 'u', role: 'user', content: [{ type: 'text', text: '按项目规则制作温漂组会简报' }] }
+  loop.beginTurn('按项目规则制作温漂组会简报')
+  assert.match(loop.projectRules(), /用户设定的项目规则[\s\S]*「待复测样品、已确认结果」/)
+  assert.match(str(loop.transformContext([user])[0].content), /<本次任务引用的项目规则>[\s\S]*「待复测样品、已确认结果」/)
+  assert.ok(!loop.state.injected.includes(projectNote.id))
+  assert.ok(!loop.state.injected.includes(globalNote.id))
+  loop.noteFiles(['digest.json'])
+  assert.match(loop.selfCheck() ?? '', /按规则的先后检查落盘文件/)
+  assert.equal(loop.selfCheck(), undefined)
+  loop.beginTurn('这次不按项目默认顺序，改用投稿模板')
+  assert.doesNotMatch(str(loop.transformContext([user])[0].content), /本次任务引用的项目规则/)
+  loop.noteFiles(['digest.json'])
+  assert.equal(loop.selfCheck(), undefined)
+  const note = loop.tools.find(x => x.name === 'note_lesson')!
+  const before = store.list().length
+  const result = await note.execute({ trigger: stale.trigger, advice: stale.content, scope: 'global' }, { signal: new AbortController().signal } as never)
+  assert.ok('content' in result)
+  assert.match(str(result.content), /已有用户设定的项目规则/)
+  assert.equal(store.list().length, before)
+})
+
+test('a user can take ownership of a matching model preference', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-promote-rule-'))
+  const db = openDb(dir)
+  t.after(() => { db.close(); rmSync(dir, { recursive: true, force: true }) })
+  const store = new EvolveStore(db)
+  const fields = { kind: 'preference' as const, projectId: 'demo', trigger: '提交组会记录', content: '组会记录的议程统一使用实验记录表' }
+  const inferred = store.upsert({ ...fields, source: 'model' }).item
+  const approved = store.upsert({ ...fields, source: 'user', pinned: true }).item
+  assert.equal(approved.id, inferred.id)
+  assert.equal(approved.source, 'user')
+  assert.equal(approved.status, 'active')
+})
+
 test('external sources are recognised in calls and in restored context', () => {
   const imported = (name: string) => name === 'third-party'
   assert.match(externalCallSource({ name: 'web_fetch', arguments: { url: 'https://example.org' } }, imported) ?? '', /web_fetch/)
@@ -208,7 +280,7 @@ test('stopped or failed turns do not credit the memories they recalled', (t) => 
   assert.equal(rt.evolve.lastScore('s-credit'), undefined)
 })
 
-test('a completed turn at its step limit does not start a self-check request', async (t) => {
+test('the turn step limit also bounds the optional self-check', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'evo-step-limit-'))
   for (const d of ['genomes', 'prompts', 'skills']) cpSync(join(REPO, d), join(dir, d), { recursive: true })
   cpSync(join(REPO, 'evoscholar.config.json'), join(dir, 'evoscholar.config.json'))
@@ -218,7 +290,10 @@ test('a completed turn at its step limit does not start a self-check request', a
   const replies = [
     call('write_file', { path: 'fixture.png', content: 'fixture' }, 'fixture-call'),
     say('已生成。'),
-    say('自检完成。')
+    call('write_file', { path: 'fixture.png', content: 'fixture' }, 'second-fixture'),
+    say('已生成。'),
+    call('list_files', { path: '.' }, 'check-list'),
+    say('新回合完成。')
   ]
   let requests = 0
   t.mock.method(globalThis, 'fetch', async () => replies[requests++]!)
@@ -236,4 +311,15 @@ test('a completed turn at its step limit does not start a self-check request', a
   })
   assert.equal((await rs.ask('生成测试文件')).status, 'complete')
   assert.equal(requests, 2)
+
+  const withCheck = await openResearchSession(rt, {
+    genome: { ...genome, budgets: { ...genome.budgets, maxSteps: 3 } },
+    model: 'deepseek/deepseek-flash', evolve: { store: rt.evolve, projectId: null }
+  })
+  try {
+    assert.equal((await withCheck.ask('生成测试文件')).status, 'budget')
+    assert.equal(requests, 5)
+    assert.equal((await withCheck.ask('继续')).status, 'complete')
+    assert.equal(requests, 6)
+  } finally { await withCheck.dispose() }
 })

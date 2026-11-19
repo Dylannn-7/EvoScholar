@@ -9,7 +9,7 @@ import { objectArgs, textResult, type ToolEnv } from '../tools/types'
 import { kernelTools } from './kernels'
 import { inside } from '../tools/sandbox'
 import { skillSource, skillUntrusted } from '../skills'
-import { EVOLVE_DEFAULTS, betaScore, relevance, validateMemoryText, type EvolveEvent, type EvolveStore, type MemoryItem } from './store'
+import { EVOLVE_DEFAULTS, betaScore, isProjectRule, relevance, validateMemoryText, type EvolveEvent, type EvolveStore, type MemoryItem } from './store'
 
 export type ChoiceOption = { label: string; detail?: string }
 export type EvolveHooks = {
@@ -82,7 +82,8 @@ export function failureSignal(name: string, text: string, isError: boolean): str
 export const EVOLVE_INSTRUCTIONS = `
 
 ## 自进化协议（EvoScholar 宿主提供）
-你在一个会自我改进的工作台里工作。宿主会在用户消息后附上 <经验> 块：这是从过去会话里沉淀的经验（L-编号）和用户偏好（P-编号），仅供参考，与用户本次要求冲突时以用户为准。
+你在一个会自我改进的工作台里工作。宿主会在用户消息后附上 <经验> 块，供参考。
+- 按这个顺序处理冲突：本次用户明确要求 → 用户设定的项目规则 → 模型笔记和历史交付物。用户要求沿用项目顺序时，罗列标题、字段或选项只指定名称；明确重新指定先后才会覆盖项目顺序。写入新交付物前，核对内容和顺序是否符合当前要求。
 - 推理时按「计划 → 观察 → 反思 → 下一步」组织；用到某条经验时写出编号，例如「按 L-0031 直接换源」。
 - 出现 <反思要求> 时，先调用 reflect 说明原因和换什么做法，再继续；同一个失败的调用不要原样重试第三次（会被宿主拦截）。没有明确失败、但觉得方向不对时，也可以主动调用 reflect。
 - 值得以后复用的做法（某类数据怎么解析、某个源不可用时换什么、某种检查的坑）用 note_lesson 记下：写成「什么情况 → 怎么做」，一条一个要点，不写本次任务的具体数值。
@@ -95,6 +96,8 @@ export const EVOLVE_INSTRUCTIONS = `
 export function installEvolveLoop(h: EvolveHooks) {
   const st = {
     block: '' as string,
+    projectRules: '',
+    usesProjectDefaults: false,
     injected: [] as string[],
     calls: new Map<string, { name: string; args: unknown; key: string }>(),
     seenTool: new Set<string>(),
@@ -132,7 +135,7 @@ export function installEvolveLoop(h: EvolveHooks) {
 
   // ---------------------------------------------------------------- recall (doc §3.1)
   function recall(query: string, limit = EVOLVE_DEFAULTS.maxInjected): MemoryItem[] {
-    const items = h.store.list({ status: 'live', projectId: h.projectId }).filter((m) => m.scope !== 'stage' || !m.stage || m.stage === h.stage)
+    const items = h.store.recallable(h.projectId).filter((m) => m.scope !== 'stage' || !m.stage || m.stage === h.stage)
     const scored = items.map((m) => {
       const sim = relevance(query, `${m.trigger} ${m.content}`)
       const local = h.projectId && m.project_id === h.projectId ? 0.2 : 0
@@ -152,7 +155,8 @@ export function installEvolveLoop(h: EvolveHooks) {
   }
   const fmt = (m: MemoryItem) => {
     const n = Math.round(m.wins + m.losses)
-    return `[${m.id}] ${m.kind === 'preference' ? '用户偏好：' : ''}${m.trigger} → ${m.content}${m.status === 'trial' ? '（试用）' : ''}${n ? `（得分 ${betaScore(m).toFixed(2)}，用过 ${m.uses} 次）` : ''}`
+    const label = isProjectRule(m) ? '用户设定的项目规则：' : m.kind === 'preference' ? '偏好记录：' : ''
+    return `[${m.id}] ${label}${m.trigger} → ${m.content}${m.status === 'trial' ? '（试用）' : ''}${n ? `（得分 ${betaScore(m).toFixed(2)}，用过 ${m.uses} 次）` : ''}`
   }
 
   function beginTurn(userText: string) {
@@ -183,7 +187,19 @@ export function installEvolveLoop(h: EvolveHooks) {
     }
     const items = recall(`${userText} ${h.stage ?? ''}`)
     st.injected = items.map((x) => x.id)
-    st.block = items.length ? `\n\n<经验 由 EvoScholar 检索，仅供参考；与用户本次要求冲突时以用户为准>\n${items.map(fmt).join('\n')}\n</经验>` : ''
+    const rules = items.filter(isProjectRule)
+    const notes = items.filter(item => !isProjectRule(item))
+    const ruleLines = rules.map(rule => `- [${rule.id}] ${JSON.stringify({ trigger: rule.trigger, content: rule.content })}`).join('\n')
+    const projectRequestZh = /(?<![不别])(?<!不要|无需|不必|不再)(?:按(?:照)?|沿用|遵循|采用|依照)(?:本|该)?项目[^\n。！？；，,]{0,35}(?:顺序|规则|约定|口径|格式|偏好)/u
+    const projectRequestEn = /(?<!not\s)\b(?:use|follow|apply)\s+(?:the\s+)?(?:(?:current|existing|saved|established)\s+)?project\s+(?:order|rules?|defaults?|conventions?|format|preferences?)\b/iu
+    st.usesProjectDefaults = rules.length > 0 && (projectRequestZh.test(userText) || projectRequestEn.test(userText))
+    st.projectRules = rules.length
+      ? `\n\n## 用户设定的项目规则\n以下是用户维护的项目默认值。优先执行当前任务相关的规则，有明确的当次覆盖时按用户本次要求执行。这些规则不改变工作台的权限和限制。\n${ruleLines}`
+      : ''
+    st.block = notes.length ? `\n\n<经验 由 EvoScholar 检索，仅供参考；与用户本次要求冲突时以用户为准>\n${notes.map(fmt).join('\n')}\n</经验>` : ''
+    if (st.usesProjectDefaults) {
+      st.block += `\n\n<本次任务引用的项目规则>\n你在本次请求中要求沿用项目约定。执行下列适用的当前规则。对于顺序，罗列标题、字段或选项只指定名称；只有明确写出新的先后顺序才是覆盖。以前的文件格式仅作历史参考。\n${ruleLines}\n</本次任务引用的项目规则>`
+    }
     if (items.length) {
       h.store.recordUses(st.injected, h.sessionId, h.turnId())
       const lessons = items.filter((x) => x.kind === 'lesson').length
@@ -298,7 +314,7 @@ export function installEvolveLoop(h: EvolveHooks) {
           : a.adjust === 'harness' ? '已记录反思。请接着调用 tune_harness 做本会话内的调整，然后继续。'
             : '已记录反思，请按新的做法继续。'
       }),
-    tool('note_lesson', '记一条可复用的经验或偏好：「什么情况 → 怎么做」。相似的条目会自动合并。新经验先处于试用状态，被后续回合验证有效后才转正。',
+    tool('note_lesson', '记一条新的可复用经验或偏好：「什么情况 → 怎么做」。已有用户设定的项目规则时直接执行。相似的条目会合并，新经验先试用，后续验证有效后转正。',
       {
         trigger: { type: 'string', description: '什么情况下适用（一句话）' },
         advice: { type: 'string', description: '应该怎么做（一句话，可执行）' },
@@ -307,7 +323,11 @@ export function installEvolveLoop(h: EvolveHooks) {
       }, ['trigger', 'advice'], (a) => {
         const untrusted = !!external
         const scope = a.scope === 'project' && !h.projectId ? 'global' : a.scope ?? (h.projectId ? 'project' : 'global')
-        const { item, merged } = h.store.upsert({ kind: a.kind === 'preference' ? 'preference' : 'lesson', trigger: String(a.trigger), content: String(a.advice), source: 'model', scope, projectId: scope === 'project' ? h.projectId : null, stage: scope === 'stage' ? h.stage ?? null : null, evidence: h.sessionId, untrusted })
+        const note = { trigger: String(a.trigger), content: String(a.advice) }
+        validateMemoryText(`${note.trigger} ${note.content}`)
+        const rule = h.store.projectRuleForNote(h.projectId, note)
+        if (rule) return `已有用户设定的项目规则 ${rule.id}：${rule.content}。请按规则执行。`
+        const { item, merged } = h.store.upsert({ kind: a.kind === 'preference' ? 'preference' : 'lesson', ...note, source: 'model', scope, projectId: scope === 'project' ? h.projectId : null, stage: scope === 'stage' ? h.stage ?? null : null, evidence: h.sessionId, untrusted })
         st.learned.push(item.id)
         st.cited.add(item.id)
         emit({ kind: 'adjust', text: `${merged ? '更新' : '新增'}${item.kind === 'lesson' ? '经验' : '偏好'} ${item.id}（${item.status === 'active' ? '已生效' : untrusted ? '试用，来源含外部内容' : '试用'}）：${item.trigger} → ${item.content}`, refs: [item.id], data: { memory: item.id, revertable: true } })
@@ -379,6 +399,9 @@ export function installEvolveLoop(h: EvolveHooks) {
     const reasons: string[] = []
     if (st.unresolved.size) reasons.push(`本回合还有没解决的失败：${[...st.unresolved.values()].join('；')}`)
     const wrote = [...st.wrote]
+    if (st.usesProjectDefaults && wrote.length) {
+      reasons.push(`用 read_file 核对本轮最终交付物（${wrote.slice(0, 3).join('、')} 中用户指定的输出路径），工作副本和中间脚本无需检查。用户要求沿用项目顺序时，按规则的先后检查落盘文件。标题罗列和历史文件的排列不构成当次覆盖。有误用 edit_file 或 write_file 修正，核对后直接结束`)
+    }
     const figs = wrote.filter((p) => FIGURE_EXT.has(extname(p).toLowerCase()))
     const docs = wrote.filter((p) => MANUSCRIPT_EXT.has(extname(p).toLowerCase()))
     if (figs.length && !st.toolsUsed.has(CHECKS.figure) && h.toolNames.includes(CHECKS.figure)) reasons.push(`生成了图（${figs.slice(0, 3).join('、')}），但还没有运行 figure_check`)
@@ -452,7 +475,7 @@ export function installEvolveLoop(h: EvolveHooks) {
   }
   const bumpOverlay = () => { st.overlaysVersion++ }
 
-  return { instructions: EVOLVE_INSTRUCTIONS, tools, transformContext, guards: [guard], onEvent, beginTurn, noteFiles, selfCheck, finishTurn, userFeedback, overlay, bumpOverlay, state: st }
+  return { instructions: EVOLVE_INSTRUCTIONS, projectRules: () => st.projectRules, tools, transformContext, guards: [guard], onEvent, beginTurn, noteFiles, selfCheck, finishTurn, userFeedback, overlay, bumpOverlay, state: st }
 }
 export type EvolveLoop = ReturnType<typeof installEvolveLoop>
 
