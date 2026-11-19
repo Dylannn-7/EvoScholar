@@ -69,6 +69,33 @@ export function runProcess(cmd: string, args: string[], env: ToolEnv, timeoutS: 
   return run(cmd, args, env, timeoutS, signal)
 }
 
+/**
+ * Kill a process and everything it started. On Windows `child.kill()` only ends the direct child
+ * (e.g. PowerShell), leaving grandchildren that keep the output pipes open, so use taskkill /T.
+ */
+export function killTree(child: ChildProcess, force = false): void {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  if (process.platform === 'win32' && child.pid) {
+    try { spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => child.kill()) } catch { child.kill() }
+  } else child.kill(force ? 'SIGKILL' : 'SIGTERM')
+}
+
+/** Resolve once the process has exited; give its pipes a short grace period to drain, never wait forever. */
+function settled(child: ChildProcess, onDone: (code: number | null, sig: string | null) => void): void {
+  let done = false
+  const finish = (code: number | null, sig: string | null) => {
+    if (done) return
+    done = true
+    onDone(code, sig)
+  }
+  child.on('close', (code, sig) => finish(code, sig))
+  child.on('exit', (code, sig) => setTimeout(() => {
+    child.stdout?.destroy(); child.stderr?.destroy()
+    finish(code, sig)
+  }, 1500))
+  child.on('error', () => setTimeout(() => finish(child.exitCode ?? -1, null), 50))
+}
+
 function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal: AbortSignal) {
   return new Promise<{ code: number | null; signal: string | null; out: string; stdout: string; timedOut: boolean }>((resolveP) => {
     const child = spawn(cmd, args, { cwd: env.cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
@@ -78,11 +105,11 @@ function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal
     const add = (b: Buffer) => { out += b.toString('utf8'); if (out.length > 4 * OUT_LIMIT) out = out.slice(-2 * OUT_LIMIT) }
     child.stdout.on('data', (b: Buffer) => { add(b); stdout += b.toString('utf8') })
     child.stderr.on('data', add)
-    const kill = () => { if (child.exitCode === null) child.kill('SIGTERM'); setTimeout(() => child.exitCode === null && child.kill('SIGKILL'), 2000) }
+    const kill = () => { killTree(child); setTimeout(() => killTree(child, true), 2000) }
     const timer = setTimeout(() => { timedOut = true; kill() }, timeoutS * 1000)
     signal.addEventListener('abort', kill, { once: true })
     child.on('error', (e) => { out += `\n[spawn error] ${e.message}` })
-    child.on('close', (code, sig) => { clearTimeout(timer); signal.removeEventListener('abort', kill); resolveP({ code, signal: sig, out, stdout, timedOut }) })
+    settled(child, (code, sig) => { clearTimeout(timer); signal.removeEventListener('abort', kill); resolveP({ code, signal: sig, out, stdout, timedOut }) })
   })
 }
 
@@ -185,9 +212,10 @@ export async function stopAllProcesses(sessionKey: string): Promise<void> {
 function stopProc(p: Proc): Promise<void> {
   return new Promise((res) => {
     if (p.child.exitCode !== null || p.child.signalCode !== null) return res()
-    p.child.once('close', () => res())
-    p.child.kill('SIGTERM')
-    setTimeout(() => { if (p.child.exitCode === null) p.child.kill('SIGKILL') }, 3000)
+    const t = setTimeout(res, 5000)   // never block shutdown on a stubborn process
+    settled(p.child, () => { clearTimeout(t); res() })
+    killTree(p.child)
+    setTimeout(() => killTree(p.child, true), 3000)
   })
 }
 

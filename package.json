@@ -20,7 +20,7 @@
     "es": "node --no-warnings apps/cli/dist/main.js",
     "demo:evolution": "node scripts/demo-evolution.mjs",
     "setup:python": "node scripts/setup-python.mjs",
-    "test": "node --no-warnings --test packages/core/dist/*.test.js apps/server/dist/*.test.js",
+    "test": "node --no-warnings --test --test-timeout=180000 packages/core/dist/*.test.js apps/server/dist/*.test.js",
     "demo": "node --no-warnings scripts/demo.mjs"
   },
   "devDependencies": {
