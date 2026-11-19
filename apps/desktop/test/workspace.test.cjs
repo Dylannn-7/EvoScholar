@@ -1,0 +1,54 @@
+'use strict'
+const { test } = require('node:test')
+const assert = require('node:assert/strict')
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs')
+const { tmpdir } = require('node:os')
+const { dirname, join } = require('node:path')
+const { prepareWorkspace } = require('../workspace.cjs')
+
+const write = (file, text) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text) }
+const read = (file) => readFileSync(file, 'utf8')
+
+test('upgrades refresh app files and built-in skills without touching user evolution', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'evo-ws-'))
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const appDir = join(base, 'app'), root = join(base, 'workspace')
+  write(join(appDir, 'evoscholar.config.json'), '{"v":1}')
+  write(join(appDir, 'python', 'old_helper.py'), 'v1')
+  write(join(appDir, 'prompts', 'system@v1.md'), 'v1')
+  write(join(appDir, 'genomes', 'g-0001.yaml'), 'v1')
+  write(join(appDir, 'skills', 'figure-style', 'SKILL.md'), 'v1')
+  write(join(appDir, 'skills', 'figure-style', 'SKILL@v2.md'), 'bundled v2')
+  prepareWorkspace({ appDir, root, version: '1.0.0' })
+  assert.equal(read(join(root, 'skills', 'figure-style', 'SKILL.md')), 'v1')
+
+  // The user evolves: a new prompt and genome, an edited genome, a local skill revision and an import.
+  write(join(root, 'prompts', 'system@g-0002.md'), 'evolved')
+  write(join(root, 'genomes', 'g-0002.yaml'), 'evolved')
+  write(join(root, 'genomes', 'g-0001.yaml'), 'user edit')
+  write(join(root, 'skills', 'figure-style', 'SKILL@v3.md'), 'user v3')
+  write(join(root, 'skills', 'imported', '.source.json'), '{"type":"zip"}')
+  write(join(root, 'skills', 'imported', 'SKILL.md'), 'mine')
+
+  // Version 2 changes app files, removes a helper and ships its own SKILL@v3.md.
+  rmSync(join(appDir, 'python', 'old_helper.py'))
+  write(join(appDir, 'python', 'new_helper.py'), 'v2')
+  write(join(appDir, 'evoscholar.config.json'), '{"v":2}')
+  write(join(appDir, 'skills', 'figure-style', 'SKILL.md'), 'v2')
+  write(join(appDir, 'skills', 'figure-style', 'SKILL@v3.md'), 'bundled v3')
+  write(join(appDir, 'skills', 'imported', 'SKILL.md'), 'bundled')
+  write(join(appDir, 'skills', 'new-skill', 'SKILL.md'), 'new')
+  prepareWorkspace({ appDir, root, version: '2.0.0' })
+
+  assert.equal(read(join(root, 'evoscholar.config.json')), '{"v":2}')
+  assert.ok(!existsSync(join(root, 'python', 'old_helper.py')), 'mirrored folders drop stale files')
+  assert.equal(read(join(root, 'python', 'new_helper.py')), 'v2')
+  assert.equal(read(join(root, 'prompts', 'system@g-0002.md')), 'evolved', 'evolved prompts survive')
+  assert.equal(read(join(root, 'genomes', 'g-0001.yaml')), 'user edit', 'genomes are never overwritten')
+  assert.equal(read(join(root, 'genomes', 'g-0002.yaml')), 'evolved')
+  assert.equal(read(join(root, 'skills', 'figure-style', 'SKILL.md')), 'v2', 'built-in skills update')
+  assert.equal(read(join(root, 'skills', 'figure-style', 'SKILL@v3.md')), 'user v3', 'pinned revisions are never overwritten')
+  assert.equal(read(join(root, 'skills', 'imported', 'SKILL.md')), 'mine', 'imported skills are left alone')
+  assert.equal(read(join(root, 'skills', 'new-skill', 'SKILL.md')), 'new')
+  assert.equal(read(join(root, '.app-version')), '2.0.0')
+})

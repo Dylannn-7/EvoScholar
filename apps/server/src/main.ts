@@ -15,7 +15,7 @@ const rt = openRuntime(ws, (m) => {
 })
 const PORT = Number(process.env.EVOSCHOLAR_PORT ?? 4317)
 
-void Promise.resolve(rt.executor.recover?.()).then(() => {
+{
   const auth = createLocalAuth()
   app = createServerApp(rt, { webDir: resolve(__dirname, '../../web/public'), alerts, auth })
   const server = createServer(app.handler)
@@ -31,8 +31,10 @@ void Promise.resolve(rt.executor.recover?.()).then(() => {
         announcePairing(port, auth)
       })
     }
+    // Leftover sandbox containers are cleaned in the background; startup does not wait on Docker.
+    void Promise.resolve(rt.executor.recover?.()).catch(() => {})
   })
-})
+}
 
 const shutdown = async () => {
   await app?.dispose()

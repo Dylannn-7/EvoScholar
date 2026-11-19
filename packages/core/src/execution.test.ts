@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { checkProjectRoot, stageDirectory, StagedProject } from './staged-project'
 import { chooseExecution, type ExecutionJob, type ProcessResult } from './execution'
-import { DEFAULT_SANDBOX_IMAGE, DockerExecutor, dockerCreateArgs } from './docker-executor'
+import { DEFAULT_SANDBOX_IMAGE, DockerExecutor, bootMinute, dockerCreateArgs } from './docker-executor'
 import { runProcess, type ToolEnv } from './tools'
 import type { Workspace } from './config'
 
@@ -95,7 +95,8 @@ test('stopping or cancelling execution removes the container and startup recover
   const executor = new DockerExecutor(ws, async (_bin, args, _timeout, signal) => {
     calls.push(args)
     if (args[0] === 'info' || args[0] === 'image') return ok('linux')
-    if (args[0] === 'ps') return ok(`aabbcc112233 ${process.pid}\nccbbaa332211 2147483647\n`)
+    // Live process this boot (kept), dead process (removed), live-looking PID from an earlier boot (removed).
+    if (args[0] === 'ps') return ok(`aabbcc112233 ${process.pid} ${bootMinute()}\nccbbaa332211 2147483647 ${bootMinute()}\nddeeff445566 ${process.pid} ${bootMinute() - 600}\n`)
     if (args[0] === 'start' && args.includes('--attach')) {
       attach?.()
       signal.throwIfAborted()
@@ -109,6 +110,7 @@ test('stopping or cancelling execution removes the container and startup recover
   await executor.recover()
   assert.ok(calls.some((args) => args[0] === 'ps' && args.some((value) => value.startsWith('label=io.evoscholar.workspace='))))
   assert.ok(calls.some((args) => args[0] === 'rm' && args.includes('ccbbaa332211')))
+  assert.ok(calls.some((args) => args[0] === 'rm' && args.includes('ddeeff445566')), 'containers from an earlier boot are removed')
   assert.ok(!calls.some((args) => args[0] === 'rm' && args.includes('aabbcc112233')))
   const controller = new AbortController()
   attach = () => controller.abort()

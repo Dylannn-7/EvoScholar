@@ -227,7 +227,12 @@ test('v2 endpoints: model settings, projects, uploads into the library, usage, h
   assert.equal(fileRes.status, 200)
   await localFetch(`${base}/api/library/${lib.body.files[0].id}`, { method: 'PATCH', headers: H, body: JSON.stringify({ deliverable: true }) })
   assert.equal((await json(await localFetch(`${base}/api/library?deliverable=1`))).body.files.length, 1)
-  assert.equal((await json(await localFetch(`${base}/api/library?limit=1`))).body.files.length, 1)
+  const limited = (await json(await localFetch(`${base}/api/library?limit=1`))).body
+  assert.equal(limited.files.length, 1)
+  assert.equal(limited.counts.total, 2, 'counts cover every file, not just the listed page')
+  assert.equal(limited.counts.upload, 2)
+  assert.equal(limited.counts.deliverable, 1)
+  assert.equal(limited.counts.projects[pid], 2)
   assert.equal((await localFetch(`${base}/api/library/999999/reveal`, { method: 'POST', headers: H })).status, 404)
   assert.equal((await localFetch(`${base}/api/library/${lib.body.files[0].id}/reveal`, { method: 'POST' })).status, 403)
 
@@ -264,7 +269,7 @@ test('credentials accept one dotenv entry at a time', (t) => {
   assert.equal(process.env.EVOSCHOLAR_TEST_API_KEY, 'fixture-key')
 })
 
-test('a session rejects a second turn and releases pending approval on cancel', async (t) => {
+test('a session rejects a second turn, releases pending approval on cancel and stays usable afterwards', async (t) => {
   const dir = tempWorkspace()
   const rt = openRuntime(openWorkspace(dir))
   const auth = createLocalAuth()
@@ -321,6 +326,12 @@ test('a session rejects a second turn and releases pending approval on cancel', 
   assert.ok(await until(async () => !(await snapshot()).busy), 'cancelled turn becomes idle without answering the dialog')
   assert.equal(modelRequests, 1)
   assert.equal(existsSync(join(cwd, 'output.txt')), false)
+  // The stopped turn left its tool call without a result; the next prompt must still run.
+  assert.equal((await post(path + '/ask', { text: 'again' })).status, 202)
+  assert.ok(await until(async () => modelRequests === 2 && (await snapshot()).pendingApprovals.length === 1), 'a stopped session accepts the next prompt')
+  assert.equal((await post(path + '/cancel')).status, 200)
+  assert.ok(await until(async () => !(await snapshot()).busy))
+  assert.equal((await post(path + '/fork')).status, 200, 'a stopped session can be forked')
 })
 
 test('JSON body errors return 400 and oversized streams return 413', async (t) => {

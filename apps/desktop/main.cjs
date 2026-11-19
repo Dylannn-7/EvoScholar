@@ -3,35 +3,39 @@
 // this shell attaches the token to every request from its own window, so there is no pairing step.
 'use strict'
 const { app, BrowserWindow, dialog, session, shell } = require('electron')
-const { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs')
+const { execFileSync } = require('node:child_process')
 const { createServer } = require('node:http')
 const { join } = require('node:path')
+const { prepareWorkspace } = require('./workspace.cjs')
 
 const APP = app.getAppPath() // repository root in development, resources/app when packaged
-// App-owned files follow the installed version; genomes and skills evolve with the user.
-const OWNED = ['evoscholar.config.json', 'prompts', 'python', 'sandbox', '.dockerignore', 'rulepacks/figures', 'rulepacks/writing',
-  'scripts/setup-python.mjs', 'scripts/build-sandbox.mjs', 'scripts/requirements.txt']
-const USER_SEEDED = ['genomes', 'skills']
 
 let window
 let stopServer = async () => {}
 
+/**
+ * Apps opened from Finder or the Dock get launchd's minimal PATH, which misses docker, uv and
+ * Homebrew's python. Take the login shell's PATH plus the usual install locations.
+ */
+function extendPath () {
+  if (process.platform === 'win32') return
+  const home = app.getPath('home')
+  const parts = (process.env.PATH || '').split(':')
+  try {
+    const shellPath = execFileSync(process.env.SHELL || '/bin/zsh', ['-ilc', 'printf "__PATH__%s__PATH__" "$PATH"'],
+      { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] })
+    const m = /__PATH__(.*)__PATH__/.exec(shellPath)
+    if (m) parts.push(...m[1].split(':'))
+  } catch { /* a broken shell profile must not stop the app */ }
+  parts.push('/opt/homebrew/bin', '/usr/local/bin', join(home, '.local/bin'), join(home, '.docker/bin'),
+    '/Applications/Docker.app/Contents/Resources/bin', join(home, '.cargo/bin'))
+  process.env.PATH = [...new Set(parts.filter(Boolean))].join(':')
+}
+
 /** Writable workspace in the user data folder; the install folder is read-only. */
 function workspaceRoot () {
   if (!app.isPackaged) return APP
-  const root = join(app.getPath('userData'), 'workspace')
-  const marker = join(root, '.app-version')
-  const previous = existsSync(marker) ? readFileSync(marker, 'utf8').trim() : ''
-  mkdirSync(root, { recursive: true })
-  const copy = (rel, overwrite) => {
-    const from = join(APP, rel)
-    if (existsSync(from)) cpSync(from, join(root, rel), { recursive: true, force: overwrite, errorOnExist: false })
-  }
-  if (previous !== app.getVersion()) for (const rel of OWNED) copy(rel, true)
-  for (const rel of USER_SEEDED) copy(rel, false)
-  if (!existsSync(join(root, '.env'))) writeFileSync(join(root, '.env'), '')
-  writeFileSync(marker, app.getVersion())
-  return root
+  return prepareWorkspace({ appDir: APP, root: join(app.getPath('userData'), 'workspace'), version: app.getVersion() })
 }
 
 async function startServer () {
@@ -41,12 +45,13 @@ async function startServer () {
   const ws = core.openWorkspace(workspaceRoot())
   let workbench
   const rt = core.openRuntime(ws, (message) => workbench?.broadcastAll({ type: 'warning', message }))
-  await rt.executor.recover?.()
   const auth = createLocalAuth()
   const { token } = auth.exchange(auth.pairing.auto)
   workbench = createServerApp(rt, { webDir: join(APP, 'apps/web/public'), auth })
   const server = createServer(workbench.handler)
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
+  // Cleaning up leftover sandbox containers waits on Docker; do it after the window can open.
+  void Promise.resolve(rt.executor.recover?.()).catch(() => {})
   stopServer = async () => {
     await workbench.dispose().catch(() => {})
     server.close()
@@ -58,11 +63,19 @@ async function startServer () {
 function openWindow ({ origin, token }) {
   const ses = session.defaultSession
   ses.webRequest.onBeforeSendHeaders({ urls: [`${origin}/*`] }, (details, callback) => {
+    // Only the workbench's own fetch calls carry the token: not page loads, not sub-resources,
+    // and not anything inside a file-preview frame.
+    const own = window && details.webContentsId === window.webContents.id && details.resourceType === 'xhr' && !details.frame?.parent
+    if (!own) return callback({})
     const headers = details.requestHeaders
     for (const key of Object.keys(headers)) if (key.toLowerCase() === 'authorization') delete headers[key]
     headers.Authorization = `Bearer ${token}`
     callback({ requestHeaders: headers })
   })
+  // Copy buttons need clipboard writes; nothing in the workbench needs camera, location or the like.
+  const allowed = new Set(['clipboard-sanitized-write'])
+  ses.setPermissionRequestHandler((_contents, permission, callback) => callback(allowed.has(permission)))
+  ses.setPermissionCheckHandler((_contents, permission) => allowed.has(permission))
   window = new BrowserWindow({
     width: 1440, height: 900, minWidth: 960, minHeight: 640, title: 'EvoScholar', backgroundColor: '#000000', show: false,
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false }
@@ -96,6 +109,9 @@ async function smokeCheck (origin) {
     result.ok = result.heading.includes('今天想研究什么') && !result.pairing && result.state === 200
     // Requests from other local programs still need the token.
     result.unauthenticated = (await fetch(`${origin}/api/state`)).status
+    // Informational: tools a Finder launch must still find through the extended PATH.
+    result.dockerCli = !require('node:child_process').spawnSync('docker', ['--version']).error
+    result.uv = !require('node:child_process').spawnSync('uv', ['--version']).error
     result.ok = result.ok && result.unauthenticated === 401
   } catch (error) { result = { ok: false, error: String(error) } }
   console.log('EVOSCHOLAR_SMOKE ' + JSON.stringify(result))
@@ -107,6 +123,7 @@ if (!app.requestSingleInstanceLock()) app.quit()
 else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus() } })
   app.whenReady().then(async () => {
+    extendPath()
     try { openWindow(await startServer()) } catch (error) {
       dialog.showErrorBox('EvoScholar 无法启动', error instanceof Error ? error.message : String(error))
       app.quit()

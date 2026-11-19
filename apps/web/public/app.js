@@ -125,13 +125,25 @@ export function openPop (anchor, items, opts = {}) {
     if (!b) return
     const it = items[Number(b.dataset.i)]
     closePop()
-    it.onPick?.()
+    Promise.resolve().then(() => it.onPick?.()).catch((error) => toast(error.message, 'err'))
   })
   const inp = el.querySelector('input')
   if (inp) { inp.oninput = () => draw(inp.value); setTimeout(() => inp.focus(), 0) }
   popEl = el
   return el
 }
+// Icon-only buttons take their tooltip as an accessible name, so screen readers say more than "button".
+function nameButtons (root) {
+  for (const b of root.querySelectorAll ? root.querySelectorAll('button:not([aria-label])') : []) {
+    if (b.textContent.trim()) continue
+    const name = b.title || b.dataset.tip
+    if (name) b.setAttribute('aria-label', name)
+  }
+}
+new MutationObserver((records) => {
+  for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1) nameButtons(n.parentElement || n)
+}).observe(document.body, { childList: true, subtree: true })
+nameButtons(document)
 addEventListener('resize', () => syncFx())
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (RENDER[h] && h !== view) go(h) })
 addEventListener('mousedown', (e) => { if (popEl && !popEl.contains(e.target) && !e.target.closest('.tb.open')) closePop() })

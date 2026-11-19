@@ -191,6 +191,23 @@ test('lessons stay untrusted after external content leaves the turn, the window 
   assert.equal(rt.evolve.externalSource('s-clean'), undefined)
 })
 
+test('stopped or failed turns do not credit the memories they recalled', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-credit-'))
+  cpSync(join(REPO, 'evoscholar.config.json'), join(dir, 'evoscholar.config.json'))
+  const rt = openRuntime(openWorkspace(dir))
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  const lesson = rt.evolve.upsert({ kind: 'lesson', trigger: '拟合透射谱时', content: '先确认文件名', source: 'model' }).item
+  const loop = installEvolveLoop({ store: rt.evolve, sessionId: 's-credit', projectId: null, cwd: dir, turnId: () => 1, toolNames: [], skillNames: [] })
+  loop.beginTurn('拟合透射谱时先确认文件名')
+  assert.ok(loop.state.injected.includes(lesson.id))
+  const before = rt.evolve.get(lesson.id)!
+  assert.equal(loop.finishTurn('cancelled', { credit: false }).score, undefined)
+  const after = rt.evolve.get(lesson.id)!
+  assert.equal(after.wins, before.wins)
+  assert.equal(after.losses, before.losses)
+  assert.equal(rt.evolve.lastScore('s-credit'), undefined)
+})
+
 test('a completed turn at its step limit does not start a self-check request', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'evo-step-limit-'))
   for (const d of ['genomes', 'prompts', 'skills']) cpSync(join(REPO, d), join(dir, d), { recursive: true })

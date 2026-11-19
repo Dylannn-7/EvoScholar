@@ -13,6 +13,17 @@ const PERMS = {
   plan: { label: '计划', desc: '只读，先给计划', icon: 'brain' },
   bypass: { label: '完全放行', desc: '全部自动执行', icon: 'bolt' }
 }
+// Runtime messages that can reach the transcript, in the user's language.
+const ERRORS = [
+  [/Resolve pending tools|Reconcile uncertain tool effects|Missing pending tool/, '上一轮被中途停止，请重新发送'],
+  [/requires explicit recovery|Recovery identity changed/, '会话状态需要恢复，请重新打开这个会话'],
+  [/aborted|AbortError/i, '已停止'],
+  [/fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|network/i, '无法连接模型服务，请检查网络和厂商设置']
+]
+const readableError = (message = '') => {
+  const hit = ERRORS.find(([re]) => re.test(message))
+  return hit ? hit[1] : /[\u4e00-\u9fa5]/.test(message) ? message : `出错了：${message}`
+}
 const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v) } catch {} }
 
 export function initWorkbench () {
@@ -67,11 +78,11 @@ export function initWorkbench () {
       return `<div class="proj ${open ? 'open' : ''} ${isCur ? 'current' : ''}" data-p="${esc(g.id)}">
         <div class="proj-row" title="${esc(g.path || '')}">
           <span class="caret">${icon('chevron', 13)}</span>${icon(g.id === 'drafts' ? 'file' : 'folder', 15)}<span class="name">${esc(g.name)}</span>
-          <span class="acts"><button class="icon-btn" data-act="new" data-tip="在此项目新建会话" type="button">${icon('plus', 14)}</button>${g.id !== 'drafts' ? `<button class="icon-btn" data-act="pmenu" type="button">${icon('more', 14)}</button>` : ''}</span>
+          <span class="acts"><button class="icon-btn" data-act="new" data-tip="在此项目新建会话" type="button">${icon('plus', 14)}</button>${g.id !== 'drafts' ? `<button class="icon-btn" data-act="pmenu" title="项目操作" type="button">${icon('more', 14)}</button>` : ''}</span>
         </div>
         <div class="sess-list">${list.length ? list.map((s) => `<div class="sess ${s.id === W.current ? 'on' : ''}" data-s="${esc(s.id)}">
             ${s.running ? '<i class="run"></i>' : ''}<span class="t">${esc(s.title || s.id)}</span><span class="when">${esc(ago(s.last || s.created_at))}</span>
-            <button class="icon-btn menu" data-act="smenu" type="button">${icon('more', 14)}</button></div>`).join('') : '<div class="sess-empty">还没有会话</div>'}</div>
+            <button class="icon-btn menu" data-act="smenu" title="会话操作" type="button">${icon('more', 14)}</button></div>`).join('') : '<div class="sess-empty">还没有会话</div>'}</div>
       </div>`
     }).join('')
   }
@@ -101,10 +112,10 @@ export function initWorkbench () {
   function sessionMenu (anchor, sid) {
     const s = S().sessions.find((x) => x.id === sid)
     openPop(anchor, [
-      { label: '重命名', icon: 'edit', onPick: async () => { const n = await promptDialog({ title: '重命名会话', defaultValue: s.title }); if (n) { await patch(`/api/sessions/${sid}`, { title: n }); await refresh() } } },
+      { label: '重命名', icon: 'edit', onPick: async () => { const n = await promptDialog({ title: '重命名会话', defaultValue: s.title }); if (n) { await patch(`/api/sessions/${sid}`, { title: n }); if (W.current === sid && W.session) { W.session.title = n; renderHead() } await refresh() } } },
       { label: s.pinned ? '取消置顶' : '置顶', icon: 'pin', onPick: async () => { await patch(`/api/sessions/${sid}`, { pinned: !s.pinned }); await refresh() } },
       { label: '会话文件', icon: 'library', onPick: () => go('library', { session: sid }) },
-      { label: '删除会话', icon: 'trash', desc: s.projectId ? '项目文件夹里的文件会保留' : '会同时删除草稿文件夹', onPick: async () => {
+      { label: '删除会话', icon: 'trash', desc: s.projectId ? '保留项目文件' : '同时删除草稿文件', onPick: async () => {
         if (!(await confirmDialog({ title: '删除会话', message: `删除「${s.title || sid}」？对话记录不可恢复。`, confirmText: '删除', danger: true }))) return
         await del(`/api/sessions/${sid}`)
         if (W.current === sid) W.home()
@@ -159,6 +170,9 @@ export function initWorkbench () {
 
   // ------------------------------------------------------------ composer bar
   function renderBar () {
+    // A remembered project can disappear (removed, or another workspace); fall back to drafts.
+    const projects = S().projects
+    if (W.project && projects && !projects.some((p) => p.id === W.project)) { W.project = null; LS('evo.project', null) }
     const m = findModel(W.model)
     const effCap = m?.m.reasoningEffort
     const proj = (S().projects || []).find((p) => p.id === (W.session ? W.session.projectId : W.project))
@@ -183,7 +197,7 @@ export function initWorkbench () {
     if (k === 'project') {
       return openPop(b, [
         ...(S().projects || []).map((p) => ({ label: p.name, desc: p.path, icon: 'folder', checked: W.project === p.id, onPick: () => { W.project = p.id; LS('evo.project', p.id); renderBar(); renderTree() } })),
-        { label: '草稿', desc: '不归属任何项目', icon: 'file', checked: !W.project, onPick: () => { W.project = null; LS('evo.project', null); renderBar(); renderTree() } },
+        { label: '草稿', icon: 'file', checked: !W.project, onPick: () => { W.project = null; LS('evo.project', null); renderBar(); renderTree() } },
         { label: '添加项目文件夹…', icon: 'folderPlus', onPick: pickFolder }
       ])
     }
@@ -197,7 +211,7 @@ export function initWorkbench () {
     if (k === 'effort') {
       const m = findModel(W.model)
       const vals = m?.m.reasoningEffort?.values || []
-      return openPop(b, [{ group: `思考程度 · ${m?.m.reasoningParam || ''}` }, { label: '默认', desc: '不发送该参数，使用厂商默认', checked: !W.effort, onPick: () => { W.effort = null; renderBar() } },
+      return openPop(b, [{ group: `思考程度 · ${m?.m.reasoningParam || ''}` }, { label: '默认', checked: !W.effort, onPick: () => { W.effort = null; renderBar() } },
         ...vals.map((v) => ({ label: v, checked: W.effort === v, onPick: () => { W.effort = v; renderBar() } }))])
     }
     if (k === 'model') {
@@ -370,10 +384,15 @@ export function initWorkbench () {
     return d
   }
   function finishStep (d, text, isError) {
+    const denied = isError && /^(Permission denied|Host guard denied)/.test(text || '')
+    const stopped = isError && /^已停止：/.test(text || '')
     d.classList.add(isError ? 'err' : 'done')
+    if (denied || stopped) d.classList.add('denied')
     $('.res', d).textContent = text || ''
     if (!isError && ['note_lesson', 'tune_harness', 'patch_skill', 'propose_rule'].includes(d.dataset.evo)) revertBtn(d, text)
-    if (d.dataset.t0) $('.ms', d).textContent = `${((Date.now() - Number(d.dataset.t0)) / 1000).toFixed(1)}s`
+    if (denied) $('.ms', d).textContent = '已拦截'
+    else if (stopped) $('.ms', d).textContent = '已停止'
+    else if (d.dataset.t0) $('.ms', d).textContent = `${((Date.now() - Number(d.dataset.t0)) / 1000).toFixed(1)}s`
   }
   function feedbackEl () {
     const f = document.createElement('div')
@@ -567,9 +586,17 @@ export function initWorkbench () {
       }
       case 'compaction': if (e.status === 'started') banner('正在压缩上下文…'); else banner(''); break
       case 'warning': banner(e.message); break
-      case 'error': inner.insertAdjacentHTML('beforeend', `<div class="error-line">${esc(e.message)}</div>`); break
-      case 'status': if (e.status === 'running') setBusy(true); break
+      case 'error': inner.insertAdjacentHTML('beforeend', `<div class="error-line">${esc(readableError(e.message))}</div>`); break
+      case 'status':
+        if (e.status === 'running') setBusy(true)
+        else if (e.status === 'cancelled' || e.status === 'blocked') inner.insertAdjacentHTML('beforeend', '<div class="stop-line">已停止</div>')
+        break
       case 'done': {
+        // Unanswered cards cannot be answered once the turn has ended.
+        for (const c of inner.querySelectorAll('.card-inline:not(.done)')) {
+          c.classList.add('done', 'expired')
+          c.querySelectorAll('button').forEach((b) => { b.disabled = true })
+        }
         if (W.think) { W.think.classList.add('done'); W.think = null }
         const ans = W.live || W.answer
         if (ans) { ans.el.innerHTML = md(ans.text); ans.el.appendChild(feedbackEl()) }
