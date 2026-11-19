@@ -4,6 +4,8 @@ import { ago, api, apiFetch, del, fmtSize, fmtTokens, loadApiImages, patch, post
 import { icon } from './icons.js'
 import { confirmDialog, esc, openModal, promptDialog, toast } from './modal.js'
 import { openFilePreviewModal } from './review.js'
+import { chooseFolder } from './folder-picker.js'
+import { md } from './markdown.js'
 
 const shell = (root, title, desc, actions = '') => {
   root.innerHTML = `<div class="page glass dark"><div class="page-head"><h1>${title}</h1><div class="page-actions">${actions}</div>${desc ? `<div class="desc">${desc}</div>` : ''}</div><div class="page-body"></div></div>`
@@ -26,10 +28,10 @@ export async function renderPlugins (root, arg) {
     body.innerHTML = `<div class="toolbar"><div class="seg">${[['skills', '技能'], ['tools', '工具'], ['rules', '规则包'], ['styles', '出图风格']].map(([id, l]) => `<button type="button" class="${pluginTab === id ? 'on' : ''}" data-t="${id}">${l} ${counts[id]}</button>`).join('')}</div></div><div id="pl"></div>`
     const pl = body.querySelector('#pl')
     if (pluginTab === 'skills') {
-      pl.innerHTML = `<div class="cards">${c.skills.map((s) => `<div class="pcard ${s.enabled || s.kernel ? '' : 'off'}" data-skill="${esc(s.name)}"><div class="top">${icon(s.kernel ? 'code' : 'plugins', 16)}<span class="nm">${esc(s.name)}</span>${srcBadge(s.source)}${s.kernel ? `<span class="badge ${s.status === 'active' ? 'ok' : 'warn'}">${s.status === 'active' ? '已转正' : '试用'}</span>` : ''}</div>
+      pl.innerHTML = `<div class="cards">${c.skills.map((s) => `<div class="pcard ${(s.kernel ? !s.disabled : s.enabled) ? '' : 'off'}" data-skill="${esc(s.name)}"><div class="top">${icon(s.kernel ? 'code' : 'plugins', 16)}<span class="nm">${esc(s.name)}</span>${srcBadge(s.source)}${s.source === 'imported' && s.trusted ? '<span class="badge ok">已信任</span>' : ''}${s.kernel ? `<span class="badge ${s.status === 'active' ? 'ok' : 'warn'}">${s.status === 'active' ? '已转正' : '试用'}</span>` : ''}</div>
         <div class="ds">${esc(s.description || '')}</div>
         <div class="ft"><span>v${s.activeVersion ?? s.version}</span>${s.kernel ? `<span>复用 ${s.reuses || 0} 次</span>` : ''}${s.license ? (/^https?:/.test(s.license) ? `<a class="muted" href="${esc(s.license)}" target="_blank" rel="noopener">许可证</a>` : `<span>${esc(s.license.replace(/ license$/i, ''))}</span>`) : ''}${s.origin && s.origin.startsWith('http') ? `<a class="muted" href="${esc(s.origin)}" target="_blank" rel="noopener">来源</a>` : ''}
-          <span class="page-actions">${s.source !== 'builtin' ? `<button class="icon-btn" data-del="${esc(s.name)}" title="删除" type="button">${icon('trash', 14)}</button>` : ''}${s.kernel ? '<span class="faint">所有会话可用</span>' : sw(s.enabled, `data-en="${esc(s.name)}"`)}</span></div></div>`).join('')}</div>`
+          <span class="page-actions">${s.source !== 'builtin' ? `<button class="icon-btn" data-del="${esc(s.name)}" title="删除" type="button">${icon('trash', 14)}</button>` : ''}${s.kernel ? sw(!s.disabled, `data-ken="${esc(s.name)}"`) : sw(s.enabled, `data-en="${esc(s.name)}"`)}</span></div></div>`).join('')}</div>`
     } else if (pluginTab === 'tools') {
       pl.innerHTML = `<div class="cards">${c.tools.map((t) => `<div class="pcard ${t.enabled ? '' : 'off'}"><div class="top">${icon('code', 16)}<span class="nm"><code>${esc(t.name)}</code></span>${srcBadge(t.source)}</div>
         <div class="ds">${esc(t.description)}</div><div class="ft">${t.enabled ? '<span class="badge ok">已启用</span>' : '<span class="badge">未启用</span>'}</div></div>`).join('')}</div>`
@@ -60,6 +62,8 @@ export async function renderPlugins (root, arg) {
     const t = e.target.closest('[data-t]'); if (t) { pluginTab = t.dataset.t; return draw() }
     const sl = e.target.closest('[data-sess]'); if (sl) { go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: sl.dataset.sess })) }
     try {
+      const ken = e.target.closest('[data-ken]')
+      if (ken) { await patch(`/api/plugins/skills/${ken.dataset.ken}`, { kernelEnabled: !ken.classList.contains('on') }); return renderPlugins(root) }
       const en = e.target.closest('[data-en]')
       if (en) { await patch(`/api/plugins/skills/${en.dataset.en}`, { enabled: !en.classList.contains('on') }); await store.refresh(); toast('已更新，生成了新的 harness 版本', 'ok'); return renderPlugins(root) }
       const d = e.target.closest('[data-del]')
@@ -68,6 +72,8 @@ export async function renderPlugins (root, arg) {
       if (rs) { await patch(`/api/plugins/rules/${rs.closest('[data-rule]').dataset.rule}`, { status: rs.dataset.rs }); return renderPlugins(root) }
       const rd = e.target.closest('[data-rdel]')
       if (rd) { await del(`/api/plugins/rules/${rd.closest('[data-rule]').dataset.rule}`); return renderPlugins(root) }
+      const card = e.target.closest('.pcard[data-skill]')
+      if (card && !e.target.closest('button, a, input')) return openSkillDetail(root, card.dataset.skill)
       const df = e.target.closest('[data-def]')
       if (df) { await put('/api/settings/defaults', { figureStyle: df.dataset.def }); toast(df.dataset.def ? '已设为默认出图风格' : '已取消默认', 'ok'); return renderPlugins(root) }
       const cp = e.target.closest('[data-copy]')
@@ -91,8 +97,48 @@ function styleFacts (m) {
   return `<div class="sfacts"><span class="sw">${(m.colors || []).map((c) => `<i style="background:${esc(c)}" title="${esc(c)}"></i>`).join('')}</span><span class="sf">${facts.map(esc).join(' · ')}</span></div>`
 }
 
-function importDialog (root) {
-  let mode = 'github'
+/** Read-only view of one skill: body, revisions, bundled files, forged source; trust and on/off. */
+async function openSkillDetail (root, name) {
+  let d
+  try { d = await api(`/api/plugins/skills/${encodeURIComponent(name)}`) } catch (err) { return toast(err.message, 'err') }
+  const src = d.source || {}
+  const imported = ['github', 'zip', 'folder'].includes(src.type)
+  const kind = src.type === 'forged' ? '锻造' : src.bundled ? '随应用附带' : imported ? '导入' : '内置'
+  openModal({
+    title: name,
+    wide: true,
+    bodyHtml: `
+      <div class="skd-meta"><span class="badge">${kind}</span>${d.versions.map((v) => `<span class="faint">v${v}</span>`).join('')}${src.origin && /^https:\/\//.test(src.origin) ? `<a class="muted" href="${esc(src.origin)}" target="_blank" rel="noopener">来源</a>` : ''}</div>
+      ${d.description ? `<p class="skd-desc">${esc(d.description)}</p>` : ''}
+      ${imported && !src.bundled ? `<label class="inline skd-opt"><input type="checkbox" id="skTrust" ${src.trusted ? 'checked' : ''}> 信任这个技能</label>` : ''}
+      ${src.type === 'forged' ? `<label class="inline skd-opt"><input type="checkbox" id="skKernel" ${src.disabled ? '' : 'checked'}> 启用</label>` : ''}
+      <div class="msg assistant skd-body">${md(d.body || '')}</div>
+      ${d.kernel ? Object.entries(d.kernel).map(([file, code]) => `<h4 class="skd-h">${esc(file)}</h4><pre class="skd-code">${esc(code)}</pre>`).join('') : ''}
+      ${d.files.length ? `<h4 class="skd-h">附带文件</h4><div class="skd-files">${d.files.map((f) => `<button type="button" class="skd-file" data-f="${esc(f.path)}" ${f.text ? '' : 'disabled'}><span>${esc(f.path)}</span><span class="faint">${fmtSize(f.size)}</span></button>`).join('')}</div><pre class="skd-code" id="skFile" hidden></pre>` : ''}`,
+    onMount: (el) => {
+      el.querySelector('#skTrust')?.addEventListener('change', async (e) => {
+        try { await patch(`/api/plugins/skills/${name}`, { trusted: e.target.checked }); renderPlugins(root) } catch (err) { e.target.checked = !e.target.checked; toast(err.message, 'err') }
+      })
+      el.querySelector('#skKernel')?.addEventListener('change', async (e) => {
+        try { await patch(`/api/plugins/skills/${name}`, { kernelEnabled: e.target.checked }); renderPlugins(root) } catch (err) { e.target.checked = !e.target.checked; toast(err.message, 'err') }
+      })
+      el.querySelector('.skd-files')?.addEventListener('click', async (e) => {
+        const b = e.target.closest('[data-f]')
+        if (!b || b.disabled) return
+        try {
+          const r = await api(`/api/plugins/skills/${name}/file?path=${encodeURIComponent(b.dataset.f)}`)
+          const pre = el.querySelector('#skFile')
+          pre.hidden = false
+          pre.textContent = r.text
+          el.querySelectorAll('.skd-file').forEach((x) => x.classList.toggle('on', x === b))
+        } catch (err) { toast(err.message, 'err') }
+      })
+    }
+  })
+}
+
+function importDialog (root, preset = {}) {
+  let mode = preset.mode || 'github'
   openModal({
     title: '导入技能',
     bodyHtml: `
@@ -106,9 +152,17 @@ function importDialog (root) {
         el.querySelector('#imBody').innerHTML = mode === 'github'
           ? '<input class="input" id="imUrl" placeholder="https://github.com/<owner>/<repo>/tree/main/skills/<name>" spellcheck="false">'
           : mode === 'zip' ? '<input class="input" id="imZip" type="file" accept=".zip" style="padding-top:6px">'
-            : '<input class="input" id="imFolder" placeholder="技能文件夹路径" spellcheck="false">'
+            : `<div class="inline"><input class="input" id="imFolder" placeholder="技能文件夹路径" spellcheck="false" value="${esc(preset.folder || '')}"><button class="btn ghost small" id="imPick" type="button">选择…</button></div>`
       }
       el.querySelector('#im').onclick = (e) => { const b = e.target.closest('[data-m]'); if (b) { mode = b.dataset.m; drawBody() } }
+      // Only one dialog shows at a time: close this one, pick, then reopen with the chosen folder.
+      el.querySelector('#imBody').addEventListener('click', async (e) => {
+        if (!e.target.closest('#imPick')) return
+        const current = el.querySelector('#imFolder').value.trim()
+        close()
+        const folder = await chooseFolder({ title: '选择技能文件夹', start: current || null })
+        importDialog(root, { mode: 'folder', folder: folder || current })
+      })
       drawBody()
       el.querySelector('#imGo').onclick = async (e) => {
         const btn = e.target

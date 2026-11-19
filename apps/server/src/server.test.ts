@@ -466,6 +466,14 @@ test('all API reads require a bearer, and cross-port origins are forbidden', asy
   assert.equal(typeof py.ready, 'boolean')
   assert.equal((await fetch(base + '/api/setup/python')).status, 401)
   assert.equal((await localFetch(base + '/api/setup/anything')).status, 404)
+  // Skill detail, trust and file reads stay inside the skill folder.
+  const detail = await (await localFetch(base + '/api/plugins/skills/matplotlib')).json() as { source: { bundled?: boolean }; body: string; versions: number[] }
+  assert.equal(detail.source.bundled, true)
+  assert.ok(detail.body.length > 0 && detail.versions.length >= 1)
+  const patchSkill = (name: string, data: object) => localFetch(base + `/api/plugins/skills/${name}`, { method: 'PATCH', headers: { 'x-evoscholar': '1' }, body: JSON.stringify(data) })
+  assert.equal((await patchSkill('matplotlib', { trusted: false })).status, 400)
+  assert.equal((await localFetch(base + '/api/plugins/skills/matplotlib/file?path=' + encodeURIComponent('../../evoscholar.config.json'))).status, 400)
+  assert.equal((await localFetch(base + '/api/plugins/skills/no-such-skill')).status, 404)
   const gateway = 'http://127.0.0.1:19000/v1'
   const update = (data: object) => localFetch(base + '/api/providers/fixture', {
     method: 'PUT', headers: { 'x-evoscholar': '1' }, body: JSON.stringify({ custom: true, ...data })

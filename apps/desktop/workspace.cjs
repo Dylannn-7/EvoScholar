@@ -34,9 +34,9 @@ function prepareWorkspace ({ appDir, root, version }) {
 }
 
 /**
- * Bundled skills: new ones are added; on upgrade, built-in skills (no .source.json) take the new
+ * Bundled skills: new ones are added; on upgrade, built-in and app-shipped skills take the new
  * SKILL.md and resources, while revision files (SKILL@vN.md) are never overwritten because genomes
- * pin them. Imported and forged skills are left alone.
+ * pin them. Skills the user imported or forged are left alone.
  */
 function seedSkills (appDir, root, upgraded) {
   const from = join(appDir, 'skills')
@@ -46,9 +46,16 @@ function seedSkills (appDir, root, upgraded) {
     const dest = join(root, 'skills', name)
     if (!statSync(src).isDirectory()) continue
     if (!existsSync(dest)) { cpSync(src, dest, { recursive: true }); continue }
-    if (!upgraded || existsSync(join(dest, '.source.json'))) continue
+    if (!upgraded || !shippedWithApp(dest)) continue
     cpSync(src, dest, { recursive: true, force: true, filter: (file) => !(REVISION.test(basename(file)) && existsSync(join(dest, relative(src, file)))) })
   }
+}
+
+/** Built-in skills have no .source.json; skills shipped with the app say bundled: true. */
+function shippedWithApp (dir) {
+  const file = join(dir, '.source.json')
+  if (!existsSync(file)) return true
+  try { return JSON.parse(readFileSync(file, 'utf8')).bundled === true } catch { return false }
 }
 
 module.exports = { prepareWorkspace }

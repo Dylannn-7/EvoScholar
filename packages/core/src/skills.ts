@@ -112,7 +112,21 @@ export function listSkillFiles(dir: string, limit = 60): string[] {
   return out
 }
 
-export type SkillSource = { type: 'builtin' | 'github' | 'zip' | 'folder' | 'forged'; origin?: string; license?: string; importedAt?: string; status?: 'trial' | 'active'; sessions?: string[]; reuses?: string[]; kernel?: boolean }
+export type SkillSource = {
+  type: 'builtin' | 'github' | 'zip' | 'folder' | 'forged'; origin?: string; license?: string; importedAt?: string
+  status?: 'trial' | 'active'; sessions?: string[]; reuses?: string[]; kernel?: boolean
+  /** Shipped with the app (reviewed with each release): trusted and updated like built-in skills. */
+  bundled?: boolean
+  /** The user marked an imported skill as trusted. */
+  trusted?: boolean
+  /** A forged skill the user switched off: hidden from the model and refused by run_skill. */
+  disabled?: boolean
+}
+const IMPORTED_TYPES = new Set(['github', 'zip', 'folder'])
+/** Imported text the user has not vouched for; reading it marks a session's context as external. */
+export function skillUntrusted(src: SkillSource): boolean {
+  return IMPORTED_TYPES.has(src.type) && !src.bundled && !src.trusted
+}
 export function skillSource(root: string, name: string): SkillSource {
   if (!skillNameValid(name)) return { type: 'builtin' }
   try {
@@ -131,5 +145,5 @@ export function writeSkillSource(root: string, name: string, src: SkillSource): 
 export function extraSkills(root: string): SkillRef[] {
   const dir = join(root, 'skills')
   if (!existsSync(dir)) return []
-  return readdirSync(dir).filter((n) => skillSource(root, n).type === 'forged').map((n) => ({ name: n, version: readSkillFile(root, n)?.meta.version ?? 1 }))
+  return readdirSync(dir).filter((n) => { const src = skillSource(root, n); return src.type === 'forged' && !src.disabled }).map((n) => ({ name: n, version: readSkillFile(root, n)?.meta.version ?? 1 }))
 }

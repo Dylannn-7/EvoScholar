@@ -7,6 +7,7 @@ import { deflateRawSync } from 'node:zlib'
 import {
   checkKernelCode, consolidate, fetchGithubSkill, installSkillFiles, kernelTools, openRuntime, openWorkspace, parseGithubUrl,
   promote, readFolder, readUserRules, readZip, recordCandidateVerification, setSkillEnabled, skillSource, verifyCandidateOffline,
+  kernelIndex, readSkillText, setKernelEnabled, setSkillTrusted, skillDetail, skillUntrusted,
   type ExecutionBackend, type ToolEnv
 } from './index'
 
@@ -198,4 +199,35 @@ test('approval requires a pending candidate record after an interrupted write', 
   rt.genomes.save(candidate)
   assert.throws(() => promote(rt, candidate.id), /缺少.*记录/)
   assert.equal(rt.genomes.activeId(), active.id)
+})
+
+test('bundled and trusted skills do not taint memories; forged skills can be switched off; detail is readable', (t) => {
+  const dir = ws()
+  const rt = openRuntime(openWorkspace(dir))
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  // Skills shipped with the app are reviewed with each release.
+  assert.equal(skillSource(dir, 'matplotlib').bundled, true)
+  assert.equal(skillUntrusted(skillSource(dir, 'matplotlib')), false)
+  assert.throws(() => setSkillTrusted(rt, 'matplotlib', false), /只有导入的技能/)
+  assert.throws(() => setSkillTrusted(rt, 'data-tables', true), /只有导入的技能/)
+  // A user import stays untrusted until the user vouches for it.
+  const files = (o: Record<string, string>) => new Map(Object.entries(o).map(([k, v]) => [k, Buffer.from(v)]))
+  installSkillFiles(dir, files({ 'SKILL.md': '---\nname: third-party\ndescription: x\n---\nbody', 'scripts/run.py': 'print(1)' }), { type: 'zip', importedAt: new Date().toISOString() })
+  writeFileSync(join(dir, 'skills', 'third-party', 'bin.dat'), 'x')
+  assert.equal(skillUntrusted(skillSource(dir, 'third-party')), true)
+  setSkillTrusted(rt, 'third-party', true)
+  assert.equal(skillUntrusted(skillSource(dir, 'third-party')), false)
+  const detail = skillDetail(dir, 'third-party')!
+  assert.match(detail.body, /body/)
+  assert.deepEqual(detail.files.map((f) => [f.path, f.text]), [['bin.dat', false], ['scripts/run.py', true]])
+  assert.equal(readSkillText(dir, 'third-party', 'scripts/run.py'), 'print(1)')
+  assert.throws(() => readSkillText(dir, 'third-party', 'bin.dat'), /文本文件/)
+  assert.throws(() => readSkillText(dir, 'third-party', '../matplotlib/SKILL.md'))
+  // Forged skills: switched off, they leave the model's list and run_skill refuses them.
+  installSkillFiles(dir, files({ 'SKILL.md': '---\nname: fit-peaks\ndescription: 拟合峰\n---\n', 'kernel.py': 'def run():\n    return 1\n', 'test_kernel.py': 'def test_run():\n    pass\n' }), { type: 'forged', kernel: true, status: 'trial' })
+  assert.match(kernelIndex(dir, ['fit-peaks']), /fit-peaks/)
+  assert.equal(skillDetail(dir, 'fit-peaks')!.kernel!['kernel.py'], 'def run():\n    return 1\n')
+  setKernelEnabled(rt, 'fit-peaks', false)
+  assert.equal(kernelIndex(dir, ['fit-peaks']), '')
+  assert.throws(() => setKernelEnabled(rt, 'third-party', false), /锻造/)
 })

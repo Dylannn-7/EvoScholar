@@ -7,7 +7,7 @@ import { inflateRawSync } from 'node:zlib'
 import YAML from 'yaml'
 import { atomicWriteFile } from './atomic-file'
 import type { Runtime } from './session'
-import { listSkills, readSkillFile, skillNameValid, skillSource, type SkillSource } from './skills'
+import { listSkills, readSkillFile, skillNameValid, skillSource, writeSkillSource, type SkillSource } from './skills'
 import { inside } from './tools/sandbox'
 import { pythonBin, runProcess } from './tools/exec'
 import { readUserRules, writeUserRules } from './evolve/kernels'
@@ -312,7 +312,63 @@ export function deleteUserRule(rt: Runtime, id: string) {
   writeUserRules(rt.ws.dataDir, readUserRules(rt.ws.dataDir).filter((x) => x.id !== id))
 }
 
+const TEXT_FILE = /\.(md|txt|py|ya?ml|json|csv|tsv|tex|bib|sh|r|jl|js|ts|toml|ini|cfg|mplstyle)$/i
+const FILE_PREVIEW_LIMIT = 256 * 1024
+const KERNEL_FILES = ['kernel.py', 'test_kernel.py']
+
+/** Read-only detail for the plugin page: body, revisions, bundled files and forged source. */
 export function skillDetail(root: string, name: string) {
   const s = readSkillFile(root, name)
-  return s ? { name, version: s.meta.version, description: s.meta.description, source: skillSource(root, name) } : undefined
+  if (!s) return undefined
+  const dir = inside(root, join('skills', name))
+  const versions = new Set<number>([s.meta.version])
+  const files: { path: string; size: number; text: boolean }[] = []
+  const walk = (d: string, depth: number) => {
+    if (depth > 6 || files.length >= 300) return
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      if (entry.isSymbolicLink() || entry.name === '.source.json' || entry.name === '__pycache__') continue
+      const full = join(d, entry.name)
+      const rel = relative(dir, full).split(sep).join('/')
+      if (entry.isDirectory()) { walk(full, depth + 1); continue }
+      const revision = /^SKILL@v(\d+)\.md$/.exec(rel)
+      if (revision) { versions.add(Number(revision[1])); continue }
+      if (rel === 'SKILL.md' || KERNEL_FILES.includes(rel)) continue
+      files.push({ path: rel, size: statSync(full).size, text: TEXT_FILE.test(rel) })
+    }
+  }
+  walk(dir, 0)
+  const source = skillSource(root, name)
+  const kernel = source.type === 'forged'
+    ? Object.fromEntries(KERNEL_FILES.filter((f) => existsSync(join(dir, f))).map((f) => [f, readSkillText(root, name, f)]))
+    : undefined
+  return {
+    name, version: s.meta.version, description: s.meta.description, body: s.body, source,
+    versions: [...versions].sort((a, b) => b - a), files: files.sort((a, b) => a.path.localeCompare(b.path)), kernel
+  }
+}
+
+/** A text file inside one skill folder, capped for display. */
+export function readSkillText(root: string, name: string, rel: string): string {
+  if (!skillNameValid(name)) throw new Error('技能名无效')
+  const dir = inside(root, join('skills', name))
+  const file = inside(dir, rel)
+  if (!TEXT_FILE.test(file) && !KERNEL_FILES.includes(rel)) throw new Error('只能查看文本文件')
+  const st = statSync(file)
+  if (!st.isFile()) throw new Error('不是文件')
+  const buf = readFileSync(file).subarray(0, FILE_PREVIEW_LIMIT)
+  return buf.toString('utf8') + (st.size > FILE_PREVIEW_LIMIT ? '\n…（文件较大，只显示前 256 KB）' : '')
+}
+
+/** Trust an imported skill (or withdraw trust). Bundled and built-in skills are trusted already. */
+export function setSkillTrusted(rt: Runtime, name: string, on: boolean) {
+  const src = skillSource(rt.ws.root, name)
+  if (!['github', 'zip', 'folder'].includes(src.type) || src.bundled) throw new Error('只有导入的技能可以设置信任')
+  writeSkillSource(rt.ws.root, name, { ...src, trusted: on })
+}
+
+/** Switch a forged (executable) skill on or off without deleting it. */
+export function setKernelEnabled(rt: Runtime, name: string, on: boolean) {
+  const src = skillSource(rt.ws.root, name)
+  if (src.type !== 'forged') throw new Error('只有锻造的可执行技能可以单独启停')
+  writeSkillSource(rt.ws.root, name, { ...src, disabled: !on })
 }

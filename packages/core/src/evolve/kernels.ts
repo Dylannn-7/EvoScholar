@@ -171,6 +171,7 @@ export function kernelTools(h: KernelHooks): AgentTool[] {
         }
         const kernel = inside(dir, 'kernel.py')
         if (src.type !== 'forged' || !existsSync(kernel)) throw new Error(`没有可执行技能 ${name}`)
+        if (src.disabled) throw new Error(`可执行技能 ${name} 已停用`)
         const args = [name.replace(/-/g, '_'), JSON.stringify(a.args ?? {})]
         const r = await runModelProcess(h.env, {
           host: [pythonBin(h.env), ['-c', RUNNER, kernel, ...args]],
@@ -241,7 +242,7 @@ export function kernelTools(h: KernelHooks): AgentTool[] {
 
 /** Index of forged executable skills for the system prompt. */
 export function kernelIndex(root: string, names: string[]): string {
-  const rows = names.map((n) => ({ n, s: skillSource(root, n), d: readSkillFile(root, n)?.meta.description ?? '' })).filter((x) => x.s.type === 'forged')
+  const rows = names.map((n) => ({ n, s: skillSource(root, n), d: readSkillFile(root, n)?.meta.description ?? '' })).filter((x) => x.s.type === 'forged' && !x.s.disabled)
   if (!rows.length) return ''
   return `\n\n## 可执行技能（自进化锻造，用 run_skill 调用）\n${rows.map((x) => `- ${x.n}${x.s.status === 'trial' ? '（试用）' : ''}：${x.d}`).join('\n')}`
 }
