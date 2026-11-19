@@ -21,7 +21,11 @@ import {
   listStyles,
   listUserRules,
   removeImportedSkill,
+  readSkillText,
+  setKernelEnabled,
   setSkillEnabled,
+  setSkillTrusted,
+  skillDetail,
   setUserRule,
   stylePreview,
   fetchProviderModels,
@@ -340,10 +344,23 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
         return send(res, 200, r), true
       } catch (e) { throw httpError(400, (e as Error).message) }
     }
+    if ((mm = /^\/api\/plugins\/skills\/([a-z0-9][a-z0-9-]{0,63})\/file$/.exec(p)) && method === 'GET') {
+      try { return send(res, 200, { path: url.searchParams.get('path'), text: readSkillText(ws.root, mm[1], String(url.searchParams.get('path') ?? '')) }), true }
+      catch (e) { throw httpError(400, (e as Error).message) }
+    }
     if ((mm = /^\/api\/plugins\/skills\/([a-z0-9][a-z0-9-]{0,63})$/.exec(p))) {
+      if (method === 'GET') {
+        const detail = skillDetail(ws.root, mm[1])
+        if (!detail) throw httpError(404, '没有这个技能')
+        return send(res, 200, detail), true
+      }
       if (method === 'PATCH') {
         const b = await body(req)
-        try { setSkillEnabled(rt, mm[1], !!b.enabled) } catch (e) { throw httpError(400, (e as Error).message) }
+        try {
+          if (typeof b.trusted === 'boolean') setSkillTrusted(rt, mm[1], b.trusted)
+          else if (typeof b.kernelEnabled === 'boolean') setKernelEnabled(rt, mm[1], b.kernelEnabled)
+          else setSkillEnabled(rt, mm[1], !!b.enabled)
+        } catch (e) { throw httpError(400, (e as Error).message) }
         await hooks.resetIdleSessions()
         return send(res, 200, { ok: true, genome: rt.genomes.activeId() }), true
       }

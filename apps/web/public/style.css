@@ -448,3 +448,16 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 .card-inline.expired { opacity: .55; }
 .kv-path { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .kv-path code { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }
+
+/* plugins: skill detail */
+.pcard[data-skill] { cursor: pointer; }
+.skd-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 10px; font-size: 12px; }
+.skd-desc { color: var(--text-2); margin: 0 0 10px; }
+.skd-opt { font-size: 12.5px; color: var(--text-2); margin: 0 16px 10px 0; }
+.skd-body { max-width: none; margin: 8px 0 0; padding: 14px 16px; border-radius: 12px; background: rgba(0, 0, 0, .25); max-height: 42vh; overflow: auto; }
+.skd-h { margin: 18px 0 8px; font: 500 13px/1.4 var(--sans); color: var(--text); }
+.skd-code { margin: 0; max-height: 36vh; overflow: auto; padding: 12px 14px; border-radius: 10px; background: rgba(0, 0, 0, .35); color: var(--text-2); font: 12px/1.55 var(--mono); white-space: pre-wrap; }
+.skd-files { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.skd-file { display: flex; justify-content: space-between; gap: 12px; border: 0; background: transparent; color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; font: 12.5px/1.4 var(--mono); text-align: left; }
+.skd-file:hover:not(:disabled), .skd-file.on { background: var(--fill-2); }
+.skd-file:disabled { cursor: default; color: var(--text-3); }

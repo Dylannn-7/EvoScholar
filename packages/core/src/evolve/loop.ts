@@ -8,7 +8,7 @@ import type { AgentEvent, AgentMessage, AgentTool, Json, ToolGuard } from '@evos
 import { objectArgs, textResult, type ToolEnv } from '../tools/types'
 import { kernelTools } from './kernels'
 import { inside } from '../tools/sandbox'
-import { skillSource } from '../skills'
+import { skillSource, skillUntrusted } from '../skills'
 import { EVOLVE_DEFAULTS, betaScore, relevance, validateMemoryText, type EvolveEvent, type EvolveStore, type MemoryItem } from './store'
 
 export type ChoiceOption = { label: string; detail?: string }
@@ -31,7 +31,6 @@ export type EvolveHooks = {
 }
 
 const EXTERNAL_TOOLS = new Set(['web_search', 'web_fetch', 'pdf_text', 'pdf_page_image', 'lit_import', 'lit_search', 'lit_lookup'])
-const IMPORTED_SKILLS = new Set(['zip', 'github', 'folder'])
 const UPLOADS = /^(?:\.\/)*evoscholar-in(?:\/|$)/
 
 /**
@@ -123,7 +122,7 @@ export function installEvolveLoop(h: EvolveHooks) {
   let external = h.store.externalSource(h.sessionId)
   const importedSkill = (name: string) => {
     if (!h.env) return false
-    try { return IMPORTED_SKILLS.has(skillSource(h.env.ws.root, name).type) } catch { return true }
+    try { return skillUntrusted(skillSource(h.env.ws.root, name)) } catch { return true }
   }
   const markExternal = (source: string | undefined) => {
     if (!source || external) return

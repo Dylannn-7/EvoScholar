@@ -5,6 +5,7 @@ import { openEventStream } from './stream.js'
 import { icon } from './icons.js'
 import { formatToolSummary, md } from './markdown.js'
 import { confirmDialog, esc, openModal, promptDialog, toast } from './modal.js'
+import { chooseFolder } from './folder-picker.js'
 import { openFilePreviewModal, openReportReviewModal } from './review.js'
 
 const PERMS = {
@@ -125,47 +126,19 @@ export function initWorkbench () {
   }
   async function refresh () { await store.refresh(); renderTree(); renderBar() }
 
-  // ------------------------------------------------------------ folder picker
-  function pickFolder () {
-    let cur = null
-    openModal({
-      title: '添加项目文件夹',
-      wide: true,
-      bodyHtml: `
-        <div class="inline" style="margin:12px 0"><input class="input" id="fpPath" placeholder="也可以直接粘贴文件夹的完整路径"><button class="btn ghost small" id="fpGo" type="button">前往</button></div>
-        <div id="fpRoots" class="seg-tabs"></div>
-        <div id="fpList" style="max-height:46vh;overflow:auto;border-radius:12px;background:rgba(0,0,0,.25);padding:4px"></div>
-        <div class="modal-actions"><span class="muted" id="fpSel" style="margin-right:auto;font-size:12px"></span><button class="btn ghost" data-x type="button">取消</button><button class="btn primary" id="fpOk" type="button">添加这个文件夹</button></div>`,
-      onMount: (el, close) => {
-        const load = async (path) => {
-          try {
-            const r = await api(`/api/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`)
-            cur = r.path
-            el.querySelector('#fpPath').value = r.path
-            el.querySelector('#fpSel').textContent = r.path
-            el.querySelector('#fpRoots').innerHTML = r.roots.map((x) => `<button type="button" data-d="${esc(x)}">${esc(x)}</button>`).join('')
-            el.querySelector('#fpList').innerHTML = (r.parent ? `<div class="sess" data-d="${esc(r.parent)}">${icon('chevron', 13)}<span class="t">上一级</span></div>` : '') +
-              (r.dirs.length ? r.dirs.map((d) => `<div class="sess" data-d="${esc(d.path)}">${icon('folder', 15)}<span class="t">${esc(d.name)}</span></div>`).join('') : '<div class="sess-empty">没有子文件夹</div>')
-          } catch (err) { toast(err.message, 'err') }
-        }
-        el.addEventListener('click', (e) => { const d = e.target.closest('[data-d]'); if (d) load(d.dataset.d) })
-        el.querySelector('#fpGo').onclick = () => load(el.querySelector('#fpPath').value.trim())
-        el.querySelector('[data-x]').onclick = close
-        el.querySelector('#fpOk').onclick = async () => {
-          try {
-            const r = await post('/api/projects', { path: el.querySelector('#fpPath').value.trim() || cur })
-            W.project = r.project.id
-            LS('evo.project', W.project)
-            W.openProjects.add(r.project.id)
-            close()
-            await refresh()
-            toast(`已添加项目「${r.project.name}」`, 'ok')
-            W.home()
-          } catch (err) { toast(err.message, 'err') }
-        }
-        load(null)
-      }
-    })
+  // ------------------------------------------------------------ add a project folder
+  async function pickFolder () {
+    const path = await chooseFolder({ title: '添加项目文件夹', confirmText: '添加这个文件夹' })
+    if (!path) return
+    try {
+      const r = await post('/api/projects', { path })
+      W.project = r.project.id
+      LS('evo.project', W.project)
+      W.openProjects.add(r.project.id)
+      await refresh()
+      toast(`已添加项目「${r.project.name}」`, 'ok')
+      W.home()
+    } catch (err) { toast(err.message, 'err') }
   }
 
   // ------------------------------------------------------------ composer bar

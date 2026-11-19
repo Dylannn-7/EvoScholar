@@ -19,6 +19,8 @@ test('upgrades refresh app files and built-in skills without touching user evolu
   write(join(appDir, 'genomes', 'g-0001.yaml'), 'v1')
   write(join(appDir, 'skills', 'figure-style', 'SKILL.md'), 'v1')
   write(join(appDir, 'skills', 'figure-style', 'SKILL@v2.md'), 'bundled v2')
+  write(join(appDir, 'skills', 'matplotlib', '.source.json'), '{"type":"github","bundled":true}')
+  write(join(appDir, 'skills', 'matplotlib', 'SKILL.md'), 'k-dense v1')
   prepareWorkspace({ appDir, root, version: '1.0.0' })
   assert.equal(read(join(root, 'skills', 'figure-style', 'SKILL.md')), 'v1')
 
@@ -38,6 +40,7 @@ test('upgrades refresh app files and built-in skills without touching user evolu
   write(join(appDir, 'skills', 'figure-style', 'SKILL@v3.md'), 'bundled v3')
   write(join(appDir, 'skills', 'imported', 'SKILL.md'), 'bundled')
   write(join(appDir, 'skills', 'new-skill', 'SKILL.md'), 'new')
+  write(join(appDir, 'skills', 'matplotlib', 'SKILL.md'), 'k-dense v2')
   prepareWorkspace({ appDir, root, version: '2.0.0' })
 
   assert.equal(read(join(root, 'evoscholar.config.json')), '{"v":2}')
@@ -50,5 +53,6 @@ test('upgrades refresh app files and built-in skills without touching user evolu
   assert.equal(read(join(root, 'skills', 'figure-style', 'SKILL@v3.md')), 'user v3', 'pinned revisions are never overwritten')
   assert.equal(read(join(root, 'skills', 'imported', 'SKILL.md')), 'mine', 'imported skills are left alone')
   assert.equal(read(join(root, 'skills', 'new-skill', 'SKILL.md')), 'new')
+  assert.equal(read(join(root, 'skills', 'matplotlib', 'SKILL.md')), 'k-dense v2', 'app-shipped imports update too')
   assert.equal(read(join(root, '.app-version')), '2.0.0')
 })
