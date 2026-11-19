@@ -3,7 +3,7 @@ import { feedbackEvents, readCheckReport, VERDICTS } from '../checkfeedback'
 import { basename, join, relative } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { runPyHelper } from './exec'
-import { inside } from './sandbox'
+import { modelPath } from './sandbox'
 import { objectArgs, textResult, type ToolFactory } from './types'
 
 type Finding = { id: string; rule: string; severity: 'error' | 'warning' | 'info'; loc: string; message: string; evidence: string; source: string; pack: string }
@@ -46,8 +46,8 @@ export const manuscriptCheck: ToolFactory = (env) => ({
   authorize: async (args, ctx) => env.approve?.('manuscript_check', `保存 ${(args as { path: string }).path} 的检查报告`, 'edit', ctx.signal) ?? true,
   async execute(args, c) {
     const a = args as { path: string; packs?: string[]; variant?: string; annotate?: boolean; stage?: string }
-    const file = inside(env.cwd, a.path)
-    const out = inside(env.cwd, join('.evoscholar', 'checks', basename(file).replace(/\.[^.]+$/, '')))
+    const file = modelPath(env, a.path)
+    const out = modelPath(env, join('.evoscholar', 'checks', basename(file).replace(/\.[^.]+$/, '')))
     mkdirSync(out, { recursive: true })
     const cli = ['check', file, '--out', out, ...(a.packs ?? ['common']).flatMap((p) => ['--pack', p]), ...(a.variant ? ['--variant', a.variant] : []), ...(a.annotate ? ['--annotate'] : []), ...(a.stage ? ['--stage', a.stage] : [])]
     const r = JSON.parse(await runPyHelper(env, 'evoscholar_write.py', cli, c.signal, 180)) as Report
@@ -85,11 +85,11 @@ export const checkFeedback: ToolFactory = (env) => ({
   async execute(args) {
     const a = args as { ids: string[]; verdict: string; note?: string; report?: string }
     let file: string | undefined
-    if (a.report) file = inside(env.cwd, a.report)
+    if (a.report) file = modelPath(env, a.report)
     else {
-      const dir = inside(env.cwd, join('.evoscholar', 'checks'))
+      const dir = modelPath(env, join('.evoscholar', 'checks'))
       const cands = existsSync(dir) ? readdirSync(dir).map((d) => join(dir, d, 'report.json')).filter((f) => existsSync(f)) : []
-      file = cands.map((f) => inside(env.cwd, f)).sort((x, y) => statSync(y).mtimeMs - statSync(x).mtimeMs)[0]
+      file = cands.map((f) => modelPath(env, f)).sort((x, y) => statSync(y).mtimeMs - statSync(x).mtimeMs)[0]
     }
     if (!file || !existsSync(file)) return textResult('没有找到稿件检查报告，先运行 manuscript_check', true)
     const { events, missing } = feedbackEvents(readCheckReport(file), a.ids, VERDICTS[a.verdict], a.note)

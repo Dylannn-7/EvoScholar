@@ -599,6 +599,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       rt.db
         .prepare(`INSERT INTO sessions (id, created_at, genome_id, title, stage, category, pinned, archived) VALUES (?,?,?,?,?,?,0,0)`)
         .run(newId, new Date().toISOString(), rt.genomes.activeId(), newTitle, null, 'usage')
+      rt.evolve.inheritExternalSource(srcId, newId)
       const srcProj = join(ws.dataDir, 'projects', srcId)
       const dstProj = join(ws.dataDir, 'projects', newId)
       mkdirSync(join(dstProj, '.evoscholar'), { recursive: true })

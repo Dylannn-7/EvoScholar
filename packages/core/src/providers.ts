@@ -5,6 +5,7 @@ import { createResponsesModel } from '@evoscholar/harness/responses'
 import type { AuthHeader, EvoConfig, ModelSetting, Protocol, ProviderOverride, ReasoningCapability } from './config'
 import { gatewayTransport, normalizeGatewayBase } from './gateway'
 import { createGeminiModel } from './gemini'
+import { MiB, readJson } from './http-body'
 import presets from './presets.json'
 
 export type { Protocol } from './config'
@@ -335,7 +336,7 @@ export async function fetchProviderModels(
       await res.body?.cancel().catch(() => {})
       return { ok: false, error: `HTTP ${res.status}${res.status === 401 || res.status === 403 ? '（API Key 无效或没有权限）' : ''}` }
     }
-    const models = parseModelList(await res.json(), info.protocol)
+    const models = parseModelList(await readJson(res, 4 * MiB, '模型列表'), info.protocol)
     if (!models.length) return { ok: false, error: '上游没有返回模型列表' }
     return { ok: true, models, url: url.href }
   } catch (e) {

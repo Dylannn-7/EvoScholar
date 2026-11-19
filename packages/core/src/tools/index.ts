@@ -7,7 +7,7 @@ import { httpGet, readProcess, runCommand, runPython, startProcess, stopProcess 
 import { figureCheck } from './figures'
 import { checkFeedback, manuscriptCheck } from './writing'
 export { stopAllProcesses, pythonBin, pyenvDir, runProcess, childEnv } from './exec'
-export { inside, checkCommand } from './sandbox'
+export { inside, checkCommand, appPrivate, modelPath } from './sandbox'
 export { mergeWorks, titleSim, normDoi, searchAll, type Work } from './literature'
 import { BudgetError } from '../budget'
 import { textResult, type ToolEnv, type ToolFactory } from './types'

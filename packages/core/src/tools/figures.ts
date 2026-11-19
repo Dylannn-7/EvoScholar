@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { basename, extname, relative } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { runPyHelper } from './exec'
-import { inside } from './sandbox'
+import { modelPath } from './sandbox'
 import { objectArgs, textResult, type ToolFactory } from './types'
 
 type Issue = { level: 'error' | 'warning'; rule: string; message: string }
@@ -38,14 +38,14 @@ export const figureCheck: ToolFactory = (env) => ({
   authorize: async () => true,
   async execute(args, c) {
     const a = args as { path: string; venue?: string; photo?: boolean }
-    const file = inside(env.cwd, a.path)
+    const file = modelPath(env, a.path)
     if (!existsSync(file)) return textResult(`文件不存在：${a.path}`, true)
     if (!/\.(png|jpe?g)$/i.test(file)) {
       if (!(await env.approve?.('figure_check', `渲染 ${a.path} 的检查预览`, 'edit', c.signal) ?? true))
         return textResult('未获准保存图形预览', true)
       c.signal.throwIfAborted()
       const ext = extname(file)
-      inside(env.cwd, (ext ? file.slice(0, -ext.length) : file) + '.preview.png')
+      modelPath(env, (ext ? file.slice(0, -ext.length) : file) + '.preview.png')
     }
     const cli = ['check', file, '--preview', ...(a.venue ? ['--venue', a.venue] : []), ...(a.photo ? ['--photo'] : [])]
     const r = JSON.parse(await runPyHelper(env, 'evoscholar_fig.py', cli, c.signal)) as FileReport

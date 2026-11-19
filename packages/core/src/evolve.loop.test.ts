@@ -7,6 +7,7 @@ import { createMessagesModel } from '@evoscholar/harness/messages'
 import { createResponsesModel } from '@evoscholar/harness/responses'
 import type { AgentMessage } from '@evoscholar/harness'
 import { betaScore, openResearchSession, openRuntime, openWorkspace, validateMemoryText } from './index'
+import { externalCallSource, externalContextSource, installEvolveLoop } from './evolve/loop'
 
 const REPO = resolve(__dirname, '../../..')
 const sse = (chunks: unknown[]) => new Response(chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } })
@@ -136,6 +137,58 @@ test('automatic updates preserve the trust and scope of existing memories', (t) 
   assert.equal(external.trust, 'untrusted')
   assert.equal(external.status, 'trial')
   assert.equal(rt.evolve.get(approved.id)?.status, 'active')
+})
+
+test('external sources are recognised in calls and in restored context', () => {
+  const imported = (name: string) => name === 'third-party'
+  assert.match(externalCallSource({ name: 'web_fetch', arguments: { url: 'https://example.org' } }, imported) ?? '', /web_fetch/)
+  assert.match(externalCallSource({ name: 'read_skill', arguments: { name: 'third-party' } }, imported) ?? '', /导入技能/)
+  assert.equal(externalCallSource({ name: 'read_skill', arguments: { name: 'builtin' } }, imported), undefined)
+  assert.match(externalCallSource({ name: 'read_file', arguments: { path: './evoscholar-in/paper.md' } }, imported) ?? '', /上传/)
+  assert.match(externalCallSource({ name: 'read_file', arguments: { path: 'evoscholar-in\\notes.txt' } }, imported) ?? '', /上传/)
+  assert.equal(externalCallSource({ name: 'read_file', arguments: { path: 'data/evoscholar-in.csv' } }, imported), undefined)
+  const history: AgentMessage[] = [
+    { id: 'u1', role: 'user', content: [{ type: 'text', text: '整理一下' }] },
+    { id: 'a1', role: 'assistant', content: [], calls: [{ id: 'c1', name: 'read_file', arguments: { path: 'README.md' } }] }
+  ]
+  assert.equal(externalContextSource(history, imported), undefined)
+  assert.match(externalContextSource([...history, { id: 'a2', role: 'assistant', content: [], calls: [{ id: 'c2', name: 'lit_search', arguments: {} }] }], imported) ?? '', /lit_search/)
+  assert.match(externalContextSource([{ id: 'u2', role: 'user', content: [{ type: 'file', mimeType: 'application/pdf', source: 'x', filename: 'a.pdf' }] }], imported) ?? '', /附带/)
+})
+
+test('lessons stay untrusted after external content leaves the turn, the window or the session', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-provenance-'))
+  cpSync(join(REPO, 'evoscholar.config.json'), join(dir, 'evoscholar.config.json'))
+  const rt = openRuntime(openWorkspace(dir))
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  const loop = (sessionId: string) => installEvolveLoop({ store: rt.evolve, sessionId, projectId: null, cwd: dir, turnId: () => 1, toolNames: [], skillNames: [] })
+  const note = async (l: ReturnType<typeof loop>, trigger: string) => {
+    const tool = l.tools.find((x) => x.name === 'note_lesson')!
+    await tool.execute({ trigger, advice: '先核对单位再换算' } as never, { signal: new AbortController().signal } as never)
+    return rt.evolve.list({}).find((m) => m.trigger === trigger)!
+  }
+
+  const clean = loop('s-clean')
+  clean.beginTurn('整理数据')
+  clean.transformContext([{ id: 'u', role: 'user', content: [{ type: 'text', text: '整理数据' }] }])
+  assert.equal((await note(clean, '处理本地表格时')).trust, 'trusted')
+
+  // Turn 1 fetched a web page; the lesson comes in turn 2 after a cold restart.
+  const first = loop('s-web')
+  first.beginTurn('查一下这个网页')
+  first.onEvent({ type: 'model', purpose: 'turn', event: { type: 'finish', content: [], reason: 'tools', calls: [{ id: 'c1', name: 'web_fetch', arguments: { url: 'https://example.org' } }] } } as never)
+  const restarted = loop('s-web')
+  restarted.beginTurn('总结经验')
+  // After compaction only a summary is left in the window.
+  restarted.transformContext([{ id: 'sum', role: 'summary', content: [{ type: 'text', text: '之前读过一个网页' }] }])
+  const lesson = await note(restarted, '读网页资料时')
+  assert.equal(lesson.trust, 'untrusted')
+  assert.equal(lesson.status, 'trial')
+  assert.match(rt.evolve.externalSource('s-web') ?? '', /web_fetch/)
+
+  rt.evolve.inheritExternalSource('s-web', 's-fork')
+  assert.equal((await note(loop('s-fork'), '分支里总结时')).trust, 'untrusted')
+  assert.equal(rt.evolve.externalSource('s-clean'), undefined)
 })
 
 test('a completed turn at its step limit does not start a self-check request', async (t) => {

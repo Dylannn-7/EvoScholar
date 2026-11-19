@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSyn
 import { basename, dirname, extname, join, relative } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { atomicWriteFile } from '../atomic-file'
-import { inside } from './sandbox'
+import { appPrivate, modelPath } from './sandbox'
 import { objectArgs, textResult, type ToolFactory } from './types'
 
 const IMAGE: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }
@@ -28,7 +28,7 @@ export const listFiles: ToolFactory = (env) => ({
   authorize: async () => true,
   async execute(args) {
     const a = args as { path?: string; depth?: number }
-    const root = inside(env.cwd, a.path ?? '.')
+    const root = modelPath(env, a.path ?? '.')
     const out: string[] = []
     const cwd = realpathSync(env.cwd)
     const walk = (dir: string, d: number) => {
@@ -37,6 +37,7 @@ export const listFiles: ToolFactory = (env) => ({
         if (out.length >= 500) return
         if (entry.name === 'node_modules' || entry.name === '.git' || entry.isSymbolicLink()) continue
         const full = join(dir, entry.name)
+        if (appPrivate(env.ws, full)) continue
         const st = statSync(full)
         const rel = relative(cwd, full).split('\\').join('/')
         out.push(st.isDirectory() ? `${rel}/` : `${rel}  (${st.size} B)`)
@@ -68,7 +69,7 @@ export const readFile: ToolFactory = (env) => ({
   authorize: async () => true,
   async execute(args) {
     const a = args as { path: string; offset?: number; limit?: number }
-    const file = inside(env.cwd, a.path)
+    const file = modelPath(env, a.path)
     if (!existsSync(file)) return textResult(`文件不存在：${a.path}`, true)
     const st = statSync(file)
     if (!st.isFile()) return textResult(`${a.path} 不是普通文件`, true)
@@ -113,7 +114,7 @@ export const writeFile: ToolFactory = (env) => ({
   authorize: async (args, ctx) => (env.approve ? env.approve('write_file', `写入文件 ${(args as { path: string }).path}`, 'edit', ctx.signal) : true),
   async execute(args) {
     const a = args as { path: string; content: string }
-    const file = inside(env.cwd, a.path)
+    const file = modelPath(env, a.path)
     mkdirSync(dirname(file), { recursive: true })
     const existed = existsSync(file)
     atomicWriteFile(file, a.content)
@@ -138,7 +139,7 @@ export const editFile: ToolFactory = (env) => ({
   authorize: async (args, ctx) => (env.approve ? env.approve('edit_file', `修改文件 ${(args as { path: string }).path}`, 'edit', ctx.signal) : true),
   async execute(args) {
     const a = args as { path: string; old_text: string; new_text: string }
-    const file = inside(env.cwd, a.path)
+    const file = modelPath(env, a.path)
     if (!existsSync(file)) return textResult(`文件不存在：${a.path}`, true)
     const text = readFileSync(file, 'utf8')
     const count = text.split(a.old_text).length - 1
