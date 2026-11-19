@@ -21,3 +21,6 @@ __pycache__/
 
 # Desktop packages
 release/
+
+# Contest submission material (personal, local only)
+contest/

@@ -33,3 +33,40 @@ jobs:
       - name: Python tests
         working-directory: python
         run: python -W ignore -m unittest
+
+  package:
+    name: package (${{ matrix.os }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac dmg --arm64 --x64
+            app: release/mac-arm64/EvoScholar.app/Contents/MacOS/EvoScholar
+            artifact: release/*.dmg
+          - os: windows-latest
+            target: --win nsis --x64
+            app: release/win-unpacked/EvoScholar.exe
+            artifact: release/*.exe
+    env:
+      # Installers are not code-signed yet.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Build installer
+        run: npx electron-builder ${{ matrix.target }} --publish never
+      - name: Smoke test the packaged app
+        run: node scripts/app-smoke.mjs ${{ matrix.app }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.os }}
+          path: ${{ matrix.artifact }}
+          retention-days: 14
