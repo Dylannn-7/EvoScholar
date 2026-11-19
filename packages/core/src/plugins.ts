@@ -1,11 +1,12 @@
 // Plugins: skill import (Anthropic Agent Skills format) from a folder, a zip or a GitHub path;
 // enabling / disabling skills (a user-approved genome change); figure style catalog; user rules.
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, normalize, relative, resolve, sep } from 'node:path'
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { inflateRawSync } from 'node:zlib'
 import YAML from 'yaml'
 import type { Runtime } from './session'
 import { listSkills, readSkillFile, skillNameValid, skillSource, writeSkillSource, type SkillSource } from './skills'
+import { inside } from './tools/sandbox'
 import { pythonBin, runProcess } from './tools/exec'
 import { readUserRules, writeUserRules } from './evolve/kernels'
 
@@ -15,6 +16,12 @@ const TEXT_OK = /\.(md|txt|py|json|ya?ml|csv|tsv|r|m|js|ts|sh|ps1|toml|cfg|ini|t
 const BIN_OK = /\.(png|jpe?g|gif|webp|pdf)$/i
 
 type FileMap = Map<string, Buffer>
+
+function bundlePath(path: string): boolean {
+  return path.split('/').every((part) => part && part !== '.' && part !== '..' &&
+    !/[\\:*?"<>|\u0000-\u001f]/.test(part) && !/[ .]$/.test(part) &&
+    !/^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)/i.test(part))
+}
 
 function parseFrontmatter(raw: string): Record<string, unknown> {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw)
@@ -34,18 +41,22 @@ export function installSkillFiles(root: string, files: FileMap, source: SkillSou
   let total = 0
   for (const b of files.values()) total += b.length
   if (total > MAX_BYTES) throw new Error(`技能太大（${(total / 1048576).toFixed(1)} MB，上限 8 MB）`)
-  const dir = join(root, 'skills', name)
+  const dir = inside(root, join('skills', name))
   const prev = existsSync(dir) ? skillSource(root, name) : undefined
   if (prev && prev.type === 'builtin') throw new Error(`已有内置技能 ${name}，不能覆盖`)
   if (prev && !opts.replace) throw new Error(`已经导入过 ${name}；如需更新请选择「覆盖更新」`)
   const warnings: string[] = []
-  const staged = join(root, 'skills', `.import-${name}-${Date.now()}`)
-  mkdirSync(staged, { recursive: true })
+  const skills = inside(root, 'skills')
+  mkdirSync(skills, { recursive: true })
+  const staged = mkdtempSync(join(skills, `.import-${name}-`))
   try {
-    for (const [rel, buf] of files) {
-      const clean = normalize(rel).split(sep).join('/')
-      if (clean.startsWith('..') || clean.startsWith('/') || /(^|\/)\./.test(clean)) { warnings.push(`跳过 ${rel}`); continue }
-      if (!TEXT_OK.test(clean) && !BIN_OK.test(clean) && clean !== 'SKILL.md' && !/^LICENSE/i.test(clean)) { warnings.push(`跳过不支持的文件类型 ${rel}`); continue }
+    const written = new Set<string>()
+    for (const [clean, buf] of files) {
+      if (!bundlePath(clean) || /(^|\/)\./.test(clean)) { warnings.push(`跳过 ${clean}`); continue }
+      const key = clean.normalize('NFC').toLowerCase()
+      if (written.has(key)) throw new Error(`技能文件名重复：${clean}`)
+      written.add(key)
+      if (!TEXT_OK.test(clean) && !BIN_OK.test(clean) && clean !== 'SKILL.md' && !/^LICENSE/i.test(clean)) { warnings.push(`跳过不支持的文件类型 ${clean}`); continue }
       const f = join(staged, clean)
       mkdirSync(dirname(f), { recursive: true })
       writeFileSync(f, buf)
@@ -64,19 +75,31 @@ export function installSkillFiles(root: string, files: FileMap, source: SkillSou
 }
 
 export function readFolder(folder: string): FileMap {
-  const base = resolve(folder)
+  const base = realpathSync(folder)
   if (!existsSync(join(base, 'SKILL.md'))) throw new Error('这个文件夹里没有 SKILL.md')
   const out: FileMap = new Map()
-  const walk = (d: string) => {
-    for (const n of readdirSync(d)) {
-      if (n.startsWith('.') || n === '__pycache__' || n === 'node_modules') continue
-      const f = join(d, n)
-      if (statSync(f).isDirectory()) walk(f)
-      else out.set(relative(base, f).split(sep).join('/'), readFileSync(f))
-      if (out.size > MAX_FILES) throw new Error('文件太多')
+  let bytes = 0
+  let visited = 0
+  const walk = (d: string, depth: number) => {
+    if (depth > 32) throw new Error('技能目录层级过深')
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      if (++visited > MAX_FILES * 4) throw new Error('文件太多')
+      const n = entry.name
+      if (n.startsWith('.') || n === '__pycache__' || n === 'node_modules' || entry.isSymbolicLink()) continue
+      const f = inside(base, join(d, n))
+      if (entry.isDirectory()) walk(f, depth + 1)
+      else if (entry.isFile()) {
+        if (out.size >= MAX_FILES) throw new Error('文件太多')
+        if (statSync(f).size > MAX_BYTES - bytes) throw new Error('技能太大')
+        const content = readFileSync(f)
+        bytes += content.length
+        if (bytes > MAX_BYTES) throw new Error('技能太大')
+        out.set(relative(base, join(d, n)).split(sep).join('/'), content)
+      }
     }
   }
-  walk(base)
+  walk(base, 0)
+  if (!out.has('SKILL.md')) throw new Error('这个文件夹里没有普通文件 SKILL.md')
   return out
 }
 
@@ -87,9 +110,14 @@ export function readZip(buf: Buffer): FileMap {
   if (eocd < 0) throw new Error('不是有效的 zip 文件')
   const count = buf.readUInt16LE(eocd + 10)
   let p = buf.readUInt32LE(eocd + 16)
+  const central = p
+  const end = central + buf.readUInt32LE(eocd + 12)
+  if (count > MAX_FILES * 2 || end > eocd || buf.readUInt16LE(eocd + 4) || buf.readUInt16LE(eocd + 6))
+    throw new Error('zip 目录无效或文件太多')
   const all: FileMap = new Map()
+  let bytes = 0
   for (let k = 0; k < count; k++) {
-    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error('zip 目录损坏')
+    if (p + 46 > end || buf.readUInt32LE(p) !== 0x02014b50) throw new Error('zip 目录损坏')
     const method = buf.readUInt16LE(p + 10)
     const csize = buf.readUInt32LE(p + 20)
     const usize = buf.readUInt32LE(p + 24)
@@ -97,12 +125,21 @@ export function readZip(buf: Buffer): FileMap {
     const local = buf.readUInt32LE(p + 42)
     const name = buf.subarray(p + 46, p + 46 + nlen).toString('utf8')
     p += 46 + nlen + xlen + clen
+    if (p > end || !bundlePath(name.replace(/\/$/, ''))) throw new Error('zip 包含无效文件名')
     if (name.endsWith('/') || name.startsWith('__MACOSX/')) continue
-    if (usize > MAX_BYTES) throw new Error(`${name} 太大`)
-    const lnlen = buf.readUInt16LE(local + 26); const lxlen = buf.readUInt16LE(local + 28)
-    const data = buf.subarray(local + 30 + lnlen + lxlen, local + 30 + lnlen + lxlen + csize)
-    all.set(name, method === 0 ? Buffer.from(data) : method === 8 ? inflateRawSync(data) : (() => { throw new Error(`不支持的压缩方式 ${method}`) })())
-    if (all.size > MAX_FILES * 2) throw new Error('文件太多')
+    if (all.has(name)) throw new Error(`zip 文件名重复：${name}`)
+    if (usize > MAX_BYTES - bytes) throw new Error(`${name} 太大`)
+    if (local + 30 > central || buf.readUInt32LE(local) !== 0x04034b50) throw new Error('zip 文件头损坏')
+    const lnlen = buf.readUInt16LE(local + 26)
+    const lxlen = buf.readUInt16LE(local + 28)
+    const start = local + 30 + lnlen + lxlen
+    if (start + csize > central) throw new Error('zip 文件数据不完整')
+    const data = buf.subarray(start, start + csize)
+    if (method !== 0 && method !== 8) throw new Error(`不支持的压缩方式 ${method}`)
+    const content = method === 0 ? data : inflateRawSync(data, { maxOutputLength: Math.max(1, usize) })
+    if (content.length !== usize) throw new Error('zip 文件大小不一致')
+    all.set(name, content)
+    bytes += content.length
   }
   const skillPath = [...all.keys()].filter((k) => k === 'SKILL.md' || k.endsWith('/SKILL.md')).sort((a, b) => a.length - b.length)[0]
   if (!skillPath) throw new Error('zip 里没有 SKILL.md')
@@ -116,37 +153,82 @@ export function readZip(buf: Buffer): FileMap {
 export function parseGithubUrl(url: string): { owner: string; repo: string; ref?: string; path: string } {
   const u = url.trim().replace(/\/+$/, '').replace(/\/SKILL\.md$/, '')
   const m = /^(?:https:\/\/github\.com\/)?([\w.-]+)\/([\w.-]+)(?:\/(?:tree|blob)\/([^/]+))?(?:\/(.+))?$/.exec(u)
-  if (!m) throw new Error('GitHub 地址格式不对，例如 https://github.com/<owner>/<repo>/tree/main/skills/<name>')
+  if (!m || !bundlePath(`${m[1]}/${m[2]}`) || (m[3] && !bundlePath(m[3])) || (m[4] && !bundlePath(m[4])))
+    throw new Error('GitHub 地址格式不对，例如 https://github.com/<owner>/<repo>/tree/main/skills/<name>')
   return { owner: m[1], repo: m[2], ref: m[3], path: m[4] ?? '' }
+}
+
+async function readDownload(response: Response, limit: number): Promise<Buffer> {
+  const reader = response.body?.getReader()
+  if (!reader) return Buffer.alloc(0)
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) return Buffer.concat(chunks, bytes)
+      bytes += value.byteLength
+      if (bytes > limit) throw new Error('GitHub 下载超过大小限制')
+      chunks.push(value)
+    }
+  } finally {
+    if (bytes > limit) await reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
 }
 
 export async function fetchGithubSkill(url: string, fetchFn: typeof fetch = fetch): Promise<{ files: FileMap; origin: string }> {
   const g = parseGithubUrl(url)
+  const api = `https://api.github.com/repos/${g.owner}/${g.repo}`
+  const options = { redirect: 'error' as const, signal: AbortSignal.timeout(30_000) }
   const headers = { accept: 'application/vnd.github+json', 'user-agent': 'EvoScholar' }
-  const repoInfo = await fetchFn(`https://api.github.com/repos/${g.owner}/${g.repo}`, { headers })
-  if (!repoInfo.ok) throw new Error(`读取仓库失败：HTTP ${repoInfo.status}`)
-  const ref = g.ref ?? ((await repoInfo.json()) as { default_branch: string }).default_branch
-  const tree = await fetchFn(`https://api.github.com/repos/${g.owner}/${g.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`, { headers })
-  if (!tree.ok) throw new Error(`读取目录失败：HTTP ${tree.status}`)
-  const prefix = g.path ? `${g.path}/` : ''
-  const blobs = ((await tree.json()) as { tree: { path: string; type: string; size?: number }[] }).tree
-    .filter((t) => t.type === 'blob' && t.path.startsWith(prefix) && (TEXT_OK.test(t.path) || BIN_OK.test(t.path) || /\/LICENSE[^/]*$|^LICENSE/.test(t.path)))
-  if (!blobs.some((b) => b.path === `${prefix}SKILL.md`)) throw new Error(`${g.path || '仓库根目录'} 下没有 SKILL.md`)
-  if (blobs.length > MAX_FILES) throw new Error('文件太多')
-  const files: FileMap = new Map()
-  for (const b of blobs) {
-    const r = await fetchFn(`https://raw.githubusercontent.com/${g.owner}/${g.repo}/${encodeURIComponent(ref)}/${b.path.split('/').map(encodeURIComponent).join('/')}`, { headers: { 'user-agent': 'EvoScholar' } })
-    if (!r.ok) throw new Error(`下载 ${b.path} 失败：HTTP ${r.status}`)
-    files.set(b.path.slice(prefix.length), Buffer.from(await r.arrayBuffer()))
+  const json = async (url: string) => {
+    const response = await fetchFn(url, { ...options, headers })
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw new Error(`读取 GitHub 仓库失败：HTTP ${response.status}`)
+    }
+    return JSON.parse((await readDownload(response, MAX_BYTES)).toString('utf8'))
   }
-  // Repository-level license applies when the skill folder has none.
+  const ref = g.ref ?? (await json(api)).default_branch
+  if (typeof ref !== 'string' || !ref) throw new Error('GitHub 未返回有效默认分支')
+  const revision = await json(`${api}/commits/${encodeURIComponent(ref)}`)
+  const commit = revision?.sha
+  const treeId = revision?.commit?.tree?.sha
+  const validSha = (x: unknown) => typeof x === 'string' && /^[a-f0-9]{40}$/i.test(x)
+  if (!validSha(commit) || !validSha(treeId)) throw new Error('GitHub 未返回有效提交版本')
+  const tree = await json(`${api}/git/trees/${treeId}?recursive=1`)
+  if (!Array.isArray(tree.tree) || tree.truncated) throw new Error('GitHub 仓库目录不完整')
+  const prefix = g.path ? `${g.path}/` : ''
+  const rows = tree.tree as { path?: unknown; type?: unknown; mode?: unknown }[]
+  const paths = rows.flatMap((t) => t?.type === 'blob' && (t.mode === '100644' || t.mode === '100755') &&
+    typeof t.path === 'string' && bundlePath(t.path) && t.path.startsWith(prefix) &&
+    (TEXT_OK.test(t.path) || BIN_OK.test(t.path) || /(?:^|\/)LICENSE[^/]*$/.test(t.path)) ? [t.path] : [])
+  if (!paths.includes(`${prefix}SKILL.md`)) throw new Error(`${g.path || '仓库根目录'} 下没有 SKILL.md`)
+  if (paths.length > MAX_FILES) throw new Error('文件太多')
+  const files: FileMap = new Map()
+  let bytes = 0
+  const download = async (path: string, required: boolean) => {
+    const r = await fetchFn(`https://raw.githubusercontent.com/${g.owner}/${g.repo}/${commit}/${path.split('/').map(encodeURIComponent).join('/')}`, {
+      ...options, headers: { 'user-agent': 'EvoScholar' }
+    })
+    if (!r.ok) {
+      await r.body?.cancel()
+      if (!required && r.status === 404) return
+      throw new Error(`下载 ${path} 失败：HTTP ${r.status}`)
+    }
+    const content = await readDownload(r, MAX_BYTES - bytes)
+    bytes += content.length
+    return content
+  }
+  for (const path of paths) files.set(path.slice(prefix.length), (await download(path, true))!)
   if (![...files.keys()].some((k) => /^LICENSE/i.test(k))) {
     for (const lic of ['LICENSE', 'LICENSE.md', 'LICENSE.txt']) {
-      const r = await fetchFn(`https://raw.githubusercontent.com/${g.owner}/${g.repo}/${encodeURIComponent(ref)}/${lic}`, { headers: { 'user-agent': 'EvoScholar' } })
-      if (r.ok) { files.set('LICENSE.repo.md', Buffer.from(await r.arrayBuffer())); break }
+      const content = await download(lic, false)
+      if (content) { files.set('LICENSE.repo.md', content); break }
     }
   }
-  return { files, origin: `https://github.com/${g.owner}/${g.repo}/tree/${ref}/${g.path}` }
+  return { files, origin: `https://github.com/${g.owner}/${g.repo}/tree/${commit}/${g.path}` }
 }
 
 export async function importSkill(rt: Runtime, src: { folder?: string; zip?: string; github?: string; replace?: boolean }, fetchFn?: typeof fetch) {

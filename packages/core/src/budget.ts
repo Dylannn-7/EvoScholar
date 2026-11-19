@@ -55,12 +55,13 @@ export class Ledger {
 
   record(e: LedgerEntry): number {
     const cny = this.insert(e)
-    this.checkAlerts()
+    if (e.category !== 'usage') this.checkAlerts()
     return cny
   }
 
   private insert(e: LedgerEntry): number {
-    const cny = e.costUsd * this.rate
+    const usd = e.category === 'usage' ? 0 : e.costUsd
+    const cny = usd * this.rate
     this.db
       .prepare(
         `INSERT INTO ledger (ts, category, kind, provider, model, session_id, genome_id, input_tokens,
@@ -70,7 +71,7 @@ export class Ledger {
       .run(
         new Date().toISOString(), e.category, e.kind, e.provider, e.model ?? null, e.sessionId ?? null,
         e.genomeId ?? null, e.inputTokens ?? 0, e.cacheReadTokens ?? 0, e.outputTokens ?? 0, e.units ?? 0,
-        e.peak ? 1 : 0, e.costUsd, cny, this.round?.id ?? null, e.estimated ? 1 : 0
+        e.category !== 'usage' && e.peak ? 1 : 0, usd, cny, this.round?.id ?? null, e.estimated ? 1 : 0
       )
     return cny
   }
@@ -142,7 +143,7 @@ export class Ledger {
 
   /** Throws BudgetError when a hard limit would be crossed; returns soft warnings otherwise. */
   assertCanSpend(category: BudgetCategory, estimateCny = 0, opts: { web?: boolean } = {}): string[] {
-    if (category === 'usage' && !this.config.budget.enforceUsageCap) return []
+    if (category === 'usage') return []
     const s = this.summary()
     const warnings: string[] = []
     const held = this.db.prepare(`SELECT COALESCE(SUM(CASE WHEN category = ? THEN cost_cny END),0) AS category,
@@ -158,8 +159,6 @@ export class Ledger {
       throw new BudgetError(`本轮预算不足（含预留 ¥${(s.roundCny + held.round).toFixed(2)}，上限 ¥${this.round.capCny}）`, 'round')
     if (opts.web && s.webCallsToday + held.web >= s.webCallsPerDay)
       throw new BudgetError(`今日联网调用额度不足（含预留，上限 ${s.webCallsPerDay} 次）`, 'web')
-    if (category === 'usage' && s.usageTodayCny >= s.dailyUsageSoftCny)
-      warnings.push(`今日使用已花 ¥${s.usageTodayCny.toFixed(2)}，超过每日软上限 ¥${s.dailyUsageSoftCny}`)
     return warnings
   }
 

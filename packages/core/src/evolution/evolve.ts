@@ -239,11 +239,13 @@ ${rows.join('\n')}
 export function promote(rt: Runtime, genomeId: string): HarnessGenome {
   const row = rt.db.prepare(`SELECT status FROM candidates WHERE genome_id = ?`).get(genomeId) as { status: string } | undefined
   const g = rt.genomes.load(genomeId)
-  if (row && row.status !== 'pending') throw new Error(`${genomeId} 当前状态为 ${row.status}，不能上线`)
-  if (!row && g.createdBy.startsWith('evolution/')) throw new Error(`${genomeId} 缺少评测记录，不能上线`)
+  if (!row) throw new Error(`${genomeId} 缺少${g.createdBy.startsWith('evolution/') ? '评测' : '候选'}记录，不能上线`)
+  if (row.status !== 'pending') throw new Error(`${genomeId} 当前状态为 ${row.status}，不能上线`)
+  const prev = rt.genomes.load()
+  if (!g.parent || g.budgets.maxSteps > Math.min(prev.budgets.maxSteps, rt.genomes.load(g.parent).budgets.maxSteps))
+    throw new Error('候选版本不得提高步数上限')
   if (g.status !== 'candidate') throw new Error(`${genomeId} 不是候选版本`)
   rt.genomes.hash(g)
-  const prev = rt.genomes.load()
   prev.status = 'archived'
   rt.genomes.save(prev)
   g.status = 'active'

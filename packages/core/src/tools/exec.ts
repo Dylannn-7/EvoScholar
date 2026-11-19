@@ -1,11 +1,14 @@
+import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, lstatSync, writeFileSync } from 'node:fs'
+import { setTimeout as delay } from 'node:timers/promises'
 import { join, relative } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { checkCommand, inside } from './sandbox'
 import { objectArgs, shellFor, textResult, type ToolEnv, type ToolFactory } from './types'
 
 const OUT_LIMIT = 20_000
+const MAX_STDOUT = 8 * 1024 * 1024
 const clip = (s: string, n = OUT_LIMIT) => (s.length > n ? s.slice(0, n / 2) + `\n…（省略 ${s.length - n} 字符）…\n` + s.slice(-n / 2) : s)
 
 /** Per-platform venv dir, so a folder shared between macOS and a Linux VM never mixes binaries. */
@@ -21,7 +24,7 @@ export function pythonBin(env: ToolEnv): string {
 export function childEnv(env: ToolEnv): NodeJS.ProcessEnv {
   const pyPath = [join(env.ws.root, 'python'), process.env.PYTHONPATH].filter(Boolean).join(process.platform === 'win32' ? ';' : ':')
   // Model-facing code never sees provider keys.
-  const scrubbed = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/_API_KEY$/.test(k)))
+  const scrubbed = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/_API_KEY$/i.test(k)))
   return { ...scrubbed, MPLBACKEND: 'Agg', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONPATH: pyPath, EVOSCHOLAR_CWD: env.cwd, EVOSCHOLAR_DATA: env.ws.dataDir }
 }
 
@@ -39,8 +42,8 @@ export async function runPyHelper(env: ToolEnv, script: string, args: string[], 
   return i >= 0 ? r.stdout.slice(i) : r.stdout
 }
 
-async function approve(env: ToolEnv, tool: string, summary: string): Promise<boolean> {
-  return env.approve ? env.approve(tool, summary, 'exec') : true
+async function approve(env: ToolEnv, tool: string, summary: string, signal?: AbortSignal): Promise<boolean> {
+  return env.approve ? env.approve(tool, summary, 'exec', signal) : true
 }
 
 function snapshot(dir: string, depth = 3): Map<string, number> {
@@ -51,7 +54,8 @@ function snapshot(dir: string, depth = 3): Map<string, number> {
     for (const name of names) {
       if (name === 'node_modules' || name === '.git' || name === '.evoscholar') continue
       const f = join(d, name)
-      const st = statSync(f)
+      const st = lstatSync(f, { throwIfNoEntry: false })
+      if (!st || st.isSymbolicLink()) continue
       if (st.isDirectory()) { if (n > 1) walk(f, n - 1) } else m.set(f, st.mtimeMs)
       if (m.size > 2000) return
     }
@@ -69,20 +73,48 @@ export function runProcess(cmd: string, args: string[], env: ToolEnv, timeoutS: 
   return run(cmd, args, env, timeoutS, signal)
 }
 
-function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal: AbortSignal) {
-  return new Promise<{ code: number | null; signal: string | null; out: string; stdout: string; timedOut: boolean }>((resolveP) => {
+async function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal: AbortSignal) {
+  signal.throwIfAborted()
+  return new Promise<{ code: number | null; signal: string | null; out: string; stdout: string; timedOut: boolean }>((resolveP, reject) => {
     const child = spawn(cmd, args, { cwd: env.cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     let out = ''
-    let stdout = ''
+    let bytes = 0
+    const stdout: Buffer[] = []
     let timedOut = false
-    const add = (b: Buffer) => { out += b.toString('utf8'); if (out.length > 4 * OUT_LIMIT) out = out.slice(-2 * OUT_LIMIT) }
-    child.stdout.on('data', (b: Buffer) => { add(b); stdout += b.toString('utf8') })
+    let overflow = false
+    let forceTimer: NodeJS.Timeout | undefined
+    const kill = () => {
+      if (forceTimer) return
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+      forceTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+        child.stdout.destroy()
+        child.stderr.destroy()
+      }, 2000)
+    }
+    const add = (b: Buffer) => {
+      out += b.toString('utf8')
+      if (out.length > 4 * OUT_LIMIT) out = out.slice(-2 * OUT_LIMIT)
+    }
+    child.stdout.on('data', (b: Buffer) => {
+      add(b)
+      if (overflow) return
+      bytes += b.length
+      if (bytes > MAX_STDOUT) { overflow = true; kill() }
+      else stdout.push(b)
+    })
     child.stderr.on('data', add)
-    const kill = () => { if (child.exitCode === null) child.kill('SIGTERM'); setTimeout(() => child.exitCode === null && child.kill('SIGKILL'), 2000) }
     const timer = setTimeout(() => { timedOut = true; kill() }, timeoutS * 1000)
     signal.addEventListener('abort', kill, { once: true })
     child.on('error', (e) => { out += `\n[spawn error] ${e.message}` })
-    child.on('close', (code, sig) => { clearTimeout(timer); signal.removeEventListener('abort', kill); resolveP({ code, signal: sig, out, stdout, timedOut }) })
+    child.once('close', (code, sig) => {
+      clearTimeout(timer)
+      clearTimeout(forceTimer)
+      signal.removeEventListener('abort', kill)
+      if (signal.aborted) return reject(signal.reason)
+      if (overflow) out += '\n输出超过 8 MB，已停止进程'
+      resolveP({ code: overflow ? null : code, signal: sig, out, stdout: Buffer.concat(stdout).toString('utf8'), timedOut })
+    })
   })
 }
 
@@ -116,18 +148,18 @@ export const runPython: ToolFactory = (env) => ({
     if (a.args !== undefined && (!Array.isArray(a.args) || !a.args.every((x) => typeof x === 'string'))) throw new Error('args must be strings')
     return a as Json
   },
-  authorize: async (args) => {
+  authorize: async (args, ctx) => {
     const a = args as { code?: string; file?: string }
-    return approve(env, 'run_python', a.file ? `运行脚本 ${a.file}` : `运行 Python 代码：\n${String(a.code).slice(0, 600)}`)
+    return approve(env, 'run_python', a.file ? `运行脚本 ${a.file}` : `运行 Python 代码：\n${String(a.code).slice(0, 600)}`, ctx.signal)
   },
   async execute(args, ctx) {
     const a = args as { code?: string; file?: string; args?: string[]; timeout_s?: number }
     let script: string
     if (a.code !== undefined) {
-      const dir = join(env.cwd, '.evoscholar', 'cells')
+      const dir = inside(env.cwd, join('.evoscholar', 'cells'))
       mkdirSync(dir, { recursive: true })
-      script = join(dir, `cell-${Date.now()}.py`)
-      writeFileSync(script, a.code, 'utf8')
+      script = inside(env.cwd, join(dir, `cell-${randomUUID()}.py`))
+      writeFileSync(script, a.code, { encoding: 'utf8', flag: 'wx' })
     } else script = inside(env.cwd, a.file!)
     const before = snapshot(env.cwd)
     env.trace?.({ kind: 'exec', tool: 'run_python', file: relative(env.cwd, script) })
@@ -154,7 +186,7 @@ export const runCommand: ToolFactory = (env) => ({
     checkCommand(a.command)
     return a as Json
   },
-  authorize: async (args) => approve(env, 'run_command', `运行命令：${(args as { command: string }).command}`),
+  authorize: async (args, ctx) => approve(env, 'run_command', `运行命令：${(args as { command: string }).command}`, ctx.signal),
   async execute(args, ctx) {
     const a = args as { command: string; timeout_s?: number }
     const before = snapshot(env.cwd)
@@ -166,7 +198,7 @@ export const runCommand: ToolFactory = (env) => ({
   }
 })
 
-type Proc = { id: string; command: string; child: ChildProcess; out: string; read: number; startedAt: number }
+type Proc = { child: ChildProcess; out: string; read: number; closed: Promise<void>; error?: string }
 const PROCS = new Map<string, Map<string, Proc>>()
 const procsFor = (env: ToolEnv) => {
   const key = env.sessionId ?? env.cwd
@@ -182,18 +214,19 @@ export async function stopAllProcesses(sessionKey: string): Promise<void> {
   PROCS.delete(sessionKey)
 }
 
-function stopProc(p: Proc): Promise<void> {
-  return new Promise((res) => {
-    if (p.child.exitCode !== null || p.child.signalCode !== null) return res()
-    p.child.once('close', () => res())
-    p.child.kill('SIGTERM')
-    setTimeout(() => { if (p.child.exitCode === null) p.child.kill('SIGKILL') }, 3000)
-  })
+async function stopProc(p: Proc): Promise<void> {
+  const running = () => !p.error && p.child.exitCode === null && p.child.signalCode === null
+  if (running()) p.child.kill('SIGTERM')
+  const timer = setTimeout(() => {
+    if (running()) p.child.kill('SIGKILL')
+    p.child.stdout?.destroy()
+    p.child.stderr?.destroy()
+  }, 3000)
+  try { await p.closed } finally { clearTimeout(timer) }
 }
 
-const wait = (ms: number, signal: AbortSignal) => new Promise<void>((r) => { const t = setTimeout(r, ms); signal.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true }) })
-
 function procStatus(p: Proc): string {
+  if (p.error) return '启动失败'
   if (p.child.exitCode !== null) return `已退出（退出码 ${p.child.exitCode}）`
   if (p.child.signalCode) return `已终止（${p.child.signalCode}）`
   return '运行中'
@@ -216,21 +249,34 @@ export const startProcess: ToolFactory = (env) => ({
     checkCommand(a.command)
     return a as Json
   },
-  authorize: async (args) => approve(env, 'start_process', `后台启动：${(args as { command: string }).command}`),
+  authorize: async (args, ctx) => approve(env, 'start_process', `后台启动：${(args as { command: string }).command}`, ctx.signal),
   async execute(args, ctx) {
     const a = args as { command: string; wait_s?: number }
+    ctx.signal.throwIfAborted()
     const procs = procsFor(env)
     if (procs.size >= 4) return textResult('后台进程已有 4 个，请先 stop_process', true)
     const [cmd, cmdArgs] = shellFor(process.platform === 'win32' ? a.command : `exec ${a.command}`)
     const child = spawn(cmd, cmdArgs, { cwd: env.cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
-    const id = `p${Date.now().toString(36)}`
-    const p: Proc = { id, command: a.command, child, out: '', read: 0, startedAt: Date.now() }
+    const id = `p-${randomUUID()}`
+    const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+    const p: Proc = { child, out: '', read: 0, closed }
+    child.on('error', (error) => { p.error = error.message })
     const add = (b: Buffer) => { p.out += b.toString('utf8'); if (p.out.length > 200_000) { p.out = p.out.slice(-100_000); p.read = 0 } }
     child.stdout!.on('data', add)
     child.stderr!.on('data', add)
     procs.set(id, p)
     env.trace?.({ kind: 'process.start', id, command: a.command })
-    await wait((a.wait_s ?? 2) * 1000, ctx.signal)
+    try {
+      await delay((a.wait_s ?? 2) * 1000, undefined, { signal: ctx.signal })
+    } catch (error) {
+      await stopProc(p)
+      procs.delete(id)
+      throw error
+    }
+    if (p.error) {
+      procs.delete(id)
+      return textResult(`进程启动失败：${p.error}`, true)
+    }
     const out = p.out.slice(p.read)
     p.read = p.out.length
     return textResult(`进程 ${id}：${procStatus(p)}\n${clip(out.trim()) || '（暂无输出）'}`)
@@ -254,7 +300,7 @@ export const readProcess: ToolFactory = (env) => ({
     const a = args as { id: string; wait_s?: number }
     const p = procsFor(env).get(a.id)
     if (!p) return textResult(`没有进程 ${a.id}`, true)
-    if (a.wait_s) await wait(a.wait_s * 1000, ctx.signal)
+    if (a.wait_s) await delay(a.wait_s * 1000, undefined, { signal: ctx.signal })
     const out = p.out.slice(p.read)
     p.read = p.out.length
     return textResult(`进程 ${a.id}：${procStatus(p)}\n${clip(out.trim()) || '（没有新输出）'}`)
@@ -268,7 +314,7 @@ export const stopProcess: ToolFactory = (env) => ({
   parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
   scheduling: 'exclusive',
   validate: (i) => objectArgs(i, ['id'], ['id']) as Json,
-  authorize: async () => true,
+  authorize: async (args, ctx) => approve(env, 'stop_process', `停止进程 ${(args as { id: string }).id}`, ctx.signal),
   async execute(args) {
     const id = (args as { id: string }).id
     const procs = procsFor(env)
@@ -303,7 +349,7 @@ export const httpGet: ToolFactory = (env) => ({
     const a = args as { url: string; timeout_s?: number }
     const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout((a.timeout_s ?? 15) * 1000)])
     try {
-      const res = await fetch(a.url, { signal })
+      const res = await fetch(a.url, { signal, redirect: 'error' })
       const body = await res.text()
       env.trace?.({ kind: 'http', url: a.url, status: res.status })
       return textResult(`HTTP ${res.status}\n${clip(body)}`)

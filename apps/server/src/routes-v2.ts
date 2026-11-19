@@ -1,12 +1,14 @@
 // v2 routes: model settings, projects, folder picker, library and usage.
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   PERMISSION_LABELS,
   PERMISSION_MODES,
   PROTOCOLS,
   addProject,
+  atomicWriteFile,
+  keyEnvFor,
   consolidate,
   deleteUserRule,
   importSkill,
@@ -43,14 +45,15 @@ import {
 import { body, httpError, send, serveFile } from './http'
 
 export function setEnvKey(root: string, name: string, value: string) {
-  if (!/^[A-Z][A-Z0-9_]*$/.test(name)) throw new Error('无效的环境变量名')
+  if (!/^[A-Z][A-Z0-9_]*_API_KEY$/.test(name)) throw httpError(400, '无效的 API Key 环境变量名')
+  if (/[\r\n\0]/.test(value)) throw httpError(400, 'API Key 必须为单行')
   const file = join(root, '.env')
   const lines = existsSync(file) ? readFileSync(file, 'utf8').split(/\r?\n/) : []
   const i = lines.findIndex((l) => l.startsWith(`${name}=`) || l.startsWith(`# ${name}=`))
   const line = `${name}=${value}`
   if (i >= 0) lines[i] = line
   else lines.push(line)
-  writeFileSync(file, lines.join('\n').replace(/\n*$/, '\n'), { mode: 0o600 })
+  atomicWriteFile(file, lines.join('\n').replace(/\n*$/, '\n'), 0o600)
   if (value) process.env[name] = value
   else delete process.env[name]
 }
@@ -115,10 +118,10 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
         if (!next.baseUrl) throw httpError(400, '自定义厂商需要填写 Base URL')
         if (b.models !== undefined) next.models = String(b.models).split(/[\s,]+/).filter(Boolean).slice(0, 200).map((m) => ({ id: m }))
       }
+      if (b.key !== undefined && typeof b.key !== 'string') throw httpError(400, 'API Key 必须为字符串')
+      if (b.key !== undefined) setEnvKey(ws.root, keyEnvFor(id, next), b.key)
       settings().providers[id] = next
       saveSettings(ws)
-      const info = providerInfo(ws.config, id)!
-      if (b.key !== undefined) setEnvKey(ws.root, info.apiKeyEnv, String(b.key).trim())
       await hooks.resetIdleSessions()
       return send(res, 200, { ok: true, provider: providerInfo(ws.config, id) }), true
     }
@@ -230,7 +233,7 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
     if ((mm = /^\/api\/library\/(\d+)\/file$/.exec(p)) && method === 'GET') {
       const f = libraryPath(rt.db, Number(mm[1]))
       if (!f || !existsSync(f) || statSync(f).isDirectory()) throw httpError(404, '文件不存在（可能已被移动或删除）')
-      return serveFile(res, f), true
+      return serveFile(res, f, { projectFile: true }), true
     }
 
     // ---------- usage ----------

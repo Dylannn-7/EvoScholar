@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { runLitHelper } from './exec'
+import { atomicWriteFile } from '../atomic-file'
 import { inside } from './sandbox'
 import { objectArgs, textResult, type ToolEnv, type ToolFactory } from './types'
 
@@ -222,12 +223,14 @@ export const litSearch: ToolFactory = (env) => ({
     const a = args as { query: string; sources?: string[]; year_from?: number; year_to?: number; limit?: number }
     const { works, errors } = await searchAll({ env, signal: c.signal }, a.query, a.sources ?? DEFAULT_SOURCES, a.limit ?? 8, a.year_from, a.year_to)
     works.sort((x, y) => y.sources.length - x.sources.length || (y.citations ?? 0) - (x.citations ?? 0))
-    if (!env.readOnly) {
-      const dir = join(env.cwd, '.evoscholar')
-      mkdirSync(dir, { recursive: true })
-      writeFileSync(join(dir, 'last_search.json'), JSON.stringify({ query: a, works }, null, 2))
+    const save = !env.readOnly && (await env.approve?.('lit_search', '保存最近一次文献检索结果', 'edit', c.signal) ?? true)
+    if (save) {
+      c.signal.throwIfAborted()
+      const file = inside(env.cwd, join('.evoscholar', 'last_search.json'))
+      mkdirSync(dirname(file), { recursive: true })
+      atomicWriteFile(file, JSON.stringify({ query: a, works }, null, 2))
     }
-    const saved = env.readOnly ? '' : '；完整结果存于 .evoscholar/last_search.json'
+    const saved = save ? '；完整结果存于 .evoscholar/last_search.json' : ''
     const head = `共 ${works.length} 条（已合并去重${saved}）${errors.length ? `\n部分来源失败：${errors.join('；')}` : ''}`
     return textResult(`${head}\n\n${works.slice(0, 25).map(formatWork).join('\n\n')}`)
   }
@@ -370,13 +373,12 @@ export const pdfPageImage: ToolFactory = (env) => ({
   },
   scheduling: 'parallel',
   validate: (i) => objectArgs(i, ['path', 'page', 'dpi'], ['path', 'page']) as Json,
-  authorize: async () => true,
+  authorize: async (args, ctx) => env.approve?.('pdf_page_image', `渲染 ${(args as { path: string }).path} 的页面`, 'edit', ctx.signal) ?? true,
   async execute(args, c) {
     const a = args as { path: string; page: number; dpi?: number }
     const file = inside(env.cwd, a.path)
-    const dir = join(env.cwd, '.evoscholar', 'pages')
-    mkdirSync(dir, { recursive: true })
-    const out = join(dir, `${basename(file, '.pdf')}-p${a.page}.png`)
+    const out = inside(env.cwd, join('.evoscholar', 'pages', `${basename(file, '.pdf')}-p${a.page}.png`))
+    mkdirSync(dirname(out), { recursive: true })
     await runLitHelper(env, ['render', file, String(a.page), out, String(a.dpi ?? 130)], c.signal)
     return { content: [{ type: 'text', text: `${basename(file)} 第 ${a.page} 页：` }, { type: 'image', mimeType: 'image/png', source: `data:image/png;base64,${readFileSync(out).toString('base64')}`, filename: basename(out) }] }
   }
@@ -394,13 +396,13 @@ export const litImport: ToolFactory = (env) => ({
   },
   scheduling: 'exclusive',
   validate: (i) => objectArgs(i, ['path', 'save_as'], ['path']) as Json,
-  authorize: async () => true,
+  authorize: async (args, ctx) => env.approve?.('lit_import', `保存 ${(args as { path: string }).path} 的规范化题录`, 'edit', ctx.signal) ?? true,
   async execute(args, c) {
     const a = args as { path: string; save_as?: string }
     const file = inside(env.cwd, a.path)
     const r = JSON.parse(await runLitHelper(env, ['parse', file], c.signal)) as { format: string; records: any[] }
     const target = inside(env.cwd, a.save_as ?? `${a.path.replace(/\.[^.]+$/, '')}.records.json`)
-    writeFileSync(target, JSON.stringify(r.records, null, 2))
+    atomicWriteFile(target, JSON.stringify(r.records, null, 2))
     const bad = r.records.filter((x) => x.parse_error).length
     const preview = r.records.slice(0, 10).map((x, i) => `${i + 1}. ${x.title ?? x.raw}${x.year ? ` (${x.year})` : ''}${x.venue ? ` · ${x.venue}` : ''}${x.doi ? ` · ${x.doi}` : ''}`).join('\n')
     return textResult(`格式：${r.format}，共 ${r.records.length} 条${bad ? `（${bad} 条未能解析）` : ''}，已保存到 ${a.save_as ?? target.slice(env.cwd.length + 1)}\n${preview}`)

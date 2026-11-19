@@ -3,9 +3,12 @@ import assert from 'node:assert/strict'
 import { createServer, request } from 'node:http'
 import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { setTimeout as delay } from 'node:timers/promises'
 import { join, resolve } from 'node:path'
 import { openRuntime, openWorkspace } from '@evoscholar/core'
 import { createServerApp } from './server'
+import { body, send } from './http'
+import { setEnvKey } from './routes-v2'
 
 const REPO = resolve(__dirname, '../../..')
 const WEB = resolve(REPO, 'apps/web/public')
@@ -70,6 +73,12 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   assert.equal(st.sessions[0].id, s1.id)
   assert.equal(st.sessions[0].title, 'Renamed First')
   assert.equal(st.sessions[0].pinned, true)
+
+  writeFileSync(join(s1.cwd, 'output.html'), '<p>fixture</p>')
+  const artifact = await fetch(`${base}/api/sessions/${s1.id}/file?path=output.html`)
+  assert.match(artifact.headers.get('content-security-policy') ?? '', /^sandbox/)
+  assert.equal(artifact.headers.get('content-disposition'), 'attachment')
+  assert.equal(await artifact.text(), '<p>fixture</p>')
 
   // Place a mock manuscript check report and record feedback through the endpoint
   const checkDir = join(s1.cwd, '.evoscholar', 'checks', 'draft')
@@ -220,4 +229,135 @@ test('v2 endpoints: model settings, projects, uploads into the library, usage, h
     r.end()
   })
   assert.equal(status, 403)
+})
+
+test('credentials accept one dotenv entry at a time', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-key-'))
+  t.after(() => {
+    delete process.env.EVOSCHOLAR_TEST_API_KEY
+    rmSync(dir, { recursive: true, force: true })
+  })
+  assert.throws(() => setEnvKey(dir, 'EVOSCHOLAR_TEST_API_KEY', 'first\nsecond'))
+  assert.equal(existsSync(join(dir, '.env')), false)
+  setEnvKey(dir, 'EVOSCHOLAR_TEST_API_KEY', 'fixture-key')
+  assert.equal(process.env.EVOSCHOLAR_TEST_API_KEY, 'fixture-key')
+})
+
+test('a session rejects a second turn and releases pending approval on cancel', async (t) => {
+  const dir = tempWorkspace()
+  const rt = openRuntime(openWorkspace(dir))
+  const app = createServerApp(rt, { webDir: WEB })
+  const srv = createServer(app.handler)
+  await new Promise<void>((res) => srv.listen(0, '127.0.0.1', res))
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+  const network = globalThis.fetch
+  let modelRequests = 0
+  const oldKey = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'fixture-key'
+  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input)
+    if (url.startsWith(`${base}/`)) return network(input, init)
+    modelRequests++
+    const chunks = [
+      { choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'fixture-call', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'output.txt', content: 'fixture' }) } }] }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }
+    ]
+    return new Response(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } })
+  })
+  const post = (path: string, body: object = {}) => fetch(base + path, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-evoscholar': '1' }, body: JSON.stringify(body)
+  })
+  const until = async (predicate: () => Promise<boolean>) => {
+    for (let i = 0; i < 80; i++) {
+      if (await predicate()) return true
+      await delay(20)
+    }
+    return false
+  }
+  let path = ''
+  t.after(async () => {
+    // Resolve a pending dialog even when testing the old cancellation behavior.
+    if (path) {
+      const snapshot = await (await fetch(base + path)).json() as { pendingApprovals: { id: string }[] }
+      for (const pending of snapshot.pendingApprovals) await post(`${path}/approve/${pending.id}`, { allow: false })
+    }
+    await app.dispose()
+    await new Promise<void>((res) => srv.close(() => res()))
+    if (oldKey === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = oldKey
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const { id, cwd } = await (await post('/api/sessions', { permission: 'ask', model: 'deepseek/deepseek-flash' })).json() as { id: string; cwd: string }
+  path = `/api/sessions/${id}`
+  const snapshot = async () => await (await fetch(base + path)).json() as { busy: boolean; pendingApprovals: unknown[] }
+  const turns = await Promise.all([post(path + '/ask', { text: 'first' }), post(path + '/ask', { text: 'second' })])
+  assert.deepEqual(turns.map((response) => response.status).sort(), [202, 409])
+  assert.ok(await until(async () => (await snapshot()).pendingApprovals.length === 1))
+  assert.equal((await post(path + '/cancel')).status, 200)
+  assert.ok(await until(async () => !(await snapshot()).busy), 'cancelled turn becomes idle without answering the dialog')
+  assert.equal(modelRequests, 1)
+  assert.equal(existsSync(join(cwd, 'output.txt')), false)
+})
+
+test('JSON body errors return 400 and oversized streams return 413', async (t) => {
+  const srv = createServer(async (req, res) => {
+    try { send(res, 200, await body(req, 12)) } catch (e) {
+      send(res, (e as { status?: number }).status ?? 500, {})
+    }
+  })
+  await new Promise<void>((res) => srv.listen(0, '127.0.0.1', res))
+  t.after(() => new Promise<void>((res) => srv.close(() => res())))
+  const url = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+  for (const raw of ['{invalid', '[]']) assert.equal((await fetch(url, { method: 'POST', body: raw })).status, 400)
+  const upload = new ReadableStream({ start(output) { output.enqueue(new TextEncoder().encode(' '.repeat(20))); output.close() } })
+  const init = { method: 'POST', body: upload, duplex: 'half' as const }
+  assert.equal((await fetch(url, init)).status, 413)
+})
+
+test('project file routes work for persisted sessions without opening a live session', async (t) => {
+  const dir = tempWorkspace()
+  const rt = openRuntime(openWorkspace(dir))
+  const app = createServerApp(rt, { webDir: WEB })
+  const srv = createServer(app.handler)
+  await new Promise<void>((res) => srv.listen(0, '127.0.0.1', res))
+  t.after(async () => {
+    await app.dispose()
+    await new Promise<void>((res) => srv.close(() => res()))
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+  const cwd = join(dir, 'paper')
+  mkdirSync(cwd)
+  writeFileSync(join(cwd, 'paper.txt'), 'fixture')
+  rt.db.prepare('INSERT INTO sessions (id, created_at, genome_id, category, cwd) VALUES (?, ?, ?, ?, ?)')
+    .run('s-fixture', new Date().toISOString(), rt.genomes.activeId(), 'usage', cwd)
+  const res = await fetch(base + '/api/sessions/s-fixture/file?path=paper.txt')
+  assert.equal(res.status, 200)
+  assert.equal(await res.text(), 'fixture')
+})
+
+test('disposing the app releases live event streams', async (t) => {
+  const dir = tempWorkspace()
+  const rt = openRuntime(openWorkspace(dir))
+  const app = createServerApp(rt, { webDir: WEB })
+  const srv = createServer(app.handler)
+  await new Promise<void>((res) => srv.listen(0, '127.0.0.1', res))
+  t.after(async () => {
+    srv.closeAllConnections()
+    await app.dispose()
+    await new Promise<void>((res) => srv.close(() => res()))
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const url = `http://127.0.0.1:${(srv.address() as { port: number }).port}/api/sessions`
+  const created = await fetch(url, { method: 'POST', headers: { 'x-evoscholar': '1' }, body: '{}' })
+  const { id } = await created.json() as { id: string }
+  const response = await fetch(`${url}/${id}/events`, { signal: AbortSignal.timeout(2_000) })
+  const reader = response.body!.getReader()
+  const hello = await reader.read()
+  assert.match(new TextDecoder().decode(hello.value), /"type":"hello"/)
+  await app.dispose()
+  assert.equal((await reader.read()).done, true)
 })

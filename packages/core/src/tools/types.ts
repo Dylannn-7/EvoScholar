@@ -19,7 +19,7 @@ export type ToolEnv = {
    * processes; the session's permission mode decides which reach the user.
    * Undefined means unattended mode (evaluation runs in an isolated directory): auto-approve.
    */
-  approve?: (tool: string, summary: string, kind?: ApprovalKind) => Promise<boolean>
+  approve?: (tool: string, summary: string, kind?: ApprovalKind, signal?: AbortSignal) => Promise<boolean>
   /** Model ref chosen for this session (composer); used to resolve helper roles. */
   model?: string
   /** Called with cwd-relative paths of files a tool created or modified (library index). */
@@ -27,7 +27,7 @@ export type ToolEnv = {
   /** Optional sink for host-level trace events (exported with evaluation runs). */
   trace?: (event: Record<string, unknown>) => void
 }
-export type ApprovalKind = 'edit' | 'exec'
+export type ApprovalKind = 'edit' | 'exec' | 'evolution'
 export type ToolFactory = (env: ToolEnv) => AgentTool
 
 /** Shell used by run_command / start_process on this platform. */

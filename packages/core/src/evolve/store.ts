@@ -1,6 +1,7 @@
 // Memory for in-loop evolution: lessons (situation -> what to do) and preferences (the user's taste).
 // Scored with a Beta posterior over credited turn outcomes; trial -> active -> retired; untrusted
 // items (derived from external content) never self-promote. See docs/in-loop-evolution.md §2, §7.
+import { inside } from '../tools/sandbox'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Db } from '../db'
@@ -127,11 +128,15 @@ export class EvolveStore {
     const userGiven = input.source === 'user' || input.source === 'choice'
     const candidates = this.list({ status: 'live', kind: input.kind, projectId: input.projectId ?? null })
     const key = `${input.trigger} ${input.content}`
-    const dup = candidates.find((m) => similarity(`${m.trigger} ${m.content}`, key) >= 0.55)
+    const trust = input.untrusted ? 'untrusted' : 'trusted'
+    const stage = input.stage ?? null
+    const projectId = input.projectId ?? null
+    const dup = candidates.find((m) => m.trust === trust && m.scope === scope && m.project_id === projectId && m.stage === stage &&
+      (userGiven || !['user', 'choice'].includes(m.source)) && similarity(`${m.trigger} ${m.content}`, key) >= 0.55)
     const t = now()
     if (dup) {
       this.db.prepare(`UPDATE memory SET content = ?, trigger = ?, evidence = ?, updated_at = ?, status = CASE WHEN ? THEN 'active' ELSE status END, pinned = MAX(pinned, ?) WHERE id = ?`)
-        .run(input.content, input.trigger, [dup.evidence, input.evidence].filter(Boolean).join(',').slice(-400) || null, t, userGiven ? 1 : 0, input.pinned ? 1 : 0, dup.id)
+        .run(input.content, input.trigger, [dup.evidence, input.evidence].filter(Boolean).join(',').slice(-400) || null, t, userGiven && !input.untrusted ? 1 : 0, userGiven && !input.untrusted && input.pinned ? 1 : 0, dup.id)
       this.mirror(input.projectId)
       return { item: this.get(dup.id)!, merged: true }
     }
@@ -139,7 +144,7 @@ export class EvolveStore {
     this.db.prepare(`INSERT INTO memory (id, kind, scope, project_id, stage, trigger, content, source, evidence, status, trust, pinned, uses, wins, losses, created_at, updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,0,0,?,?)`)
       .run(id, input.kind, scope, input.projectId ?? null, input.stage ?? null, input.trigger, input.content, input.source, input.evidence ?? null,
-        userGiven && !input.untrusted ? 'active' : 'trial', input.untrusted ? 'untrusted' : 'trusted', input.pinned ? 1 : 0, t, t)
+        userGiven && !input.untrusted ? 'active' : 'trial', trust, userGiven && !input.untrusted && input.pinned ? 1 : 0, t, t)
     this.mirror(input.projectId)
     return { item: this.get(id)!, merged: false }
   }
@@ -231,8 +236,8 @@ export class EvolveStore {
       if (projectId) {
         const p = this.db.prepare('SELECT path FROM projects WHERE id = ?').get(projectId) as { path: string } | undefined
         if (p && existsSync(p.path)) {
-          mkdirSync(join(p.path, '.evoscholar'), { recursive: true })
-          writeFileSync(join(p.path, '.evoscholar', 'memory.md'), render(this.list({ status: 'live' }).filter((m) => m.project_id === projectId), '项目记忆'))
+          mkdirSync(inside(p.path, '.evoscholar'), { recursive: true })
+          writeFileSync(inside(p.path, join('.evoscholar', 'memory.md')), render(this.list({ status: 'live' }).filter((m) => m.project_id === projectId), '项目记忆'))
         }
       }
     } catch {}

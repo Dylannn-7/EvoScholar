@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { createReadStream, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, extname, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { IMG, body, httpError, send, serveFile } from './http'
@@ -31,6 +31,7 @@ import {
   getProject,
   indexFiles,
   sessionCwd,
+  type ApprovalKind,
   type PermissionMode,
   reject,
   rollback,
@@ -41,7 +42,7 @@ import {
 } from '@evoscholar/core'
 import { createJournalAgentStore, type AgentEvent, type AgentMessage, type ContentBlock } from '@evoscholar/harness'
 
-type ApprovalEntry = { id: string; tool: string; summary: string; resolve: (ok: boolean) => void }
+type ApprovalEntry = { id: string; tool: string; summary: string; kind: ApprovalKind; resolve: (ok: boolean) => void }
 type ChoiceEntry = { id: string; question: string; options: { label: string; detail?: string }[]; resolve: (i: number | null) => void }
 
 type SessionMeta = { projectId: string | null; cwd: string; model: string | null; effort: string | null; permission: PermissionMode }
@@ -93,10 +94,10 @@ function latestImage(cwd: string): string | undefined {
       if (n.startsWith('.') || n === 'inputs' || n === 'node_modules') continue
       const f = join(d, n)
       let st
-      try { st = statSync(f) } catch { continue }
+      try { st = lstatSync(f) } catch { continue }
       if (st.isDirectory()) {
         if (depth > 0) walk(f, depth - 1)
-      } else if (IMG.test(n) && !/\.preview\.png$/.test(n) && (!best || st.mtimeMs > best.t)) {
+      } else if (st.isFile() && IMG.test(n) && !/\.preview\.png$/.test(n) && (!best || st.mtimeMs > best.t)) {
         best = { rel: relative(cwd, f), t: st.mtimeMs }
       }
     }
@@ -114,10 +115,10 @@ function listCwd(cwd: string) {
       if (n.startsWith('.') || n === 'node_modules') continue
       const f = join(d, n)
       let st
-      try { st = statSync(f) } catch { continue }
+      try { st = lstatSync(f) } catch { continue }
       if (st.isDirectory()) {
         if (depth > 0) walk(f, depth - 1)
-      } else {
+      } else if (st.isFile()) {
         out.push({ path: relative(cwd, f), size: st.size, mtimeMs: Math.round(st.mtimeMs) })
       }
       if (out.length > 300) return
@@ -132,27 +133,44 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
   const WEB = resolve(opts.webDir)
   const alerts = opts.alerts ?? []
   const live = new Map<string, Live>()
+  const opening = new Map<string, Promise<Live>>()
+  const starting = new Set<string>()
   const evo = { running: false, log: [] as string[], runId: '' as string, ctrl: undefined as AbortController | undefined }
 
   const broadcast = (l: Live, e: Record<string, unknown>) => {
     const line = `data: ${JSON.stringify(e)}\n\n`
-    for (const c of l.clients) c.write(line)
+    for (const c of l.clients) {
+      if (c.destroyed || c.writableLength > 256 * 1024) c.destroy()
+      else c.write(line)
+    }
+  }
+  const cancelLive = (l: Live) => {
+    l.rs.session.cancel()
+    for (const entry of l.approvals.values()) entry.resolve(false)
+    for (const entry of l.choices.values()) entry.resolve(null)
+    l.approvals.clear()
+    l.choices.clear()
+  }
+  const endClients = (l: Live) => {
+    for (const client of l.clients) client.end()
+    l.clients.clear()
   }
   const broadcastAll = (e: Record<string, unknown>) => {
     for (const l of live.values()) broadcast(l, e)
   }
   const resetIdleSessions = async () => {
-    for (const l of live.values()) {
-      if (!l.busy) {
-        await l.rs.dispose()
+    for (const l of [...live.values()]) {
+      if (live.get(l.rs.id) === l && !l.busy && !starting.has(l.rs.id)) {
         live.delete(l.rs.id)
+        endClients(l)
+        await l.rs.dispose()
       }
     }
   }
 
   /** After a turn: index everything under the session's output folder (scripts may write files we did not see). */
   const indexOutputs = (l: Live) => {
-    const outRoot = l.meta.projectId ? join(l.meta.cwd, OUT_DIR, l.rs.id) : l.meta.cwd
+    const outRoot = l.meta.projectId ? inside(l.rs.cwd, join(OUT_DIR, l.rs.id)) : l.rs.cwd
     if (!existsSync(outRoot)) return
     const files: string[] = []
     const walk = (d: string, depth: number) => {
@@ -162,8 +180,8 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         if (n.startsWith('.') || n === 'node_modules' || n === IN_DIR || files.length > 500) continue
         const f = join(d, n)
         let st
-        try { st = statSync(f) } catch { continue }
-        if (st.isDirectory()) { if (depth > 0) walk(f, depth - 1) } else files.push(relative(l.meta.cwd, f))
+        try { st = lstatSync(f) } catch { continue }
+        if (st.isDirectory()) { if (depth > 0) walk(f, depth - 1) } else if (st.isFile()) files.push(relative(l.rs.cwd, f))
       }
     }
     walk(outRoot, 4)
@@ -173,11 +191,16 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
 
   const requireSessionRow = (id: string) => {
     if (!/^[\w-]+$/.test(id)) throw Object.assign(new Error('无效的会话 ID'), { status: 400 })
-    const row = rt.db.prepare('SELECT id, title, created_at, genome_id, COALESCE(pinned, 0) AS pinned, COALESCE(archived, 0) AS archived FROM sessions WHERE id = ?').get(id) as
-      | { id: string; title: string | null; created_at: string; genome_id: string; pinned: number; archived: number }
+    const row = rt.db.prepare('SELECT id, title, created_at, genome_id, COALESCE(pinned, 0) AS pinned, COALESCE(archived, 0) AS archived, cwd FROM sessions WHERE id = ?').get(id) as
+      | { id: string; title: string | null; created_at: string; genome_id: string; pinned: number; archived: number; cwd: string | null }
       | undefined
     if (!row) throw Object.assign(new Error('会话不存在'), { status: 404 })
     return row
+  }
+
+  const sessionDirectory = (id: string) => {
+    const row = requireSessionRow(id)
+    return live.get(id)?.rs.cwd ?? row.cwd ?? join(ws.dataDir, 'projects', id)
   }
 
   type CreateOpts = { title?: string; projectId?: string | null; model?: string | null; effort?: string | null; permission?: PermissionMode }
@@ -198,13 +221,21 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
   const saveMeta = (id: string, m: SessionMeta) =>
     rt.db.prepare('UPDATE sessions SET project_id = ?, cwd = ?, model = ?, effort = ?, permission = ? WHERE id = ?').run(m.projectId, m.cwd, m.model, m.effort, m.permission, id)
 
-  async function getLive(id: string, create?: CreateOpts): Promise<Live> {
-    if (!/^[\w-]+$/.test(id)) throw Object.assign(new Error('无效的会话 ID'), { status: 400 })
+  async function getLive(id: string, create?: CreateOpts, clients?: Live['clients']): Promise<Live> {
+    if (!/^[\w-]+$/.test(id)) throw httpError(400, '无效的会话 ID')
     const existing = live.get(id)
     if (existing) return existing
+    const pending = opening.get(id)
+    if (pending) return pending
+    const next = openLive(id, create, clients)
+    opening.set(id, next)
+    try { return await next } finally { opening.delete(id) }
+  }
+
+  async function openLive(id: string, create?: CreateOpts, clients?: Live['clients']): Promise<Live> {
     const row = rt.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown> | undefined
     if (!row && !create) throw Object.assign(new Error('会话不存在'), { status: 404 })
-    const l = { clients: new Set(), busy: false, approvals: new Map(), choices: new Map(), seenTool: new Set() } as unknown as Live
+    const l = { clients: clients ?? new Set<ServerResponse>(), busy: false, approvals: new Map(), choices: new Map(), seenTool: new Set() } as unknown as Live
     l.meta = metaFor(id, row, create)
     const onEvent = (e: AgentEvent) => {
       if (e.type === 'model' && e.purpose !== 'compaction') {
@@ -235,21 +266,39 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         store: rt.evolve,
         projectId: l.meta.projectId,
         emit: (e) => broadcast(l, { type: 'evolve', ...e }),
-        choose: (question, options) =>
+        choose: (question, options, signal) =>
           new Promise<number | null>((resolveChoice) => {
+            if (signal?.aborted || l.meta.permission === 'bypass') return resolveChoice(null)
             const cid = randomUUID().slice(0, 8)
-            l.choices.set(cid, { id: cid, question, options, resolve: resolveChoice })
+            const cancel = () => {
+              l.choices.delete(cid)
+              resolveChoice(null)
+            }
+            signal?.addEventListener('abort', cancel, { once: true })
+            l.choices.set(cid, { id: cid, question, options, resolve: (index) => {
+              signal?.removeEventListener('abort', cancel)
+              resolveChoice(index)
+            } })
             broadcast(l, { type: 'choice', id: cid, question, options })
           })
       },
       category: 'usage',
       onEvent,
       onWarning: (m) => broadcast(l, { type: 'warning', message: m }),
-      approve: (tool, summary, kind) =>
+      approve: (tool, summary, kind = 'exec', signal) =>
         new Promise<boolean>((resolveApproval) => {
+          if (signal?.aborted) return resolveApproval(false)
           const aid = randomUUID().slice(0, 8)
-          l.approvals.set(aid, { id: aid, tool, summary, resolve: resolveApproval })
-          broadcast(l, { type: 'approval', id: aid, tool, summary, kind: kind ?? 'exec' })
+          const cancel = () => {
+            l.approvals.delete(aid)
+            resolveApproval(false)
+          }
+          signal?.addEventListener('abort', cancel, { once: true })
+          l.approvals.set(aid, { id: aid, tool, summary, kind, resolve: (ok) => {
+            signal?.removeEventListener('abort', cancel)
+            resolveApproval(ok)
+          } })
+          broadcast(l, { type: 'approval', id: aid, tool, summary, kind })
         })
     })
     saveMeta(id, { ...l.meta, model: l.meta.model ?? l.rs.model })
@@ -305,7 +354,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
 
   function sessionSummary(id: string) {
     const row = requireSessionRow(id)
-    const cwd = live.get(id)?.rs.cwd ?? join(ws.dataDir, 'projects', id)
+    const cwd = sessionDirectory(id)
     const stats = rt.db
       .prepare(
         `SELECT COUNT(*) AS turns, COALESCE(SUM(steps),0) AS steps, COALESCE(SUM(tool_calls),0) AS toolCalls,
@@ -341,12 +390,16 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       } catch {}
     }
 
-    const checksDir = join(cwd, '.evoscholar', 'checks')
+    const checksDir = existsSync(cwd) ? inside(cwd, join('.evoscholar', 'checks')) : join(cwd, '.evoscholar', 'checks')
     const reports: unknown[] = []
     if (existsSync(checksDir)) {
       const dirs = readdirSync(checksDir)
-        .map((name) => ({ name, jsonPath: join(checksDir, name, 'report.json') }))
-        .filter((x) => existsSync(x.jsonPath))
+        .flatMap((name) => {
+          try {
+            const jsonPath = inside(cwd, join(checksDir, name, 'report.json'))
+            return statSync(jsonPath, { throwIfNoEntry: false })?.isFile() ? [{ name, jsonPath }] : []
+          } catch { return [] }
+        })
         .sort((a, b) => statSync(b.jsonPath).mtimeMs - statSync(a.jsonPath).mtimeMs)
       for (const d of dirs.slice(0, 10)) {
         try {
@@ -393,7 +446,10 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     if (req.method !== 'GET' && req.headers['x-evoscholar'] !== '1') return send(res, 403, { error: 'missing x-evoscholar header' })
     // DNS-rebinding guard: the API only answers to loopback host names.
     const host = String(req.headers.host ?? '').replace(/:\d+$/, '')
-    if (p.startsWith('/api/') && host && !['127.0.0.1', 'localhost', '[::1]'].includes(host)) return send(res, 403, { error: 'bad host' })
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(host)) return send(res, 403, { error: '无效的本机 Host' })
+    if (p.startsWith('/api/') && (req.headers['sec-fetch-site'] === 'cross-site' ||
+      (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)))
+      return send(res, 403, { error: '工作台接口仅限同源访问' })
     if (p.startsWith('/api/') && (await v2(req, res, url))) return
 
     if (p === '/api/state' && req.method === 'GET') {
@@ -454,7 +510,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         busy: l.busy,
         genome: l.rs.genome.id,
         messages: displayMessages(snap.messages),
-        pendingApprovals: [...l.approvals.values()].map(({ id, tool, summary }) => ({ id, tool, summary })),
+        pendingApprovals: [...l.approvals.values()].map(({ id, tool, summary, kind }) => ({ id, tool, summary, kind })),
         pendingChoices: [...l.choices.values()].map(({ id, question, options }) => ({ id, question, options })),
         evolve: rt.evolve.recentLog({ sessionId: mm[1], limit: 300 }).reverse(),
         turns: (rt.db.prepare('SELECT id FROM turns WHERE session_id = ? ORDER BY id').all(mm[1]) as { id: number }[]).map((t) => t.id)
@@ -474,10 +530,11 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       const id = mm[1]
       requireSessionRow(id)
       const existing = live.get(id)
-      if (existing?.busy) return send(res, 409, { error: '会话正在运行中，请先停止后再删除' })
+      if (existing?.busy || opening.has(id) || starting.has(id)) return send(res, 409, { error: '会话正在运行中，请先停止后再删除' })
       if (existing) {
-        await existing.rs.dispose().catch(() => {})
+        endClients(existing)
         live.delete(id)
+        await existing.rs.dispose().catch(() => {})
       }
       rt.db.exec('BEGIN IMMEDIATE')
       try {
@@ -544,15 +601,20 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       if (!verdict) return send(res, 400, { error: 'verdict 只能是 valid、false_positive 或 unsure' })
       const ids = Array.isArray(b.ids) ? b.ids.map(String).filter((x: string) => /^F\d{3,4}$/.test(x)) : []
       if (!ids.length || ids.length > 200) return send(res, 400, { error: '请提供合法的问题编号列表（如 F001）' })
-      const cwd = live.get(id)?.rs.cwd ?? join(ws.dataDir, 'projects', id)
-      const checksDir = join(cwd, '.evoscholar', 'checks')
+      const cwd = sessionDirectory(id)
+      const checksDir = existsSync(cwd) ? inside(cwd, join('.evoscholar', 'checks')) : join(cwd, '.evoscholar', 'checks')
       let reportPath: string | undefined
       if (b.reportDir) {
+        if (!existsSync(checksDir)) return send(res, 404, { error: '未找到稿件检查报告' })
         reportPath = inside(checksDir, join(String(b.reportDir), 'report.json'))
       } else if (existsSync(checksDir)) {
         reportPath = readdirSync(checksDir)
-          .map((d) => join(checksDir, d, 'report.json'))
-          .filter((f) => existsSync(f))
+          .flatMap((d) => {
+            try {
+              const f = inside(cwd, join(checksDir, d, 'report.json'))
+              return statSync(f, { throwIfNoEntry: false })?.isFile() ? [f] : []
+            } catch { return [] }
+          })
           .sort((a, c) => statSync(c).mtimeMs - statSync(a).mtimeMs)[0]
       }
       if (!reportPath || !existsSync(reportPath)) return send(res, 404, { error: '未找到稿件检查报告' })
@@ -567,72 +629,81 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     mm = m(/^\/api\/sessions\/([\w-]+)\/events$/)
     if (mm && req.method === 'GET') {
       const l = await getLive(mm[1])
+      if (res.destroyed) return
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
       res.write(`data: ${JSON.stringify({ type: 'hello', busy: l.busy })}\n\n`)
       l.clients.add(res)
       const ping = setInterval(() => res.write(': ping\n\n'), 20000)
-      req.on('close', () => { clearInterval(ping); l.clients.delete(res) })
+      res.once('close', () => { clearInterval(ping); l.clients.delete(res) })
       return
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/ask$/)
     if (mm && req.method === 'POST') {
       const id = mm[1]
-      let l = await getLive(id)
-      if (l.busy) return send(res, 409, { error: '上一轮还在运行' })
       const b = await body(req)
-      // Model / effort chosen in the composer: reopen the session (journal store keeps history).
-      const wantModel = b.model ? String(b.model) : l.rs.model
-      const wantEffort = b.effort !== undefined ? (String(b.effort) || null) : l.meta.effort
-      if (b.permission !== undefined && PERMISSION_MODES.includes(b.permission)) l.meta.permission = b.permission
-      if (wantModel !== l.rs.model || (wantEffort ?? null) !== (l.rs.effort ?? null)) {
-        const meta = { ...l.meta, model: wantModel, effort: wantEffort }
-        saveMeta(id, meta)
-        const clients = l.clients
-        await l.rs.dispose().catch(() => {})
-        live.delete(id)
-        l = await getLive(id)
-        for (const c of clients) l.clients.add(c)
-      }
-      saveMeta(id, l.meta)
-      let text = String(b.text ?? '')
-      const blocks: ContentBlock[] = []
-      // Attachments: files already uploaded into evoscholar-in/. Images also go to the model when it can see.
-      const attachments = (Array.isArray(b.attachments) ? b.attachments : []).map(String).slice(0, 20)
-      const refs = (Array.isArray(b.refs) ? b.refs : []).map(String).slice(0, 20)
-      const vision = modelInfo(ws.config, l.rs.model).vision
-      const notes: string[] = []
-      for (const rel of [...attachments, ...refs]) {
-        const f = inside(l.rs.cwd, rel)
-        if (!existsSync(f) || statSync(f).isDirectory()) continue
-        const ext = extname(f).toLowerCase()
-        const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : ''
-        if (mime && vision && statSync(f).size < 8 * 1024 * 1024) {
-          blocks.push({ type: 'image', mimeType: mime, source: `data:${mime};base64,${readFileSync(f).toString('base64')}`, filename: basename(f) })
-          notes.push(`${rel}（图片，已附在消息里）`)
-        } else notes.push(rel)
-      }
-      if (notes.length) text += `\n\n[${attachments.length ? '附件' : '引用文件'}] ${notes.join('；')}`
-      for (const img of (b.images ?? []) as { mimeType: string; data: string }[])
-        if (/^image\/(png|jpeg|gif|webp)$/.test(img.mimeType)) blocks.push({ type: 'image', mimeType: img.mimeType, source: `data:${img.mimeType};base64,${img.data}` })
-      if (l.meta.permission === 'plan') text = `${PLAN_MODE_NOTE}\n\n${text}`
-      blocks.unshift({ type: 'text', text })
-      const live0 = l
-      live0.busy = true
-      broadcast(live0, { type: 'status', status: 'running', model: live0.rs.model, effort: live0.rs.effort ?? null, permission: live0.meta.permission })
-      send(res, 202, { ok: true })
-      live0.rs
-        .ask(blocks)
-        .then(({ status }) => broadcast(live0, { type: 'status', status }))
-        .catch((e) => broadcast(live0, { type: 'error', message: (e as Error).message }))
-        .finally(() => {
-          live0.busy = false
-          for (const entry of live0.approvals.values()) entry.resolve(false)
-          live0.approvals.clear()
-          for (const entry of live0.choices.values()) entry.resolve(null)
-          live0.choices.clear()
-          indexOutputs(live0)
-          broadcast(live0, { type: 'done' })
-        })
+      if (starting.has(id)) return send(res, 409, { error: '上一轮还在运行' })
+      starting.add(id)
+      try {
+        let l = await getLive(id)
+        if (l.busy) return send(res, 409, { error: '上一轮还在运行' })
+        // Model / effort chosen in the composer: reopen the session (journal store keeps history).
+        const wantModel = b.model ? String(b.model) : l.rs.model
+        const wantEffort = b.effort !== undefined ? (String(b.effort) || null) : l.meta.effort
+        if (b.permission !== undefined && PERMISSION_MODES.includes(b.permission)) l.meta.permission = b.permission
+        if (wantModel !== l.rs.model || (wantEffort ?? null) !== (l.rs.effort ?? null)) {
+          const meta = { ...l.meta, model: wantModel, effort: wantEffort }
+          saveMeta(id, meta)
+          const clients = l.clients
+          await l.rs.dispose().catch(() => {})
+          live.delete(id)
+          try { l = await getLive(id, undefined, clients) } catch (error) {
+            endClients(l)
+            throw error
+          }
+        }
+        saveMeta(id, l.meta)
+        let text = String(b.text ?? '')
+        const blocks: ContentBlock[] = []
+        // Attachments: files already uploaded into evoscholar-in/. Images also go to the model when it can see.
+        const attachments = (Array.isArray(b.attachments) ? b.attachments : []).map(String).slice(0, 20)
+        const refs = (Array.isArray(b.refs) ? b.refs : []).map(String).slice(0, 20)
+        const vision = modelInfo(ws.config, l.rs.model).vision
+        const notes: string[] = []
+        for (const rel of [...attachments, ...refs]) {
+          const f = inside(l.rs.cwd, rel)
+          if (!existsSync(f) || !statSync(f).isFile()) continue
+          const ext = extname(f).toLowerCase()
+          const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : ''
+          if (mime && vision && statSync(f).size < 8 * 1024 * 1024) {
+            blocks.push({ type: 'image', mimeType: mime, source: `data:${mime};base64,${readFileSync(f).toString('base64')}`, filename: basename(f) })
+            notes.push(`${rel}（图片，已附在消息里）`)
+          } else notes.push(rel)
+        }
+        if (notes.length) text += `\n\n[${attachments.length ? '附件' : '引用文件'}] ${notes.join('；')}`
+        for (const img of (b.images ?? []) as { mimeType: string; data: string }[])
+          if (/^image\/(png|jpeg|gif|webp)$/.test(img.mimeType)) blocks.push({ type: 'image', mimeType: img.mimeType, source: `data:${img.mimeType};base64,${img.data}` })
+        if (l.meta.permission === 'plan') text = `${PLAN_MODE_NOTE}\n\n${text}`
+        blocks.unshift({ type: 'text', text })
+        const live0 = l
+        live0.busy = true
+        broadcast(live0, { type: 'status', status: 'running', model: live0.rs.model, effort: live0.rs.effort ?? null, permission: live0.meta.permission })
+        send(res, 202, { ok: true })
+        live0.rs
+          .ask(blocks)
+          .then(({ status }) => broadcast(live0, { type: 'status', status }))
+          .catch((e) => broadcast(live0, { type: 'error', message: (e as Error).message }))
+          .finally(() => {
+            live0.busy = false
+            for (const entry of live0.approvals.values()) entry.resolve(false)
+            live0.approvals.clear()
+            for (const entry of live0.choices.values()) entry.resolve(null)
+            live0.choices.clear()
+            try { indexOutputs(live0) } catch {
+              broadcast(live0, { type: 'warning', message: '部分交付文件无法建立索引' })
+            }
+            broadcast(live0, { type: 'done' })
+          })
+      } finally { starting.delete(id) }
       return
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/settings$/)
@@ -651,26 +722,27 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     mm = m(/^\/api\/sessions\/([\w-]+)\/cancel$/)
     if (mm && req.method === 'POST') {
       const l = await getLive(mm[1])
-      l.rs.session.cancel()
+      cancelLive(l)
       return send(res, 200, { ok: true })
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/approve\/(\w+)$/)
     if (mm && req.method === 'POST') {
       const l = await getLive(mm[1])
+      const b = await body(req)
       const entry = l.approvals.get(mm[2])
       if (!entry) return send(res, 404, { error: '审批已失效' })
-      const b = await body(req)
+      if (typeof b.allow !== 'boolean') throw httpError(400, '审批结果必须为布尔值')
       l.approvals.delete(mm[2])
-      entry.resolve(!!b.allow)
-      broadcast(l, { type: 'approval-resolved', id: mm[2], allow: !!b.allow })
+      entry.resolve(b.allow)
+      broadcast(l, { type: 'approval-resolved', id: mm[2], allow: b.allow })
       return send(res, 200, { ok: true })
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/choice\/(\w+)$/)
     if (mm && req.method === 'POST') {
       const l = await getLive(mm[1])
+      const b = await body(req)
       const entry = l.choices.get(mm[2])
       if (!entry) return send(res, 404, { error: '选项已失效' })
-      const b = await body(req)
       l.choices.delete(mm[2])
       const idx = Number.isInteger(b.index) && b.index >= 0 && b.index < entry.options.length ? b.index : null
       entry.resolve(idx)
@@ -691,17 +763,15 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/files$/)
     if (mm && req.method === 'GET') {
-      requireSessionRow(mm[1])
-      const cwd = live.get(mm[1])?.rs.cwd ?? join(ws.dataDir, 'projects', mm[1])
+      const cwd = sessionDirectory(mm[1])
       return send(res, 200, { cwd, files: existsSync(cwd) ? listCwd(cwd) : [] })
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/file$/)
     if (mm && req.method === 'GET') {
-      requireSessionRow(mm[1])
-      const cwd = live.get(mm[1])?.rs.cwd ?? join(ws.dataDir, 'projects', mm[1])
+      const cwd = sessionDirectory(mm[1])
       const f = inside(cwd, url.searchParams.get('path') ?? '')
-      if (!existsSync(f) || statSync(f).isDirectory()) return send(res, 404, { error: 'not found' })
-      return serveFile(res, f)
+      if (!existsSync(f) || !statSync(f).isFile()) return send(res, 404, { error: 'not found' })
+      return serveFile(res, f, { projectFile: true })
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/upload$/)
     if (mm && req.method === 'POST') {
@@ -709,11 +779,15 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       const b = await body(req)
       const name = basename(String(b.name ?? '').replace(/[\\/]/g, '_'))
       if (!name || name === '.' || name === '..') return send(res, 400, { error: 'name' })
-      const dir = join(l.rs.cwd, IN_DIR)
+      const dir = inside(l.rs.cwd, IN_DIR)
       mkdirSync(dir, { recursive: true })
       let f = inside(l.rs.cwd, join(IN_DIR, name))
       for (let i = 2; existsSync(f) && i < 100; i++) f = inside(l.rs.cwd, join(IN_DIR, name.replace(/(\.[^.]*)?$/, `-${i}$1`)))
-      writeFileSync(f, Buffer.from(String(b.data ?? ''), 'base64'))
+      try { writeFileSync(f, Buffer.from(String(b.data ?? ''), 'base64'), { flag: 'wx' }) }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        throw httpError(409, '同名附件过多，请修改文件名后重试')
+      }
       const rel = relative(l.rs.cwd, f).split(/[\\/]/).join('/')
       indexFiles(rt.db, { root: l.meta.cwd, projectId: l.meta.projectId, sessionId: l.rs.id }, [rel], 'upload')
       return send(res, 200, { path: rel, image: IMG.test(name) })
@@ -732,8 +806,8 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       })
     }
     if (p === '/api/evolution/run' && req.method === 'POST') {
-      if (evo.running) return send(res, 409, { error: '已经有一轮进化在运行' })
       const b = await body(req)
+      if (evo.running) return send(res, 409, { error: '已经有一轮进化在运行' })
       evo.running = true
       evo.log = []
       evo.runId = ''
@@ -786,12 +860,21 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     handler: (req: IncomingMessage, res: ServerResponse) => {
       route(req, res).catch((e) => {
         const status = (e as { status?: number }).status ?? 500
-        if (!res.headersSent) send(res, status, { error: (e as Error).message })
+        if (!res.headersSent) {
+          if (status === 413) res.setHeader('connection', 'close')
+          send(res, status, { error: (e as Error).message })
+        }
         else res.end()
       })
     },
     async dispose() {
-      for (const l of live.values()) await l.rs.dispose().catch(() => {})
+      evo.ctrl?.abort()
+      await Promise.allSettled(opening.values())
+      for (const l of live.values()) {
+        cancelLive(l)
+        endClients(l)
+        await l.rs.dispose().catch(() => {})
+      }
       live.clear()
     }
   }

@@ -21,7 +21,7 @@ export type EvolveHooks = {
   /** UI + log sink for evolve steps. */
   emit?: (e: EvolveEvent & { id: number }) => void
   /** Ask the user to pick one option; undefined = unattended (first option). */
-  choose?: (question: string, options: ChoiceOption[]) => Promise<number | null>
+  choose?: (question: string, options: ChoiceOption[], signal?: AbortSignal) => Promise<number | null>
   /** Names that tune_harness may target. */
   toolNames: string[]
   skillNames: string[]
@@ -212,14 +212,22 @@ export function installEvolveLoop(h: EvolveHooks) {
   }
 
   // ---------------------------------------------------------------- tools (doc §3.3)
-  const tool = (name: string, description: string, properties: Record<string, Json>, required: string[], run: (a: Record<string, any>) => Promise<string> | string, parallel = false): AgentTool => ({
+  const tool = (name: string, description: string, properties: Record<string, Json>, required: string[], run: (a: Record<string, any>, signal: AbortSignal) => Promise<string> | string, parallel = false): AgentTool => ({
     name, version: '1', description,
     parameters: { type: 'object', properties, required, additionalProperties: false },
     scheduling: parallel ? 'parallel' : 'exclusive',
     validate: (i) => objectArgs(i, Object.keys(properties), required) as Json,
-    authorize: async () => true,
-    async execute(args) {
-      try { return textResult(await run(args as Record<string, any>)) } catch (e) { return textResult(`${name} 未执行：${(e as Error).message}`, true) }
+    authorize: async (_args, ctx) => {
+      if (name === 'note_lesson' || name === 'tune_harness')
+        return h.env?.approve?.(name, name === 'note_lesson' ? '保存本回合经验' : '记录本会话的工作方式调整', 'edit', ctx.signal) ?? true
+      return true
+    },
+    async execute(args, ctx) {
+      try { return textResult(await run(args as Record<string, any>, ctx.signal)) }
+      catch (e) {
+        if (ctx.signal?.aborted) throw e
+        return textResult(`${name} 未执行：${(e as Error).message}`, true)
+      }
     }
   })
   const markRefs = (refs: unknown) => {
@@ -279,6 +287,7 @@ export function installEvolveLoop(h: EvolveHooks) {
         reason: { type: 'string' }
       }, ['op', 'reason'], (a) => {
         const op = a.op as HarnessOp
+        if (!HARNESS_OPS.includes(op)) throw new Error('不支持的会话调整')
         const value = String(a.value ?? '').trim()
         if (op === 'tool.note' && !h.toolNames.includes(String(a.target))) throw new Error(`未知工具 ${a.target}`)
         if (op.startsWith('skill.') && !h.skillNames.includes(String(a.target))) throw new Error(`未知技能 ${a.target}`)
@@ -295,11 +304,12 @@ export function installEvolveLoop(h: EvolveHooks) {
         question: { type: 'string' },
         options: { type: 'array', minItems: 2, maxItems: 4, items: { type: 'object', properties: { label: { type: 'string' }, detail: { type: 'string' } }, required: ['label'], additionalProperties: false } },
         topic: { type: 'string', description: '偏好的主题，如「出图配色」' }
-      }, ['question', 'options'], async (a) => {
+      }, ['question', 'options'], async (a, signal) => {
         const options = (a.options as ChoiceOption[]).slice(0, 4)
         if (!h.choose) return `无人值守，按第一个方案执行：${options[0].label}`
         emit({ kind: 'choice', text: String(a.question), data: { options } })
-        const idx = await h.choose(String(a.question), options)
+        const idx = await h.choose(String(a.question), options, signal)
+        signal?.throwIfAborted()
         if (idx === null || idx === undefined || !options[idx]) return '用户没有选择，请按最稳妥的方案继续，并在回答里说明可以改。'
         const picked = options[idx]
         const others = options.filter((_, i) => i !== idx).map((o) => o.label)

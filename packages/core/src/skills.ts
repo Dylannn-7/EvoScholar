@@ -1,7 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, readdirSync, lstatSync, statSync, writeFileSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
 import YAML from 'yaml'
 import type { Json } from '@evoscholar/harness'
+import { atomicWriteFile } from './atomic-file'
+import { inside } from './tools/sandbox'
 import { objectArgs, textResult, type ToolFactory } from './tools/types'
 
 export type SkillMeta = { name: string; version: number; description: string; path: string }
@@ -23,17 +25,17 @@ function readSkillPath(path: string, name: string): { meta: SkillMeta; body: str
 /** SKILL.md is the legacy revision. A pinned request only opens a matching revision. */
 export function readSkillFile(root: string, name: string, version?: number) {
   if (!skillNameValid(name)) return null
-  const dir = join(root, 'skills', name)
-  const legacy = () => readSkillPath(join(dir, 'SKILL.md'), name)
+  const dir = inside(root, join('skills', name))
+  const legacy = () => readSkillPath(inside(root, join(dir, 'SKILL.md')), name)
   if (version === undefined) return legacy()
   if (!Number.isSafeInteger(version) || version < 1) return null
-  const skill = readSkillPath(join(dir, `SKILL@v${version}.md`), name) ?? legacy()
+  const skill = readSkillPath(inside(root, join(dir, `SKILL@v${version}.md`)), name) ?? legacy()
   return skill?.meta.name === name && skill.meta.version === version ? skill : null
 }
 
 export function saveSkillRevision(root: string, name: string, description: string, body: string): SkillRef {
   if (!skillNameValid(name)) throw new Error(`技能名无效：${name}`)
-  const dir = join(root, 'skills', name)
+  const dir = inside(root, join('skills', name))
   mkdirSync(dir, { recursive: true })
   let last = readSkillFile(root, name)?.meta.version ?? 0
   for (const file of readdirSync(dir)) {
@@ -77,11 +79,11 @@ export const readSkill: ToolFactory = (env) => ({
     const ref = env.skills?.find((skill) => skill.name === name) ?? extraSkills(env.ws.root).find((x) => x.name === name)
     const s = ref && readSkillFile(env.ws.root, ref.name, ref.version)
     if (!s) return textResult(`没有技能 ${name}`, true)
-    const dir = join(env.ws.root, 'skills', name)
+    const dir = inside(env.ws.root, join('skills', name))
     if (file) {
-      const f = resolve(dir, file)
-      if (!f.startsWith(resolve(dir) + sep) || /(^|[\\/])\./.test(file)) return textResult('只能读取技能目录里的文件', true)
-      if (!existsSync(f) || statSync(f).isDirectory()) return textResult(`技能 ${name} 里没有 ${file}`, true)
+      if (/(^|[\\/])\./.test(file)) return textResult('只能读取技能目录里的文件', true)
+      const f = inside(dir, file)
+      if (!existsSync(f) || !statSync(f).isFile()) return textResult(`技能 ${name} 里没有 ${file}`, true)
       if (statSync(f).size > 80_000) return textResult(`${file} 太大（超过 80 KB），请只读需要的部分`, true)
       env.trace?.({ kind: 'skill.read', name, file })
       return textResult(readFileSync(f, 'utf8'))
@@ -101,7 +103,9 @@ export function listSkillFiles(dir: string, limit = 60): string[] {
     for (const n of names) {
       if (n.startsWith('.') || /^SKILL(@v\d+)?\.md$/.test(n) || n === '__pycache__' || out.length >= limit) continue
       const f = join(d, n)
-      if (statSync(f).isDirectory()) { if (depth > 0) walk(f, depth - 1) } else out.push(relative(dir, f).split(sep).join('/'))
+      const stat = lstatSync(f, { throwIfNoEntry: false })
+      if (stat?.isDirectory()) { if (depth > 0) walk(f, depth - 1) }
+      else if (stat?.isFile()) out.push(relative(dir, f).split(sep).join('/'))
     }
   }
   walk(dir, 3)
@@ -110,12 +114,17 @@ export function listSkillFiles(dir: string, limit = 60): string[] {
 
 export type SkillSource = { type: 'builtin' | 'github' | 'zip' | 'folder' | 'forged'; origin?: string; license?: string; importedAt?: string; status?: 'trial' | 'active'; sessions?: string[]; reuses?: string[]; kernel?: boolean }
 export function skillSource(root: string, name: string): SkillSource {
-  const f = join(root, 'skills', name, '.source.json')
-  if (!existsSync(f)) return { type: 'builtin' }
-  try { return JSON.parse(readFileSync(f, 'utf8')) as SkillSource } catch { return { type: 'builtin' } }
+  if (!skillNameValid(name)) return { type: 'builtin' }
+  try {
+    const f = inside(root, join('skills', name, '.source.json'))
+    if (statSync(f, { throwIfNoEntry: false })?.isFile()) return JSON.parse(readFileSync(f, 'utf8')) as SkillSource
+  } catch {}
+  return { type: 'builtin' }
 }
 export function writeSkillSource(root: string, name: string, src: SkillSource): void {
-  writeFileSync(join(root, 'skills', name, '.source.json'), JSON.stringify(src, null, 2) + '\n')
+  if (!skillNameValid(name)) throw new Error('技能名无效')
+  const dir = inside(root, join('skills', name))
+  atomicWriteFile(inside(dir, '.source.json'), JSON.stringify(src, null, 2) + '\n')
 }
 
 /** Host-level skills every session can read even if the genome does not list them: forged kernels. */

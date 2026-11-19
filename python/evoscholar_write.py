@@ -152,6 +152,21 @@ def _strip_tex(s: str) -> str:
     return re.sub(r'\s+', ' ', s).strip()
 
 
+def _contained_path(root: Path, path: Path) -> Path | None:
+    try:
+        candidate = path.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return candidate if candidate.is_relative_to(root) else None
+
+
+def _output_path(root: Path, path: Path) -> Path:
+    target = _contained_path(root, path)
+    if target is None:
+        raise ValueError('报告路径必须在输出目录内')
+    return target
+
+
 def load_latex(main: Path) -> Doc:
     main = main.resolve()
     root = main.parent
@@ -164,8 +179,9 @@ def load_latex(main: Path) -> Doc:
     def resolve(name: str, base: Path) -> Path | None:
         cand = (base / name)
         for c in (cand, cand.with_suffix(cand.suffix + '.tex') if cand.suffix != '.tex' else cand):
-            if c.exists() and c.is_file():
-                return c.resolve()
+            path = _contained_path(root, c)
+            if path is not None and path.is_file():
+                return path
         return None
 
     def walk(f: Path):
@@ -201,7 +217,8 @@ def load_latex(main: Path) -> Doc:
     doc.text = ''.join(parts)
     doc.offsets = offsets
     t = doc.text
-    doc.unreached = sorted(str(p.relative_to(root)) for p in root.rglob('*.tex') if p.resolve() not in seen)
+    doc.unreached = sorted(str(p.relative_to(root)) for p in root.rglob('*.tex')
+                           if (target := _contained_path(root, p)) is not None and target not in seen)
 
     # graphics path
     gpaths = [root]
@@ -265,8 +282,8 @@ def load_latex(main: Path) -> Doc:
     except ImportError:  # pragma: no cover
         lit = None
     for n in names:
-        f = root / (n if n.endswith('.bib') else n + '.bib')
-        if f.exists() and lit:
+        f = _contained_path(root, root / (n if n.endswith('.bib') else n + '.bib'))
+        if f is not None and f.is_file() and lit:
             doc.bib_files.append(str(f.relative_to(root)))
             text = f.read_text(encoding='utf-8', errors='replace')
             for rec in lit.parse_bibtex(text):
@@ -274,7 +291,8 @@ def load_latex(main: Path) -> Doc:
                 rec['loc'] = f'{f.relative_to(root)}:{line}'
                 doc.bib.append(rec)
         else:
-            bbl = next((b for b in (root / (n + '.bbl'), root / (main.stem + '.bbl')) if b.exists()), None)
+            candidates = (_contained_path(root, root / name) for name in (n + '.bbl', main.stem + '.bbl'))
+            bbl = next((b for b in candidates if b is not None and b.is_file()), None)
             if bbl is not None:
                 # arXiv-style sources ship only the compiled bibliography.
                 btxt = bbl.read_text(encoding='utf-8', errors='replace')
@@ -1643,7 +1661,7 @@ def annotate(rep: dict, src: str | Path, out_dir: str | Path) -> list[str]:
     """Write annotated copies (originals are never modified).
     LaTeX: each flagged line gets a trailing '% EVO[Fxxx]: …' comment.  Word: comments on flagged paragraphs."""
     src = Path(src)
-    out = Path(out_dir)
+    out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
     written = []
     by_loc: dict[str, list[dict]] = {}
@@ -1653,7 +1671,10 @@ def annotate(rep: dict, src: str | Path, out_dir: str | Path) -> list[str]:
     if src.suffix.lower() == '.tex':
         root = src.resolve().parent
         for rel in rep['summary']['files']:
-            lines = (root / rel).read_text(encoding='utf-8', errors='replace').splitlines()
+            source = _contained_path(root, root / rel)
+            if source is None or not source.is_file():
+                continue
+            lines = source.read_text(encoding='utf-8', errors='replace').splitlines()
             changed = False
             for n in range(len(lines)):
                 fs = by_loc.get(f'{rel}:{n + 1}')
@@ -1661,7 +1682,7 @@ def annotate(rep: dict, src: str | Path, out_dir: str | Path) -> list[str]:
                     lines[n] += '  % EVO' + ' '.join(f'[{f["id"]}] {f["message"]}' for f in fs).replace('\n', ' ')
                     changed = True
             if changed:
-                target = out / rel
+                target = _output_path(out, out / rel)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text('\n'.join(lines) + '\n', encoding='utf-8')
                 written.append(str(target))
@@ -1678,7 +1699,7 @@ def annotate(rep: dict, src: str | Path, out_dir: str | Path) -> list[str]:
                 d.add_comment(p.runs, text=text, author='EvoScholar', initials='ES')
             else:
                 general.append(text)
-        target = out / (src.stem + '.checked.docx')
+        target = _output_path(out, out / (src.stem + '.checked.docx'))
         d.save(str(target))
         written.append(str(target))
     return written
@@ -1705,13 +1726,13 @@ def _cli(argv: list[str]) -> int:
         return 0
     rep = run(a.file, a.pack or ['common'], a.variant, stage=a.stage)
     if a.out:
-        out = Path(a.out)
+        out = Path(a.out).resolve()
         out.mkdir(parents=True, exist_ok=True)
-        (out / 'report.json').write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding='utf-8')
-        (out / 'report.md').write_text(format_report(rep, max_items=1000), encoding='utf-8')
+        _output_path(out, out / 'report.json').write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding='utf-8')
+        _output_path(out, out / 'report.md').write_text(format_report(rep, max_items=1000), encoding='utf-8')
         rep['written'] = [str(out / 'report.json'), str(out / 'report.md')]
         if a.annotate:
-            rep['written'] += annotate(rep, a.file, out / 'annotated')
+            rep['written'] += annotate(rep, a.file, _output_path(out, out / 'annotated'))
     rep['text'] = format_report(rep)
     print(json.dumps(rep, ensure_ascii=False))
     return 0
