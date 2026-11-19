@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { checkCommand, inside } from './sandbox'
 import { objectArgs, shellFor, textResult, type ToolEnv, type ToolFactory } from './types'
@@ -61,7 +61,7 @@ function snapshot(dir: string, depth = 3): Map<string, number> {
 }
 
 function changedFiles(before: Map<string, number>, after: Map<string, number>, cwd: string): string[] {
-  return [...after].filter(([f, t]) => before.get(f) !== t).map(([f]) => relative(cwd, f)).slice(0, 50)
+  return [...after].filter(([f, t]) => before.get(f) !== t).map(([f]) => relative(cwd, f).split(sep).join('/')).slice(0, 50)
 }
 
 /** Spawn a process in env.cwd with the scrubbed child environment (no provider keys). */

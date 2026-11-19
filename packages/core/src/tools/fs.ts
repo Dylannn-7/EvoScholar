@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, extname, join, relative } from 'node:path'
+import { basename, dirname, extname, join, relative, sep } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { inside } from './sandbox'
 import { objectArgs, textResult, type ToolFactory } from './types'
@@ -34,7 +34,7 @@ export const listFiles: ToolFactory = (env) => ({
         if (name === 'node_modules' || name === '.git') continue
         const full = join(dir, name)
         const st = statSync(full)
-        const rel = relative(env.cwd, full)
+        const rel = relative(env.cwd, full).split(sep).join('/')   // model-facing paths use / on every OS
         out.push(st.isDirectory() ? `${rel}/` : `${rel}  (${st.size} B)`)
         if (out.length > 500) return
         if (st.isDirectory() && d > 1) walk(full, d - 1)
@@ -115,7 +115,7 @@ export const writeFile: ToolFactory = (env) => ({
     const existed = existsSync(file)
     writeFileSync(file, a.content, 'utf8')
     env.trace?.({ kind: 'file.write', path: a.path, bytes: Buffer.byteLength(a.content) })
-    env.onFiles?.([relative(env.cwd, file)])
+    env.onFiles?.([relative(env.cwd, file).split(sep).join('/')])
     return textResult(`${existed ? '已覆盖' : '已创建'} ${a.path}（${Buffer.byteLength(a.content)} B）`)
   }
 })
@@ -142,7 +142,7 @@ export const editFile: ToolFactory = (env) => ({
     if (count !== 1) return textResult(`old_text 出现了 ${count} 次，需要恰好 1 次`, true)
     writeFileSync(file, text.replace(a.old_text, () => a.new_text), 'utf8')
     env.trace?.({ kind: 'file.edit', path: a.path })
-    env.onFiles?.([relative(env.cwd, file)])
+    env.onFiles?.([relative(env.cwd, file).split(sep).join('/')])
     return textResult(`已修改 ${a.path}`)
   }
 })
