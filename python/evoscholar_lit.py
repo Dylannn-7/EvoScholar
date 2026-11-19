@@ -398,6 +398,11 @@ def citation_hops(edges: Iterable[tuple[str, str]], seed: str) -> dict:
 
 
 if __name__ == "__main__":  # used by the host tools: python evoscholar_lit.py <command> <args...>
+    for _s in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page; output is UTF-8 JSON / Chinese
+        try:
+            _s.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
     cmd, *args = sys.argv[1:]
     if cmd == "pages":
         pages = [int(x) for x in args[1].split(",")] if len(args) > 1 and args[1] else None
