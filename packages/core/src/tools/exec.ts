@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { join, relative, sep } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { chooseExecution, type ExecutionJob, type IsolatedService, type ProcessResult } from '../execution'
+import { existingDeliverables, validateDeliverablePaths } from '../staged-project'
 import { checkCommand, modelPath } from './sandbox'
 import { objectArgs, shellFor, textResult, type ToolEnv, type ToolFactory } from './types'
 
@@ -172,38 +173,56 @@ function validateTimeout(value: unknown, limit: number) {
     throw new Error(`超时必须为 1–${limit} 秒`)
 }
 
+const deliverablesParameter = {
+  type: 'array', maxItems: 50, items: { type: 'string' },
+  description: '用户指定交付到项目中的最终文件路径。程序须在容器工作目录的同一相对路径生成这些文件，如用户指定根目录的 report.pdf，就填写 ["report.pdf"]。中间文件不列入。'
+}
+const deliveryDescription = '用户指定最终文件的项目位置时，用 deliverables 列出最终文件，成功后直接回写到指定相对路径。未指定时用会话输出目录。'
+const deliveryApproval = (files?: string[]) => files?.length ? `\n回写到项目路径（如文件已存在，将更新）：${files.join('、')}` : ''
+
+function executionFiles(env: ToolEnv, mode: 'host' | 'isolated', r: ProcessResult, before: Map<string, number>, deliverables?: string[]) {
+  if (mode === 'isolated') return r.files ?? []
+  const changed = changedFiles(before, snapshot(env.cwd), env.cwd)
+  const final = r.code === 0 && !r.timedOut && deliverables?.length ? existingDeliverables(env.cwd, deliverables) : []
+  return [...new Set([...final, ...changed])]
+}
+
 export const runPython: ToolFactory = (env) => ({
   name: 'run_python',
   version: '1',
   description:
     '在工作目录中运行 Python（已装 numpy、pandas、scipy、matplotlib、SciencePlots 时可直接用；图用 savefig 保存为文件，不要 plt.show()）。' +
-    '传 code 运行一段代码，或传 file 运行已有脚本（可带 args）。每次调用是独立进程，变量不保留，中间结果请写到文件。',
+    '传 code 运行一段代码，或传 file 运行已有脚本（可带 args）。每次调用是独立进程，变量不保留，中间结果请写到文件。' +
+    deliveryDescription,
   parameters: {
     type: 'object',
     properties: {
       code: { type: 'string', description: 'Python 源码' },
       file: { type: 'string', description: '工作目录内的 .py 脚本路径' },
       args: { type: 'array', items: { type: 'string' } },
-      timeout_s: { type: 'integer', minimum: 1, maximum: 900, description: '默认 120' }
+      timeout_s: { type: 'integer', minimum: 1, maximum: 900, description: '默认 120' },
+      deliverables: deliverablesParameter
     },
     additionalProperties: false
   },
   scheduling: 'exclusive',
   validate(i) {
-    const a = objectArgs(i, ['code', 'file', 'args', 'timeout_s'])
+    const a = objectArgs(i, ['code', 'file', 'args', 'timeout_s', 'deliverables'])
     if ((a.code === undefined) === (a.file === undefined) ||
       (a.code !== undefined && typeof a.code !== 'string') || (a.file !== undefined && typeof a.file !== 'string'))
       throw new Error('请提供 code 或 file，且只能提供一个')
     validateTimeout(a.timeout_s, 900)
     if (a.args !== undefined && (!Array.isArray(a.args) || !a.args.every((x) => typeof x === 'string'))) throw new Error('args must be strings')
+    if (a.deliverables !== undefined) a.deliverables = validateDeliverablePaths(a.deliverables)
     return a as Json
   },
   authorize: async (args, ctx) => {
-    const a = args as { code?: string; file?: string }
-    return approve(env, 'run_python', a.file ? `运行脚本 ${a.file}` : `运行 Python 代码：\n${String(a.code).slice(0, 600)}`, ctx.signal)
+    const a = args as { code?: string; file?: string; deliverables?: string[] }
+    const summary = a.file ? `运行脚本 ${a.file}` : `运行 Python 代码：\n${String(a.code).slice(0, 600)}`
+    return approve(env, 'run_python', summary + deliveryApproval(a.deliverables), ctx.signal)
   },
   async execute(args, ctx) {
-    const a = args as { code?: string; file?: string; args?: string[]; timeout_s?: number }
+    const a = args as { code?: string; file?: string; args?: string[]; timeout_s?: number; deliverables?: string[] }
     const mode = await chooseExecution(env)
     const args0 = a.args ?? []
     const script = a.file === undefined ? undefined : modelPath(env, a.file)
@@ -211,7 +230,7 @@ export const runPython: ToolFactory = (env) => ({
     let r
     if (mode === 'isolated') {
       const path = script ? relative(modelPath(env, '.'), script).split(sep).join('/') : '/control/cell.py'
-      const job: ExecutionJob = { host: [pythonBin(env), []], sandbox: ['python', path, ...args0], code: a.code }
+      const job: ExecutionJob = { host: [pythonBin(env), []], sandbox: ['python', path, ...args0], code: a.code, deliverables: a.deliverables }
       r = await env.executor!.run(env, job, a.timeout_s ?? 120, ctx.signal)
     } else {
       let file = script
@@ -225,39 +244,43 @@ export const runPython: ToolFactory = (env) => ({
     }
     env.trace?.({ kind: 'exec', tool: 'run_python', mode, ...(a.file ? { file: a.file } : {}) })
     env.trace?.({ kind: 'exec.exit', tool: 'run_python', code: r.code, timedOut: r.timedOut })
-    return report(r, mode === 'host' ? changedFiles(before, snapshot(env.cwd), env.cwd) : r.files ?? [], env)
+    return report(r, executionFiles(env, mode, r, before, a.deliverables), env)
   }
 })
 
 export const runCommand: ToolFactory = (env) => ({
   name: 'run_command',
   version: '1',
-  description: `在工作目录中运行一条短命令并等待结束（${process.platform === 'win32' ? 'Windows PowerShell 语法，如 Get-ChildItem、python x.py' : 'POSIX shell 语法，如 ls、python3 x.py'}、xelatex main.tex）。需要长时间运行的服务请用 start_process。`,
+  description: `在工作目录中运行短命令。容器使用 POSIX shell 语法，如 ls、python3 x.py。${process.platform === 'win32' ? 'Windows 宿主模式使用 PowerShell。' : ''}长时间运行的服务请用 start_process。${deliveryDescription}`,
   parameters: {
     type: 'object',
-    properties: { command: { type: 'string' }, timeout_s: { type: 'integer', minimum: 1, maximum: 900, description: '默认 120' } },
+    properties: { command: { type: 'string' }, timeout_s: { type: 'integer', minimum: 1, maximum: 900, description: '默认 120' }, deliverables: deliverablesParameter },
     required: ['command'],
     additionalProperties: false
   },
   scheduling: 'exclusive',
   validate(i) {
-    const a = objectArgs(i, ['command', 'timeout_s'], ['command'])
+    const a = objectArgs(i, ['command', 'timeout_s', 'deliverables'], ['command'])
     if (typeof a.command !== 'string' || !a.command.trim()) throw new Error('command required')
     validateTimeout(a.timeout_s, 900)
     checkCommand(a.command)
+    if (a.deliverables !== undefined) a.deliverables = validateDeliverablePaths(a.deliverables)
     return a as Json
   },
-  authorize: async (args, ctx) => approve(env, 'run_command', `运行命令：${(args as { command: string }).command}`, ctx.signal),
+  authorize: async (args, ctx) => {
+    const a = args as { command: string; deliverables?: string[] }
+    return approve(env, 'run_command', `运行命令：${a.command}` + deliveryApproval(a.deliverables), ctx.signal)
+  },
   async execute(args, ctx) {
-    const a = args as { command: string; timeout_s?: number }
+    const a = args as { command: string; timeout_s?: number; deliverables?: string[] }
     const mode = await chooseExecution(env)
     const before = mode === 'host' ? snapshot(env.cwd) : new Map<string, number>()
     env.trace?.({ kind: 'exec', tool: 'run_command', command: a.command, mode })
     const r = mode === 'isolated'
-      ? await env.executor!.run(env, { host: shellFor(a.command), sandbox: ['/bin/sh', '-c', a.command] }, a.timeout_s ?? 120, ctx.signal)
+      ? await env.executor!.run(env, { host: shellFor(a.command), sandbox: ['/bin/sh', '-c', a.command], deliverables: a.deliverables }, a.timeout_s ?? 120, ctx.signal)
       : await run(...shellFor(a.command), env, a.timeout_s ?? 120, ctx.signal)
     env.trace?.({ kind: 'exec.exit', tool: 'run_command', code: r.code, timedOut: r.timedOut })
-    return report(r, mode === 'host' ? changedFiles(before, snapshot(env.cwd), env.cwd) : r.files ?? [], env)
+    return report(r, executionFiles(env, mode, r, before, a.deliverables), env)
   }
 })
 

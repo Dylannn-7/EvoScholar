@@ -29,6 +29,28 @@ export function checkProjectRoot(root: string, app: string, data: string) {
 }
 
 type File = { key: string; size: number; mode: number }
+const fileKey = (stat: { ino: number; size: number; mtimeMs: number; ctimeMs: number }) =>
+  `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
+const pathKey = (path: string) => process.platform === 'win32' || process.platform === 'darwin' ? path.toLowerCase() : path
+
+export function validateDeliverablePaths(value: unknown): string[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > 50) throw new Error('deliverables 必须是最多 50 项的文件路径数组')
+  const keys = new Set<string>()
+  return value.map((entry: unknown) => {
+    if (typeof entry !== 'string' || !entry.trim() || /[\0-\x1f]/.test(entry) || /^[\\/]|^[A-Za-z]:/.test(entry))
+      throw new Error('交付路径必须是项目相对文件路径')
+    const parts = entry.split(/[\\/]/).filter(part => part !== '.')
+    if (!parts.length || parts.some(part => !part || excluded(part)) || parts[0].toLowerCase() === 'evoscholar-in')
+      throw new Error(`该路径不能用于容器交付：${entry}`)
+    const path = parts.join('/')
+    const key = pathKey(path)
+    if (keys.has(key)) throw new Error(`重复的容器交付路径：${path}`)
+    keys.add(key)
+    return path
+  })
+}
+
 function scan(root: string, limits = STAGE_LIMITS, rejectLinks = false): Map<string, File> {
   const files = new Map<string, File>()
   let bytes = 0, entries = 0
@@ -47,7 +69,7 @@ function scan(root: string, limits = STAGE_LIMITS, rejectLinks = false): Map<str
       if (files.size >= limits.files) throw new Error('项目工作副本文件数超限')
       bytes += stat.size
       if (bytes > limits.bytes) throw new Error('项目工作副本大小超限')
-      files.set(relative(root, file), { key: `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`, size: stat.size, mode: stat.mode })
+      files.set(relative(root, file), { key: fileKey(stat), size: stat.size, mode: stat.mode })
     }
   }
   walk(root, 0)
@@ -100,6 +122,14 @@ function fingerprint(file: string) {
   return createHash('sha256').update(readFileSync(file)).digest('hex')
 }
 
+export function existingDeliverables(root: string, paths: readonly string[]): string[] {
+  return paths.map(path => {
+    const rel = path.split('/').join(sep)
+    if (fingerprint(validateStageTarget(root, rel)) === undefined) throw new Error(`执行成功，但未找到指定的交付文件：${path}`)
+    return path
+  })
+}
+
 export class StagedProject {
   private readonly imported = new Map<string, { source: string; copy: string }>()
   private readonly published = new Map<string, string>()
@@ -141,39 +171,54 @@ export class StagedProject {
       atomicWriteFile(target, readFileSync(source), (file.mode & 0o111) ? 0o777 : 0o666)
       chmodSync(target, (file.mode & 0o111) ? 0o777 : 0o666)
       const st = lstatSync(target)
-      this.imported.set(rel, { source: file.key, copy: `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}` })
+      this.imported.set(rel, { source: file.key, copy: fileKey(st) })
     }
     for (const [rel, file] of scan(this.work, this.limits, true)) {
       if (!this.seen.has(rel) || this.imported.get(rel)?.copy === file.key) this.seen.set(rel, file.key)
     }
   }
 
-  publish(sessionId: string): string[] {
+  /** Snapshot the destinations before running the approved container. */
+  planDelivery(paths?: string[]): ReadonlyMap<string, string | undefined> {
+    return new Map(validateDeliverablePaths(paths).map(path => {
+      const rel = path.split('/').join(sep)
+      return [rel, fingerprint(validateStageTarget(this.root, rel))]
+    }))
+  }
+
+  publish(sessionId: string, delivery?: ReadonlyMap<string, string | undefined>): string[] {
     const output = join('evoscholar-out', sessionId)
     const pending: { rel: string; file: File; dest: string; target: string; source: string; old?: string; next?: string }[] = []
     const destinations = new Set<string>()
-    for (const [rel, file] of scan(this.work, this.limits, true)) {
-      if (this.seen.get(rel) === file.key) continue
-      const dest = contained(output, rel) ? rel : join(output, rel)
+    const files = scan(this.work, this.limits, true)
+    for (const rel of delivery?.keys() ?? []) {
+      if (!files.has(rel)) throw new Error(`执行成功，但未找到指定的交付文件：${rel}`)
+    }
+    for (const [rel, file] of files) {
+      const explicit = delivery?.has(rel)
+      if (!explicit && this.seen.get(rel) === file.key) continue
+      const dest = explicit || contained(output, rel) ? rel : join(output, rel)
       const target = validateStageTarget(this.root, dest)
       const source = validateStageTarget(this.work, rel)
-      const key = process.platform === 'win32' || process.platform === 'darwin' ? dest.toLowerCase() : dest
+      const key = pathKey(dest)
       if (destinations.has(key)) throw new Error(`多个容器文件对应同一交付路径：${dest}`)
       destinations.add(key)
       const old = fingerprint(target)
       const next = fingerprint(source)
-      if (old !== next && old && old !== this.published.get(dest))
+      if (explicit && old !== delivery?.get(rel)) throw new Error(`交付文件在容器运行期间已被修改：${dest}`)
+      if (!explicit && old !== next && old && old !== this.published.get(dest))
         throw new Error(`交付路径已有不同内容：${dest}`)
       pending.push({ rel, file, dest, target, source, old, next })
     }
     const published: string[] = []
     for (const { rel, file, dest, target, source, old, next } of pending) {
       if (old !== next) {
-        if (fingerprint(target) !== old) throw new Error(`交付文件在回写前已被修改：${dest}`)
+        if (fingerprint(validateStageTarget(this.root, dest)) !== old) throw new Error(`交付文件在回写前已被修改：${dest}`)
         mkdirSync(dirname(target), { recursive: true })
         atomicWriteFile(target, readFileSync(source))
-        published.push(dest)
       }
+      if (old !== next || delivery?.has(rel)) published.push(dest)
+      if (delivery?.has(rel)) this.imported.set(rel, { source: fileKey(lstatSync(target)), copy: file.key })
       if (next) this.published.set(dest, next)
       this.seen.set(rel, file.key)
     }
