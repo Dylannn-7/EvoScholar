@@ -1,4 +1,6 @@
 import { test } from 'node:test'
+import { checkGatewayIp } from './gateway'
+
 import assert from 'node:assert/strict'
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -7,7 +9,7 @@ import type { ModelEvent } from '@evoscholar/harness'
 import {
   addProject, createGeminiModel, createModel, endpointFor, indexFiles, listDirs, listLibrary, listProviders, modelFor,
   openRuntime, openWorkspace, parseModelList, permissionGate, projectFiles, providerInfo, saveSettings, setDeliverable,
-  shellFor, testProviderConnection, usageBy, usageTotals, type HarnessGenome
+  shellFor, fetchProviderModels, testProviderConnection, usageBy, usageTotals, type EvoConfig, type HarnessGenome
 } from './index'
 
 const REPO = resolve(__dirname, '../../..')
@@ -68,7 +70,7 @@ test('Azure-style api-key header replaces Bearer; connection test reads the repl
   try {
     process.env.AZURE_API_KEY = 'az-key'
     const ws = openWorkspace(dir)
-    ws.settings.providers.azure = { baseUrl: 'https://res.openai.azure.com/openai/v1', models: [{ id: 'gpt-dep' }] }
+    ws.settings.providers.azure = { baseUrl: 'https://res.openai.azure.com/openai/v1', gatewayApproval: { base: 'https://res.openai.azure.com/openai/v1', privateAccess: false }, credentialOrigin: 'https://res.openai.azure.com', models: [{ id: 'gpt-dep' }] }
     saveSettings(ws)
     let seen: { url: string; headers: Headers; body: Record<string, unknown> } | undefined
     const fetchMock = (async (url: string, init: RequestInit) => {
@@ -188,6 +190,8 @@ test('projects, folder picker, library index and token usage', () => {
     const rt = openRuntime(openWorkspace(dir))
     assert.throws(() => addProject(rt.ws, rt.db, homedir()), /主目录/)
     assert.throws(() => addProject(rt.ws, rt.db, rt.ws.dataDir), /数据目录/)
+    assert.throws(() => addProject(rt.ws, rt.db, rt.ws.root), /程序目录/)
+    assert.throws(() => addProject(rt.ws, rt.db, join(rt.ws.root, 'genomes')), /程序目录/)
     assert.throws(() => addProject(rt.ws, rt.db, 'relative/path'), /绝对路径/)
     mkdirSync(join(proj, 'paper', 'figs'), { recursive: true })
     mkdirSync(join(proj, 'node_modules', 'x'), { recursive: true })
@@ -257,4 +261,249 @@ test('evolution approval still calls the user in completely permissive mode', as
   assert.equal(await gate?.('run_skill', 'fixture', 'evolution'), false)
   assert.equal(asked, 1)
   assert.equal(await permissionGate(() => 'bypass')?.('run_skill', 'fixture', 'evolution'), false)
+})
+
+test('custom HTTPS supports proxy fake-IP and denies unapproved private or link-local destinations', () => {
+  const publicGateway = new URL('https://gateway.example/v1')
+  assert.doesNotThrow(() => checkGatewayIp(publicGateway, '198.18.9.2', 4317, false))
+  assert.throws(() => checkGatewayIp(publicGateway, '192.168.1.10', 4317, false), /授权/)
+  assert.doesNotThrow(() => checkGatewayIp(publicGateway, '192.168.1.10', 4317, true))
+  assert.throws(() => checkGatewayIp(publicGateway, '169.254.1.2', 4317, true), /链路本地/)
+  assert.throws(() => checkGatewayIp(publicGateway, '::ffff:169.254.1.2', 4317, true), /链路本地/)
+  assert.throws(() => checkGatewayIp(new URL('http://127.0.0.1:4317'), '127.0.0.1', 4317, true), /工作台/)
+})
+
+test('fixed public presets keep the injected transport, and a custom public gateway uses the authorized root', async (t) => {
+  const old = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'fixture-key'
+  t.after(() => {
+    if (old === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = old
+  })
+  const config = { providers: {} } as EvoConfig
+  const fixed = await fetchProviderModels(config, 'deepseek', async (input, init) => {
+    assert.equal(new URL(String(input)).hostname, 'api.deepseek.com')
+    assert.equal(init?.redirect, 'error')
+    return Response.json({ data: [{ id: 'fixture' }] })
+  })
+  assert.equal(fixed.ok, true)
+  const base = 'https://gateway.example/v1'
+  config.providers.fixture = {
+    baseUrl: base, apiKeyEnv: 'DEEPSEEK_API_KEY', credentialOrigin: new URL(base).origin,
+    gatewayApproval: { base, privateAccess: false }
+  }
+  const custom = await fetchProviderModels(config, 'fixture', async (input) => {
+    const url = new URL(String(input))
+    assert.doesNotThrow(() => checkGatewayIp(url, '198.18.0.9', 4317, false))
+    assert.equal(url.pathname, '/v1/models')
+    return Response.json({ data: [{ id: 'fixture' }] })
+  })
+  assert.equal(custom.ok, true)
+})
+
+test('usageTotals aggregates beyond the 400-model grouping limit and counts only everyday usage', () => {
+  const dir = tempWorkspace()
+  try {
+    const rt = openRuntime(openWorkspace(dir))
+    const ts = new Date().toISOString()
+    rt.db.prepare(`INSERT INTO sessions (id, created_at, genome_id, title, category) VALUES ('s-dev', ?, 'g-0007', 'dev', 'dev')`).run(ts)
+    const stmt = rt.db.prepare(`INSERT INTO ledger (ts, category, kind, provider, model, session_id, input_tokens, cache_read_tokens, output_tokens, cost_usd, cost_cny)
+      VALUES (?, 'usage', 'model', 'openai', ?, NULL, 10, 2, 5, 0, 0)`)
+    rt.db.exec('BEGIN')
+    for (let i = 0; i < 450; i++) stmt.run(ts, `openai/m-${i}`)
+    rt.db.prepare(`INSERT INTO ledger (ts, category, kind, provider, model, session_id, input_tokens, cache_read_tokens, output_tokens, cost_usd, cost_cny)
+      VALUES (?, 'usage', 'model', 'openai', 'openai/dev-only', 's-dev', 9999, 0, 9999, 0, 0)`).run(ts)
+    // Offline evolution and dev runs are developer spend, not the user's everyday usage.
+    for (const category of ['evolution', 'dev'])
+      rt.db.prepare(`INSERT INTO ledger (ts, category, kind, provider, model, session_id, input_tokens, cache_read_tokens, output_tokens, cost_usd, cost_cny)
+        VALUES (?, ?, 'model', 'deepseek', 'deepseek/deepseek-flash', NULL, 14000000, 12000000, 600000, 0, 0)`).run(ts, category)
+    rt.db.exec('COMMIT')
+    assert.equal(usageBy(rt.db, 'model').length, 400)
+    const totals = usageTotals(rt.db, 7)
+    assert.equal(totals.requests, 450)
+    assert.equal(totals.inputTokens, 4500)
+    assert.equal(totals.cacheReadTokens, 900)
+    assert.equal(totals.outputTokens, 2250)
+    rt.db.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('testProviderConnection records sessionless token usage without cost', async (t) => {
+  const dir = tempWorkspace()
+  const old = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'probe-key'
+  t.after(() => {
+    if (old === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = old
+  })
+  const rt = openRuntime(openWorkspace(dir))
+  // Windows cannot delete an open database file: close first, then remove.
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  const fetchMock = (async () => sse([
+    { choices: [{ index: 0, delta: { role: 'assistant', content: 'OK' }, finish_reason: null }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    { choices: [], usage: { prompt_tokens: 18, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 6 } } }
+  ], true)) as unknown as typeof fetch
+  const res = await testProviderConnection(rt.ws.config, 'deepseek/deepseek-flash', { fetch: fetchMock, ledger: rt.ledger })
+  assert.equal(res.ok, true)
+  const rows = rt.db.prepare(`SELECT category, kind, provider, model, session_id, input_tokens, cache_read_tokens, output_tokens, cost_usd, cost_cny FROM ledger`).all() as Record<string, unknown>[]
+  assert.equal(rows.length, 1)
+  assert.deepEqual({ ...rows[0] }, {
+    category: 'usage', kind: 'model', provider: 'deepseek', model: 'deepseek/deepseek-flash',
+    session_id: null, input_tokens: 18, cache_read_tokens: 6, output_tokens: 3, cost_usd: 0, cost_cny: 0
+  })
+  const bySession = usageBy(rt.db, 'session', { days: 7 })
+  assert.equal(bySession.length, 1)
+  assert.equal(bySession[0].label, '（无会话）')
+  assert.equal(bySession[0].inputTokens, 18)
+  assert.equal(usageTotals(rt.db, 7).requests, 1)
+})
+
+test('Azure api-version appends query param only when configured and rejects invalid values', async (t) => {
+  const dir = tempWorkspace()
+  const old = process.env.AZURE_API_KEY
+  process.env.AZURE_API_KEY = 'az-ver-key'
+  t.after(() => {
+    if (old === undefined) delete process.env.AZURE_API_KEY
+    else process.env.AZURE_API_KEY = old
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const ws = openWorkspace(dir)
+  const base = 'https://res.openai.azure.com/openai/deployments/my-dep'
+  ws.settings.providers.azure = {
+    baseUrl: base,
+    gatewayApproval: { base, privateAccess: false },
+    credentialOrigin: 'https://res.openai.azure.com',
+    models: [{ id: 'my-dep' }]
+  }
+  saveSettings(ws)
+
+  const seenUrls: string[] = []
+  const okChat = async (url: string | URL | Request) => {
+    seenUrls.push(String(url))
+    return sse([
+      { choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      { choices: [], usage: { prompt_tokens: 5, completion_tokens: 1 } }
+    ], true)
+  }
+  const okModels = async (url: string | URL | Request) => {
+    seenUrls.push(String(url))
+    return Response.json({ data: [{ id: 'my-dep' }] })
+  }
+
+  // Without apiVersion: URL has no api-version query parameter.
+  assert.equal((await testProviderConnection(ws.config, 'azure/my-dep', { fetch: okChat as typeof fetch })).ok, true)
+  assert.equal((await fetchProviderModels(ws.config, 'azure', okModels as typeof fetch)).ok, true)
+  assert.equal(seenUrls[0], `${base}/chat/completions`)
+  assert.equal(seenUrls[1], `${base}/models`)
+
+  // With apiVersion: both chat and /models append ?api-version=<value>.
+  ws.settings.providers.azure.apiVersion = '2024-10-21'
+  saveSettings(ws)
+  assert.equal((await testProviderConnection(ws.config, 'azure/my-dep', { fetch: okChat as typeof fetch })).ok, true)
+  assert.equal((await fetchProviderModels(ws.config, 'azure', okModels as typeof fetch)).ok, true)
+  assert.equal(seenUrls[2], `${base}/chat/completions?api-version=2024-10-21`)
+  assert.equal(seenUrls[3], `${base}/models?api-version=2024-10-21`)
+
+  // Invalid apiVersion is rejected.
+  ws.settings.providers.azure.apiVersion = '2024-10-21&evil=1'
+  saveSettings(ws)
+  assert.throws(() => createModel(ws.config, 'azure/my-dep', { fetch: okChat as typeof fetch }), /API 版本格式/)
+  const badModels = await fetchProviderModels(ws.config, 'azure', okModels as typeof fetch)
+  assert.equal(badModels.ok, false)
+})
+
+test('numeric thinking budgets map from string efforts for Gemini and Messages while keeping string protocols unchanged', async (t) => {
+  const dir = tempWorkspace()
+  const keys = ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY'] as const
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
+  for (const k of keys) process.env[k] = 'fixture-key'
+  t.after(() => {
+    for (const k of keys) {
+      if (prev[k] === undefined) delete process.env[k]
+      else process.env[k] = prev[k]
+    }
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const ws = openWorkspace(dir)
+  ws.settings.providers.anthropic = {
+    models: [{ id: 'claude-opus-5-5', maxOutputTokens: 128000 }, { id: 'claude-sonnet-4-20250514', maxOutputTokens: 64000 },
+      { id: 'claude-opus-6', maxOutputTokens: 128000 }, { id: 'claude-sonnet-4-6', maxOutputTokens: 64000 }]
+  }
+  ws.settings.providers.kimi = { protocol: 'messages', apiKeyEnv: 'DEEPSEEK_API_KEY', models: [{ id: 'kimi-k2' }] }
+  saveSettings(ws)
+
+  const captureBody = async (ref: string, effort: string, maxOutputTokens: number, reply: Response) => {
+    let body: Record<string, any> | undefined
+    const model = createModel(ws.config, ref, {
+      effort,
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        body = JSON.parse(String(init?.body))
+        return reply
+      }) as typeof fetch
+    })
+    await drain(model.stream({
+      requestId: `eff-${ref}`, instructions: 'sys',
+      messages: [{ id: 'u1', role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      tools: [], maxOutputTokens
+    }, new AbortController().signal))
+    return body!
+  }
+
+  const gemReply = () => sse([{ candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 1 } }])
+  const msgReply = () => sse([
+    { type: 'message_start', message: { usage: { input_tokens: 5, output_tokens: 0 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+    { type: 'message_stop' }
+  ])
+  const respReply = () => sse([
+    { type: 'response.created', response: { id: 'r1' } },
+    { type: 'response.output_text.delta', delta: 'ok' },
+    { type: 'response.completed', response: { id: 'r1', usage: { input_tokens: 5, output_tokens: 1 } } }
+  ])
+  const chatReply = () => sse([
+    { choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    { choices: [], usage: { prompt_tokens: 5, completion_tokens: 1 } }
+  ], true)
+
+  // Gemini 2.5 maps string effort -> thinkingBudget and clamps to request.maxOutputTokens.
+  const g25Med = await captureBody('gemini/gemini-2.5-pro', 'medium', 8192, gemReply())
+  assert.equal(g25Med.generationConfig.thinkingConfig.thinkingBudget, 4096)
+  const g25Clamp = await captureBody('gemini/gemini-2.5-pro', 'high', 2048, gemReply())
+  assert.equal(g25Clamp.generationConfig.thinkingConfig.thinkingBudget, 2047)
+  // Gemini 3 keeps string thinkingLevel.
+  const g3High = await captureBody('gemini/gemini-3-pro-preview', 'high', 8192, gemReply())
+  assert.equal(g3High.generationConfig.thinkingConfig.thinkingLevel, 'high')
+
+  // Anthropic budget-based Claude 4 maps string effort -> thinking.budget_tokens and clamps to max_tokens.
+  const c4Low = await captureBody('anthropic/claude-sonnet-4-20250514', 'low', 8192, msgReply())
+  assert.deepEqual(c4Low.thinking, { type: 'enabled', budget_tokens: 1024 })
+  const c4Clamp = await captureBody('anthropic/claude-sonnet-4-20250514', 'high', 2048, msgReply())
+  assert.deepEqual(c4Clamp.thinking, { type: 'enabled', budget_tokens: 2047 })
+  // Anthropic adaptive Claude 5 keeps existing adaptive + output_config.effort format.
+  const c5High = await captureBody('anthropic/claude-opus-5-5', 'high', 8192, msgReply())
+  assert.deepEqual(c5High.thinking, { type: 'adaptive' })
+  assert.deepEqual(c5High.output_config, { effort: 'high' })
+  // Unknown or newer models keep the request shape that worked before; only known legacy families get budgets.
+  assert.equal((await captureBody('gemini/gemini-4-pro', 'high', 8192, gemReply())).generationConfig.thinkingConfig.thinkingLevel, 'high')
+  assert.deepEqual((await captureBody('anthropic/claude-opus-6', 'high', 8192, msgReply())).thinking, { type: 'adaptive' })
+  assert.deepEqual((await captureBody('anthropic/claude-sonnet-4-6', 'low', 8192, msgReply())).thinking, { type: 'adaptive' })
+  // Anthropic rejects budgets below 1024, so a tiny per-request max_tokens turns thinking off instead.
+  assert.deepEqual((await captureBody('anthropic/claude-sonnet-4-20250514', 'high', 1000, msgReply())).thinking, { type: 'disabled' })
+  // Anthropic-compatible vendor endpoints keep receiving the old shape without a budget.
+  assert.deepEqual((await captureBody('kimi/kimi-k2', 'high', 8192, msgReply())).thinking, { type: 'enabled' })
+
+  // String-effort protocols (Responses, Chat Completions) remain unchanged.
+  const oaResp = await captureBody('openai/gpt-5.4', 'medium', 4096, respReply())
+  assert.deepEqual(oaResp.reasoning, { effort: 'medium' })
+  const dsChat = await captureBody('deepseek/deepseek-flash', 'high', 4096, chatReply())
+  assert.equal(dsChat.reasoning_effort, 'high')
+  assert.deepEqual(dsChat.thinking, { type: 'enabled' })
 })

@@ -71,6 +71,16 @@ export function listLibrary(db: Db, f: { projectId?: string; sessionId?: string;
     .filter((r) => !f.type || r.type === f.type)
 }
 
+/** Counts for the library sidebar over every indexed file, independent of the listing limit. */
+export function libraryCounts(db: Db) {
+  const t = db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(deliverable), 0) AS deliverable,
+      COALESCE(SUM(CASE WHEN kind = 'upload' THEN 1 ELSE 0 END), 0) AS upload,
+      COALESCE(SUM(CASE WHEN project_id IS NULL THEN 1 ELSE 0 END), 0) AS drafts FROM library`).get() as Record<string, number>
+  const projects = Object.fromEntries((db.prepare(`SELECT project_id AS id, COUNT(*) AS n FROM library
+      WHERE project_id IS NOT NULL GROUP BY project_id`).all() as { id: string; n: number }[]).map((r) => [r.id, Number(r.n)]))
+  return { total: Number(t.total), deliverable: Number(t.deliverable), upload: Number(t.upload), drafts: Number(t.drafts), projects }
+}
+
 export function setDeliverable(db: Db, id: number, on: boolean): void {
   db.prepare('UPDATE library SET deliverable = ? WHERE id = ?').run(on ? 1 : 0, id)
 }

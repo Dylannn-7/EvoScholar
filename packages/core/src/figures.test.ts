@@ -63,7 +63,7 @@ test('check_feedback records verdicts from a manuscript_check report; stats comp
     findings: [{ id: 'F001', rule: 'common.units', pack: 'common', loc: 'main.tex:3', message: 'm' }, { id: 'F002', rule: 'common.units', pack: 'common', loc: 'main.tex:4', message: 'm' }]
   }))
   const events: Record<string, unknown>[] = []
-  const env = { ws: { root: REPO }, cwd, trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
+  const env = { ws: { root: REPO, dataDir: join(REPO, 'data') }, cwd, trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
   const tool = TOOL_FACTORIES.check_feedback(env)
   const r = (await tool.execute(tool.validate!({ ids: ['F002', 'F009'], verdict: 'false_positive', note: '单位是变量名' }) as never, {} as never)) as { content: { text: string }[] }
   assert.match(r.content[0].text, /已记录 1 条为「误报」：F002（common\.units）/)

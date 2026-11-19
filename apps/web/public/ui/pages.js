@@ -1,9 +1,11 @@
 // Pages: plugins, library (资料空间), usage, trajectory.
 import { go, store } from '../app.js'
-import { ago, api, fmtSize, fmtTokens, patch, post } from './api.js'
+import { ago, api, apiFetch, del, fmtSize, fmtTokens, loadApiImages, patch, post, put } from './api.js'
 import { icon } from './icons.js'
 import { confirmDialog, esc, openModal, promptDialog, toast } from './modal.js'
 import { openFilePreviewModal } from './review.js'
+import { chooseFolder } from './folder-picker.js'
+import { md } from './markdown.js'
 
 const shell = (root, title, desc, actions = '') => {
   root.innerHTML = `<div class="page glass dark"><div class="page-head"><h1>${title}</h1><div class="page-actions">${actions}</div>${desc ? `<div class="desc">${desc}</div>` : ''}</div><div class="page-body"></div></div>`
@@ -16,7 +18,7 @@ const srcBadge = (s) => { const [l, c] = SOURCE[s || 'builtin']; return `<span c
 let pluginTab = 'skills'
 export async function renderPlugins (root, arg) {
   if (typeof arg === 'string' && ['skills', 'tools', 'rules', 'styles'].includes(arg)) pluginTab = arg
-  const body = shell(root, '插件', '技能、工具、规则包和出图风格。进化沉淀出的可执行技能和规则会出现在这里；也可以导入外部技能（Anthropic Agent Skills 格式）。',
+  const body = shell(root, '插件', '',
     '<button class="btn primary small" id="importSkill" type="button">导入技能</button>')
   root.querySelector('#importSkill').onclick = () => importDialog(root)
   const [c, ur, st] = await Promise.all([api('/api/capabilities'), api('/api/plugins/rules'), api('/api/styles').catch(() => ({ styles: [], current: null }))])
@@ -26,10 +28,10 @@ export async function renderPlugins (root, arg) {
     body.innerHTML = `<div class="toolbar"><div class="seg">${[['skills', '技能'], ['tools', '工具'], ['rules', '规则包'], ['styles', '出图风格']].map(([id, l]) => `<button type="button" class="${pluginTab === id ? 'on' : ''}" data-t="${id}">${l} ${counts[id]}</button>`).join('')}</div></div><div id="pl"></div>`
     const pl = body.querySelector('#pl')
     if (pluginTab === 'skills') {
-      pl.innerHTML = `<div class="cards">${c.skills.map((s) => `<div class="pcard ${s.enabled || s.kernel ? '' : 'off'}" data-skill="${esc(s.name)}"><div class="top">${icon(s.kernel ? 'code' : 'plugins', 16)}<span class="nm">${esc(s.name)}</span>${srcBadge(s.source)}${s.kernel ? `<span class="badge ${s.status === 'active' ? 'ok' : 'warn'}">${s.status === 'active' ? '已转正' : '试用'}</span>` : ''}</div>
+      pl.innerHTML = `<div class="cards">${c.skills.map((s) => `<div class="pcard ${(s.kernel ? !s.disabled : s.enabled) ? '' : 'off'}" data-skill="${esc(s.name)}"><div class="top">${icon(s.kernel ? 'code' : 'plugins', 16)}<span class="nm">${esc(s.name)}</span>${srcBadge(s.source)}${s.source === 'imported' && s.trusted ? '<span class="badge ok">已信任</span>' : ''}${s.kernel ? `<span class="badge ${s.status === 'active' ? 'ok' : 'warn'}">${s.status === 'active' ? '已转正' : '试用'}</span>` : ''}</div>
         <div class="ds">${esc(s.description || '')}</div>
         <div class="ft"><span>v${s.activeVersion ?? s.version}</span>${s.kernel ? `<span>复用 ${s.reuses || 0} 次</span>` : ''}${s.license ? (/^https?:/.test(s.license) ? `<a class="muted" href="${esc(s.license)}" target="_blank" rel="noopener">许可证</a>` : `<span>${esc(s.license.replace(/ license$/i, ''))}</span>`) : ''}${s.origin && s.origin.startsWith('http') ? `<a class="muted" href="${esc(s.origin)}" target="_blank" rel="noopener">来源</a>` : ''}
-          <span class="page-actions">${s.source !== 'builtin' ? `<button class="icon-btn" data-del="${esc(s.name)}" title="删除" type="button">${icon('trash', 14)}</button>` : ''}${s.kernel ? '<span class="faint">所有会话可用</span>' : sw(s.enabled, `data-en="${esc(s.name)}"`)}</span></div></div>`).join('')}</div>`
+          <span class="page-actions">${s.source !== 'builtin' ? `<button class="icon-btn" data-del="${esc(s.name)}" title="删除" type="button">${icon('trash', 14)}</button>` : ''}${s.kernel ? sw(!s.disabled, `data-ken="${esc(s.name)}"`) : sw(s.enabled, `data-en="${esc(s.name)}"`)}</span></div></div>`).join('')}</div>`
     } else if (pluginTab === 'tools') {
       pl.innerHTML = `<div class="cards">${c.tools.map((t) => `<div class="pcard ${t.enabled ? '' : 'off'}"><div class="top">${icon('code', 16)}<span class="nm"><code>${esc(t.name)}</code></span>${srcBadge(t.source)}</div>
         <div class="ds">${esc(t.description)}</div><div class="ft">${t.enabled ? '<span class="badge ok">已启用</span>' : '<span class="badge">未启用</span>'}</div></div>`).join('')}</div>`
@@ -45,30 +47,35 @@ export async function renderPlugins (root, arg) {
         ${fb.size ? `<div class="section-t">规则反馈（误报 / 有效）</div><div class="bars">${[...fb.values()].slice(0, 20).map((x) => `<div class="bar-row"><span class="l"><code>${esc(x.rule)}</code></span><span class="tr"><i class="c-out" style="width:${(100 * (x.valid || 0)) / Math.max(1, x.total || 1)}%"></i><i style="background:var(--danger);width:${(100 * (x.false_positive || 0)) / Math.max(1, x.total || 1)}%"></i></span><span class="n">${x.false_positive || 0} / ${x.valid || 0}</span></div>`).join('')}</div>` : ''}`
     } else {
       const groups = [...new Set(st.styles.map((x) => x.group))]
-      pl.innerHTML = `<p class="muted" style="margin-top:-4px">风格决定图的外观，期刊规则包决定尺寸和字号；两者组合使用。设为默认后，新会话出图会优先用它（你在对话里另有要求时以对话为准）。</p>
+      pl.innerHTML = `
         ${groups.map((g) => `<div class="section-t">${esc(g)}</div><div class="cards style-cards">${st.styles.filter((x) => x.group === g).map((x) => `<div class="pcard style ${st.current === x.id ? 'cur' : ''}" data-style="${esc(x.id)}">
-          <div class="sprev"><img loading="lazy" src="/api/styles/${esc(x.id)}/preview?v=2" alt="${esc(x.label)} 样图"></div>
+          <div class="sprev"><img loading="lazy" data-api-image="/api/styles/${esc(x.id)}/preview?v=2" alt="${esc(x.label)} 样图"></div>
           <div class="top"><span class="nm">${esc(x.label)}</span><span class="badge">${esc(x.library)}</span>${st.current === x.id ? '<span class="badge accent">默认</span>' : ''}</div>
           <div class="ds">${esc(x.description)}</div>
           ${styleFacts(x.meta)}
           <div class="ft"><code>${esc(x.id)}</code><span>${esc(x.license)}</span>${x.cite ? `<span title="${esc(x.cite)}">需引用</span>` : ''}<span class="page-actions"><button class="btn ghost small" data-copy="${esc(x.id)}" type="button">复制用法</button>${st.current === x.id ? '<button class="btn ghost small" data-def="" type="button">取消默认</button>' : `<button class="btn primary small" data-def="${esc(x.id)}" type="button">设为默认</button>`}</span></div></div>`).join('')}</div>`).join('')}`
     }
+    loadApiImages(pl)
   }
   draw()
   body.onclick = async (e) => {
     const t = e.target.closest('[data-t]'); if (t) { pluginTab = t.dataset.t; return draw() }
     const sl = e.target.closest('[data-sess]'); if (sl) { go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: sl.dataset.sess })) }
     try {
+      const ken = e.target.closest('[data-ken]')
+      if (ken) { await patch(`/api/plugins/skills/${ken.dataset.ken}`, { kernelEnabled: !ken.classList.contains('on') }); return renderPlugins(root) }
       const en = e.target.closest('[data-en]')
       if (en) { await patch(`/api/plugins/skills/${en.dataset.en}`, { enabled: !en.classList.contains('on') }); await store.refresh(); toast('已更新，生成了新的 harness 版本', 'ok'); return renderPlugins(root) }
       const d = e.target.closest('[data-del]')
-      if (d) { if (!(await confirmDialog({ title: '删除技能', message: `删除 ${d.dataset.del}？`, confirmText: '删除', danger: true }))) return; await fetch(`/api/plugins/skills/${d.dataset.del}`, { method: 'DELETE', headers: { 'x-evoscholar': '1' } }); return renderPlugins(root) }
+      if (d) { if (!(await confirmDialog({ title: '删除技能', message: `删除 ${d.dataset.del}？`, confirmText: '删除', danger: true }))) return; await del(`/api/plugins/skills/${d.dataset.del}`); return renderPlugins(root) }
       const rs = e.target.closest('[data-rs]')
       if (rs) { await patch(`/api/plugins/rules/${rs.closest('[data-rule]').dataset.rule}`, { status: rs.dataset.rs }); return renderPlugins(root) }
       const rd = e.target.closest('[data-rdel]')
-      if (rd) { await fetch(`/api/plugins/rules/${rd.closest('[data-rule]').dataset.rule}`, { method: 'DELETE', headers: { 'x-evoscholar': '1' } }); return renderPlugins(root) }
+      if (rd) { await del(`/api/plugins/rules/${rd.closest('[data-rule]').dataset.rule}`); return renderPlugins(root) }
+      const card = e.target.closest('.pcard[data-skill]')
+      if (card && !e.target.closest('button, a, input')) return openSkillDetail(root, card.dataset.skill)
       const df = e.target.closest('[data-def]')
-      if (df) { await fetch('/api/settings/defaults', { method: 'PUT', headers: { 'content-type': 'application/json', 'x-evoscholar': '1' }, body: JSON.stringify({ figureStyle: df.dataset.def }) }); toast(df.dataset.def ? '已设为默认出图风格' : '已取消默认', 'ok'); return renderPlugins(root) }
+      if (df) { await put('/api/settings/defaults', { figureStyle: df.dataset.def }); toast(df.dataset.def ? '已设为默认出图风格' : '已取消默认', 'ok'); return renderPlugins(root) }
       const cp = e.target.closest('[data-copy]')
       if (cp) { await navigator.clipboard.writeText(`import evoscholar_styles as S\nS.use('${cp.dataset.copy}', venue='nature')`); toast('已复制', 'ok') }
     } catch (err) { toast(err.message, 'err') }
@@ -90,11 +97,51 @@ function styleFacts (m) {
   return `<div class="sfacts"><span class="sw">${(m.colors || []).map((c) => `<i style="background:${esc(c)}" title="${esc(c)}"></i>`).join('')}</span><span class="sf">${facts.map(esc).join(' · ')}</span></div>`
 }
 
-function importDialog (root) {
-  let mode = 'github'
+/** Read-only view of one skill: body, revisions, bundled files, forged source; trust and on/off. */
+async function openSkillDetail (root, name) {
+  let d
+  try { d = await api(`/api/plugins/skills/${encodeURIComponent(name)}`) } catch (err) { return toast(err.message, 'err') }
+  const src = d.source || {}
+  const imported = ['github', 'zip', 'folder'].includes(src.type)
+  const kind = src.type === 'forged' ? '锻造' : src.bundled ? '随应用附带' : imported ? '导入' : '内置'
+  openModal({
+    title: name,
+    wide: true,
+    bodyHtml: `
+      <div class="skd-meta"><span class="badge">${kind}</span>${d.versions.map((v) => `<span class="faint">v${v}</span>`).join('')}${src.origin && /^https:\/\//.test(src.origin) ? `<a class="muted" href="${esc(src.origin)}" target="_blank" rel="noopener">来源</a>` : ''}</div>
+      ${d.description ? `<p class="skd-desc">${esc(d.description)}</p>` : ''}
+      ${imported && !src.bundled ? `<label class="inline skd-opt"><input type="checkbox" id="skTrust" ${src.trusted ? 'checked' : ''}> 信任这个技能</label>` : ''}
+      ${src.type === 'forged' ? `<label class="inline skd-opt"><input type="checkbox" id="skKernel" ${src.disabled ? '' : 'checked'}> 启用</label>` : ''}
+      <div class="msg assistant skd-body">${md(d.body || '')}</div>
+      ${d.kernel ? Object.entries(d.kernel).map(([file, code]) => `<h4 class="skd-h">${esc(file)}</h4><pre class="skd-code">${esc(code)}</pre>`).join('') : ''}
+      ${d.files.length ? `<h4 class="skd-h">附带文件</h4><div class="skd-files">${d.files.map((f) => `<button type="button" class="skd-file" data-f="${esc(f.path)}" ${f.text ? '' : 'disabled'}><span>${esc(f.path)}</span><span class="faint">${fmtSize(f.size)}</span></button>`).join('')}</div><pre class="skd-code" id="skFile" hidden></pre>` : ''}`,
+    onMount: (el) => {
+      el.querySelector('#skTrust')?.addEventListener('change', async (e) => {
+        try { await patch(`/api/plugins/skills/${name}`, { trusted: e.target.checked }); renderPlugins(root) } catch (err) { e.target.checked = !e.target.checked; toast(err.message, 'err') }
+      })
+      el.querySelector('#skKernel')?.addEventListener('change', async (e) => {
+        try { await patch(`/api/plugins/skills/${name}`, { kernelEnabled: e.target.checked }); renderPlugins(root) } catch (err) { e.target.checked = !e.target.checked; toast(err.message, 'err') }
+      })
+      el.querySelector('.skd-files')?.addEventListener('click', async (e) => {
+        const b = e.target.closest('[data-f]')
+        if (!b || b.disabled) return
+        try {
+          const r = await api(`/api/plugins/skills/${name}/file?path=${encodeURIComponent(b.dataset.f)}`)
+          const pre = el.querySelector('#skFile')
+          pre.hidden = false
+          pre.textContent = r.text
+          el.querySelectorAll('.skd-file').forEach((x) => x.classList.toggle('on', x === b))
+        } catch (err) { toast(err.message, 'err') }
+      })
+    }
+  })
+}
+
+function importDialog (root, preset = {}) {
+  let mode = preset.mode || 'github'
   openModal({
     title: '导入技能',
-    bodyHtml: `<p class="modal-msg">支持 Anthropic Agent Skills 格式：一个包含 SKILL.md（带 name、description 的 frontmatter）的文件夹，可附带 references/、scripts/、assets/。导入后默认启用；附带脚本只供智能体阅读，运行仍按权限模式确认。</p>
+    bodyHtml: `
       <div class="seg" id="im" style="margin:6px 0 14px"><button type="button" class="on" data-m="github">GitHub</button><button type="button" data-m="zip">zip 文件</button><button type="button" data-m="folder">本地文件夹</button></div>
       <div id="imBody"></div>
       <label class="inline" style="margin-top:6px;font-size:12px;color:var(--text-2)"><input type="checkbox" id="imReplace"> 已存在时覆盖更新</label>
@@ -105,9 +152,17 @@ function importDialog (root) {
         el.querySelector('#imBody').innerHTML = mode === 'github'
           ? '<input class="input" id="imUrl" placeholder="https://github.com/<owner>/<repo>/tree/main/skills/<name>" spellcheck="false">'
           : mode === 'zip' ? '<input class="input" id="imZip" type="file" accept=".zip" style="padding-top:6px">'
-            : '<input class="input" id="imFolder" placeholder="技能文件夹的完整路径（里面有 SKILL.md）" spellcheck="false">'
+            : `<div class="inline"><input class="input" id="imFolder" placeholder="技能文件夹路径" spellcheck="false" value="${esc(preset.folder || '')}"><button class="btn ghost small" id="imPick" type="button">选择…</button></div>`
       }
       el.querySelector('#im').onclick = (e) => { const b = e.target.closest('[data-m]'); if (b) { mode = b.dataset.m; drawBody() } }
+      // Only one dialog shows at a time: close this one, pick, then reopen with the chosen folder.
+      el.querySelector('#imBody').addEventListener('click', async (e) => {
+        if (!e.target.closest('#imPick')) return
+        const current = el.querySelector('#imFolder').value.trim()
+        close()
+        const folder = await chooseFolder({ title: '选择技能文件夹', start: current || null })
+        importDialog(root, { mode: 'folder', folder: folder || current })
+      })
       drawBody()
       el.querySelector('#imGo').onclick = async (e) => {
         const btn = e.target
@@ -131,62 +186,144 @@ function importDialog (root) {
 }
 
 // ---------------------------------------------------------------- library
-const lib = { project: '', session: '', type: '', q: '', deliverable: false }
+// Three panes: scopes (all, deliverables, uploads, projects), files grouped by session, preview.
+const lib = { scope: 'all', session: '', type: '', q: '', selected: 0, view: (() => { try { return localStorage.getItem('evo.libView') || 'grid' } catch { return 'grid' } })() }
+const IMG_FILE = /\.(png|jpe?g|gif|webp|svg)$/i
+const typeIcon = (t) => (t === 'data' ? 'data' : t === 'code' ? 'code' : t === 'figure' ? 'image' : 'file')
+const baseName = (p) => p.split('/').pop()
+const inScope = (f, scope) => scope === 'all' || (scope === 'deliverable' ? !!f.deliverable
+  : scope === 'upload' ? f.kind === 'upload' : scope === 'drafts' ? !f.project_id : f.project_id === scope.slice(2))
+async function downloadLibraryFile (f) {
+  const res = await apiFetch(`/api/library/${f.id}/file`)
+  if (!res.ok) throw new Error('下载失败')
+  const url = URL.createObjectURL(await res.blob())
+  const a = Object.assign(document.createElement('a'), { href: url, download: baseName(f.path) })
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 export async function renderLibrary (root, arg) {
-  if (arg) Object.assign(lib, { project: arg.project || '', session: arg.session || '' })
-  const body = shell(root, '资料空间', '所有会话产出的文件和你上传的文件。文件留在原处（项目文件夹或草稿目录），这里只建索引，方便随时找到交付物。')
-  const S = store.state
-  const draw = async () => {
-    const qs = new URLSearchParams()
-    for (const [k, v] of Object.entries(lib)) if (v) qs.set(k === 'deliverable' ? 'deliverable' : k, k === 'deliverable' ? '1' : v)
-    const { files } = await api(`/api/library?${qs}`)
-    const sessTitle = lib.session && (S.sessions.find((s) => s.id === lib.session)?.title || lib.session)
-    body.innerHTML = `<div class="toolbar">
-        <div class="search">${icon('search', 15)}<input class="input" id="lq" placeholder="搜索文件名" value="${esc(lib.q)}"></div>
-        <div class="seg">${[['', '全部'], ['figure', '图'], ['document', '文档'], ['data', '数据'], ['code', '代码']].map(([id, l]) => `<button type="button" class="${lib.type === id ? 'on' : ''}" data-type="${id}">${l}</button>`).join('')}</div>
-        <select class="input" id="lp"><option value="">全部项目</option>${S.projects.map((p) => `<option value="${esc(p.id)}" ${lib.project === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}<option value="drafts" ${lib.project === 'drafts' ? 'selected' : ''}>草稿</option></select>
-        <button type="button" class="btn ${lib.deliverable ? 'primary' : 'ghost'} small" id="ld">${icon('star', 14)}只看交付物</button>
-        ${lib.session ? `<button type="button" class="btn ghost small" id="lsx">会话：${esc(sessTitle)} ${icon('close', 12)}</button>` : ''}
-      </div>
-      ${files.length ? `<div class="flist">${files.map((f) => {
-        const img = f.type === 'figure' && /\.(png|jpe?g|gif|webp|svg)$/i.test(f.path) && f.exists
-        return `<div class="frow ${f.exists ? '' : 'missing'}" data-id="${f.id}" data-path="${esc(f.path)}" data-type="${f.type}" title="${esc(f.root)}/${esc(f.path)}">
-          <div class="fi">${img ? `<img src="/api/library/${f.id}/file" loading="lazy" alt="">` : icon(f.type === 'data' ? 'data' : f.type === 'code' ? 'code' : f.type === 'figure' ? 'image' : 'file', 17)}</div>
-          <div class="fn"><b>${esc(f.path.split('/').pop())}</b><span>${esc(f.path)}${f.exists ? '' : ' · 文件已移动或删除'}</span></div>
-          <div class="src">${f.kind === 'upload' ? '上传 · ' : ''}${f.session_id ? `<a data-sess="${esc(f.session_id)}">${esc(f.session_title || f.session_id)}</a>` : ''}<span class="faint"> · ${esc(f.project_name || '草稿')}</span></div>
-          <div class="sz">${fmtSize(f.size)}</div><div class="tm">${esc(ago(f.updated_at))}</div>
-          <button class="icon-btn star ${f.deliverable ? 'on' : ''}" data-star="${f.id}" title="${f.deliverable ? '取消交付物标记' : '标为交付物'}" type="button">${icon('star', 16)}</button></div>`
-      }).join('')}</div>` : '<div class="empty-state"><b>还没有文件</b>会话里生成的图、表、文稿和你上传的文件都会出现在这里。</div>'}`
-    let t
-    body.querySelector('#lq').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { lib.q = e.target.value.trim(); draw() }, 250) }
-    body.querySelector('.seg').onclick = (e) => { const b = e.target.closest('[data-type]'); if (b) { lib.type = b.dataset.type; draw() } }
-    body.querySelector('#lp').onchange = (e) => { lib.project = e.target.value; draw() }
-    body.querySelector('#ld').onclick = () => { lib.deliverable = !lib.deliverable; draw() }
-    body.querySelector('#lsx')?.addEventListener('click', () => { lib.session = ''; draw() })
-    body.querySelector('.flist')?.addEventListener('click', async (e) => {
-      const star = e.target.closest('[data-star]')
-      if (star) { e.stopPropagation(); await patch(`/api/library/${star.dataset.star}`, { deliverable: !star.classList.contains('on') }); return draw() }
-      const s = e.target.closest('[data-sess]')
-      if (s) { e.stopPropagation(); go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: s.dataset.sess })) }
-      const row = e.target.closest('.frow')
-      if (row && !row.classList.contains('missing')) openFilePreviewModal(null, row.dataset.path, `/api/library/${row.dataset.id}/file`)
-    })
+  if (arg) Object.assign(lib, { scope: arg.project ? (arg.project === 'drafts' ? 'drafts' : `p:${arg.project}`) : 'all', session: arg.session || '', selected: 0 })
+  const body = shell(root, '资料空间', '')
+  body.classList.add('lib-body')
+  const LIMIT = 2000
+  let files = []
+  let counts = { total: 0, deliverable: 0, upload: 0, drafts: 0, projects: {} }
+  // The newest files load at once; a search goes to the server so older files are found too.
+  const load = async () => {
+    const r = await api(`/api/library?limit=${LIMIT}${lib.q ? `&q=${encodeURIComponent(lib.q)}` : ''}`)
+    files = r.files
+    counts = r.counts || counts
   }
-  await draw()
+  const draw = () => {
+    const S = store.state
+    const count = (scope) => scope === 'all' ? counts.total : scope === 'deliverable' ? counts.deliverable
+      : scope === 'upload' ? counts.upload : scope === 'drafts' ? counts.drafts : counts.projects[scope.slice(2)] ?? 0
+    const scopes = [['all', '全部', 'library'], ['deliverable', '交付物', 'star'], ['upload', '上传', 'upload']]
+    const projects = [...S.projects.map((p) => [`p:${p.id}`, p.name]), ['drafts', '草稿']].filter(([id]) => count(id))
+    const q = lib.q.toLowerCase()
+    const shown = files.filter((f) => inScope(f, lib.scope) && (!lib.session || f.session_id === lib.session) &&
+      (!lib.type || f.type === lib.type) && (!q || f.path.toLowerCase().includes(q)))
+    const groups = new Map()
+    for (const f of shown) {
+      const key = f.session_id || ''
+      if (!groups.has(key)) groups.set(key, { title: f.session_title || (f.kind === 'upload' ? '上传' : '未归属会话'), project: f.project_name || '草稿', session: f.session_id, latest: f.updated_at, files: [] })
+      const g = groups.get(key); g.files.push(f); if (f.updated_at > g.latest) g.latest = f.updated_at
+    }
+    const ordered = [...groups.values()].sort((a, b) => (a.latest < b.latest ? 1 : -1))
+    const sel = files.find((f) => f.id === lib.selected)
+    const thumb = (f, size) => f.exists && IMG_FILE.test(f.path)
+      ? `<img data-api-image="/api/library/${f.id}/file" loading="lazy" alt="">` : icon(typeIcon(f.type), size)
+    const card = (f) => `<button type="button" class="lcard ${f.id === lib.selected ? 'on' : ''} ${f.exists ? '' : 'missing'}" data-id="${f.id}" title="${esc(f.path)}">
+        <span class="lthumb">${thumb(f, 26)}${f.deliverable ? `<i class="lstar">${icon('star', 12)}</i>` : ''}</span>
+        <span class="lname">${esc(baseName(f.path))}</span><span class="lsub">${fmtSize(f.size)}</span></button>`
+    const row = (f) => `<button type="button" class="lrow ${f.id === lib.selected ? 'on' : ''} ${f.exists ? '' : 'missing'}" data-id="${f.id}" title="${esc(f.path)}">
+        <span class="lfi">${thumb(f, 16)}</span><span class="lname">${esc(baseName(f.path))}</span>
+        <span class="lsub">${f.deliverable ? icon('star', 12) : ''}</span><span class="lsub">${fmtSize(f.size)}</span><span class="lsub">${esc(ago(f.updated_at))}</span></button>`
+    const sessTitle = lib.session && (S.sessions.find((s) => s.id === lib.session)?.title || lib.session)
+    body.innerHTML = `<div class="lib">
+      <nav class="lib-nav">
+        ${scopes.map(([id, label, ic]) => `<button type="button" class="lnav ${lib.scope === id ? 'on' : ''}" data-scope="${id}">${icon(ic, 15)}<span>${label}</span><i>${count(id)}</i></button>`).join('')}
+        ${projects.length ? `<div class="lnav-h">项目</div>${projects.map(([id, label]) => `<button type="button" class="lnav ${lib.scope === id ? 'on' : ''}" data-scope="${esc(id)}">${icon('folder', 15)}<span>${esc(label)}</span><i>${count(id)}</i></button>`).join('')}` : ''}
+      </nav>
+      <section class="lib-main">
+        <div class="lib-bar">
+          <label class="lib-search">${icon('search', 14)}<input id="lq" placeholder="搜索" value="${esc(lib.q)}"></label>
+          <div class="seg">${[['', '全部'], ['figure', '图'], ['document', '文档'], ['data', '数据'], ['code', '代码']].map(([id, l]) => `<button type="button" class="${lib.type === id ? 'on' : ''}" data-type="${id}">${l}</button>`).join('')}</div>
+          <div class="seg lib-view">${[['grid', '网格'], ['list', '列表']].map(([id, l]) => `<button type="button" class="${lib.view === id ? 'on' : ''}" data-view="${id}" aria-label="${l}" title="${l}">${icon(id, 14)}</button>`).join('')}</div>
+        </div>
+        ${!lib.q && counts.total > files.length ? `<p class="faint lib-note">显示最近 ${files.length} 个文件，搜索可查找更早的文件</p>` : ''}
+        ${lib.session ? `<button type="button" class="lib-chip" id="lsx">${esc(sessTitle)} ${icon('close', 11)}</button>` : ''}
+        ${ordered.length ? ordered.map((g) => `<div class="lgroup">
+            <div class="lgroup-h">${g.session ? `<a data-sess="${esc(g.session)}">${esc(g.title)}</a>` : `<span>${esc(g.title)}</span>`}<span class="faint"> · ${esc(g.project)}</span><span class="lgroup-t">${esc(ago(g.latest))}</span></div>
+            <div class="${lib.view === 'grid' ? 'lgrid' : 'llist'}">${g.files.map(lib.view === 'grid' ? card : row).join('')}</div>
+          </div>`).join('') : `<div class="empty-state"><b>${files.length ? '没有匹配的文件' : '还没有文件'}</b></div>`}
+      </section>
+      <aside class="lib-prev">${sel ? `
+        <button type="button" class="lprev-media" data-open="${sel.id}" ${sel.exists ? '' : 'disabled'}>${thumb(sel, 40)}</button>
+        <div class="lprev-name">${esc(baseName(sel.path))}</div>
+        <div class="lkv"><span>大小</span><span>${fmtSize(sel.size)}</span></div>
+        <div class="lkv"><span>修改</span><span>${esc(new Date(sel.updated_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span></div>
+        ${sel.session_id ? `<div class="lkv"><span>会话</span><a data-sess="${esc(sel.session_id)}">${esc(sel.session_title || sel.session_id)}</a></div>` : ''}
+        <div class="lkv"><span>项目</span><span>${esc(sel.project_name || '草稿')}</span></div>
+        <div class="lkv"><span>路径</span><span class="lpath" title="${esc(sel.root)}/${esc(sel.path)}">${esc(sel.path)}</span></div>
+        ${sel.exists ? `<div class="lprev-acts">
+          <button type="button" class="btn ghost small" data-open="${sel.id}">${icon('eye', 14)}预览</button>
+          <button type="button" class="btn ghost small" data-star="${sel.id}">${icon('star', 14)}${sel.deliverable ? '取消交付物' : '标为交付物'}</button>
+          <button type="button" class="btn ghost small" data-reveal="${sel.id}">${icon('folder', 14)}在文件夹中显示</button>
+          <button type="button" class="btn ghost small" data-download="${sel.id}">${icon('download', 14)}下载</button>
+        </div>` : '<p class="faint">文件已移动或删除</p>'}` : ''}</aside>
+    </div>`
+    loadApiImages(body)
+    const qi = body.querySelector('#lq')
+    let t
+    qi.oninput = (e) => {
+      clearTimeout(t)
+      t = setTimeout(async () => {
+        lib.q = e.target.value.trim()
+        try { await load() } catch (err) { toast(err.message, 'err') }
+        draw()
+        const n = body.querySelector('#lq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length)
+      }, 250)
+    }
+  }
+  body.addEventListener('click', async (e) => {
+    const el = e.target.closest('[data-scope],[data-type],[data-view],[data-id],[data-sess],[data-open],[data-star],[data-reveal],[data-download],#lsx')
+    if (!el) return
+    const byId = (v) => files.find((f) => f.id === Number(v))
+    try {
+      if (el.id === 'lsx') { lib.session = ''; return draw() }
+      if (el.dataset.scope !== undefined) { lib.scope = el.dataset.scope; lib.session = ''; return draw() }
+      if (el.dataset.type !== undefined) { lib.type = el.dataset.type; return draw() }
+      if (el.dataset.view) { lib.view = el.dataset.view; try { localStorage.setItem('evo.libView', lib.view) } catch {} return draw() }
+      if (el.dataset.sess) { go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: el.dataset.sess })) }
+      const f = byId(el.dataset.id ?? el.dataset.open ?? el.dataset.star ?? el.dataset.reveal ?? el.dataset.download)
+      if (!f) return
+      // Narrow windows hide the preview pane; open the file straight away instead.
+      const paneHidden = !body.querySelector('.lib-prev')?.offsetParent
+      if (el.dataset.id) { lib.selected = f.id; if (paneHidden && f.exists) return openFilePreviewModal(null, f.path, `/api/library/${f.id}/file`); return draw() }
+      if (el.dataset.open) return openFilePreviewModal(null, f.path, `/api/library/${f.id}/file`)
+      if (el.dataset.star) { await patch(`/api/library/${f.id}`, { deliverable: !f.deliverable }); f.deliverable = f.deliverable ? 0 : 1; counts.deliverable += f.deliverable ? 1 : -1; return draw() }
+      if (el.dataset.reveal) return await post(`/api/library/${f.id}/reveal`)
+      if (el.dataset.download) return await downloadLibraryFile(f)
+    } catch (err) { toast(err.message, 'err') }
+  })
+  await load()
+  draw()
 }
 
 // ---------------------------------------------------------------- usage
 const use = { days: 30, group: 'model' }
 export async function renderUsage (root) {
-  const body = shell(root, '用量', '模型 token 用量统计。不统计费用：不同厂商、不同网关的价格各不相同，请以厂商账单为准。',
+  const body = shell(root, '用量', '',
     `<div class="seg" id="ur">${[[7, '7 天'], [30, '30 天'], [90, '90 天'], [0, '全部']].map(([d, l]) => `<button type="button" class="${use.days === d ? 'on' : ''}" data-d="${d}">${l}</button>`).join('')}</div>`)
   root.querySelector('#ur').onclick = (e) => { const b = e.target.closest('[data-d]'); if (b) { use.days = Number(b.dataset.d); renderUsage(root) } }
   const q = (group) => api(`/api/usage?group=${group}&days=${use.days || ''}`)
   const [daily, grouped] = await Promise.all([q('day'), q(use.group)])
   const t = daily.totals
-  const total = t.inputTokens + t.outputTokens
+  // Agents resend the whole context every step; most of it is a cache hit, so show it apart.
+  const fresh = Math.max(0, t.inputTokens - t.cacheReadTokens)
   body.innerHTML = `<div class="stats">
-      ${[['总 tokens', fmtTokens(total)], ['输入', fmtTokens(t.inputTokens)], ['输出', fmtTokens(t.outputTokens)], ['缓存命中', `${(t.cacheHitRate * 100).toFixed(1)}%`], ['模型请求', fmtTokens(t.requests)], ['对话回合', fmtTokens(t.turns)], ['工具调用', `${fmtTokens(t.toolCalls)}${t.toolErrors ? ` <span class="faint" style="font-size:12px">失败 ${t.toolErrors}</span>` : ''}`]]
+      ${[['新增输入', fmtTokens(fresh)], ['缓存命中', `${fmtTokens(t.cacheReadTokens)} <span class="faint" style="font-size:12px">${(t.cacheHitRate * 100).toFixed(0)}%</span>`], ['输出', fmtTokens(t.outputTokens)], ['模型请求', fmtTokens(t.requests)], ['对话回合', fmtTokens(t.turns)], ['工具调用', `${fmtTokens(t.toolCalls)}${t.toolErrors ? ` <span class="faint" style="font-size:12px">失败 ${t.toolErrors}</span>` : ''}`]]
         .map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}
     </div>
     <div class="panel"><h3>每日用量</h3>${chart(daily.rows)}<div class="legend"><span><i class="c-in"></i>输入（未命中缓存）</span><span><i class="c-cache"></i>输入（缓存命中）</span><span><i class="c-out"></i>输出</span></div></div>
@@ -226,7 +363,7 @@ let memFilter = 'live'
 const pick = new Set()
 export async function renderTrajectory (root, arg) {
   if (typeof arg === 'string' && ['timeline', 'memory', 'overlays', 'versions'].includes(arg)) trajTab = arg
-  const body = shell(root, '轨迹', '智能体在思考—行动循环里的自进化记录：回忆了哪些经验、因为什么反思、调整了什么、学到了什么。经验和偏好自动生效但随时可撤销；持久修改 harness 需要你批准。')
+  const body = shell(root, '轨迹', '')
   const [ev, evo] = await Promise.all([api('/api/evolve'), api('/api/evolution')])
   const pending = evo.candidates.filter((c) => c.status === 'pending')
   const live = ev.memory.filter((m) => m.status !== 'retired')
@@ -242,7 +379,7 @@ export async function renderTrajectory (root, arg) {
     if (trajTab === 'timeline') {
       html += ev.log.length ? `<div class="timeline">${ev.log.map((e) => `<div class="tl-item"><i class="rail-dot ${['adjust', 'learned', 'preference'].includes(e.kind) ? '' : 'dim'}"></i><div class="c">
           <div class="h"><span class="badge ${['adjust', 'learned', 'preference'].includes(e.kind) ? 'accent' : e.kind === 'selfcheck' ? 'warn' : ''}">${KIND[e.kind] || esc(e.kind)}</span>${(e.refs || []).slice(0, 5).map((r) => `<code>${esc(r)}</code>`).join(' ')}<span class="faint">${esc(ago(e.ts))}</span><span class="page-actions">${sessLink(e.session_id, e.session_title)}</span></div>
-          <p>${esc(e.text)}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有自进化记录</b>开始一个会话后，回忆、反思、调整和学到的内容会按时间排在这里。</div>'
+          <p>${esc(e.text)}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有自进化记录</b></div>'
     } else if (trajTab === 'memory') {
       const list = ev.memory.filter((m) => memFilter === 'live' ? m.status !== 'retired' : m.status === memFilter)
       html += list.length ? `<div class="cards">${list.map((m) => { const [sl, sc] = STATUS[m.status]; return `<div class="pcard" data-mem="${esc(m.id)}">
@@ -250,16 +387,30 @@ export async function renderTrajectory (root, arg) {
           <div class="ds" style="-webkit-line-clamp:5"><b style="color:#fff;font-weight:500">${esc(m.trigger)}</b> → ${esc(m.content)}</div>
           <div class="ft"><span>得分 ${score(m).toFixed(2)}</span><span>用过 ${m.uses} 次</span><span>${{ model: '模型提炼', user: '你给的', choice: '你的选择', edit: '你的修改', host: '系统' }[m.source] || ''}</span><span>${m.scope === 'project' ? '项目内' : m.scope === 'stage' ? `阶段 ${esc(m.stage || '')}` : '全局'}</span>
             <span class="page-actions"><button class="icon-btn" data-act="pin" title="${m.pinned ? '取消置顶' : '置顶（总是注入）'}" type="button">${icon('pin', 14)}</button><button class="icon-btn" data-act="edit" title="编辑" type="button">${icon('edit', 14)}</button>
-            ${m.status === 'retired' ? `<button class="icon-btn" data-act="restore" title="恢复" type="button">${icon('refresh', 14)}</button>` : `<button class="icon-btn" data-act="retire" title="淘汰（不再注入）" type="button">${icon('archive', 14)}</button>`}<button class="icon-btn" data-act="del" title="删除" type="button">${icon('trash', 14)}</button></span></div></div>` }).join('')}</div>` : '<div class="empty-state"><b>这里还没有条目</b>会话中提炼的经验、你的选择和明确要求（例如「以后都用 Okabe-Ito 配色」）会出现在这里。</div>'
+            ${m.status === 'retired' ? `<button class="icon-btn" data-act="restore" title="恢复" type="button">${icon('refresh', 14)}</button>` : `<button class="icon-btn" data-act="retire" title="淘汰（不再注入）" type="button">${icon('archive', 14)}</button>`}<button class="icon-btn" data-act="del" title="删除" type="button">${icon('trash', 14)}</button></span></div></div>` }).join('')}</div>` : '<div class="empty-state"><b>这里还没有条目</b></div>'
     } else if (trajTab === 'overlays') {
       html += ev.overlays.length ? `<div class="timeline">${ev.overlays.slice().reverse().map((o) => `<div class="tl-item"><i class="rail-dot ${o.status === 'reverted' ? 'dim' : ''}"></i><div class="c">
           <div class="h">${o.status === 'trial' || o.status === 'kept' ? `<input type="checkbox" data-pick="${esc(o.id)}" ${pick.has(o.id) ? 'checked' : ''} title="选入 genome 候选">` : ''}<code>${esc(o.id)}</code><span class="badge">${esc(o.op)}${o.target ? ` · ${esc(o.target)}` : ''}</span><span class="badge ${o.status === 'reverted' ? '' : o.status === 'kept' ? 'ok' : 'warn'}">${{ trial: '试用中', kept: '保留', reverted: '已撤销', promoted: '已沉淀' }[o.status] || esc(o.status)}</span>
           ${o.before_score !== null && o.after_score !== null ? `<span class="faint">回合得分 ${Number(o.before_score).toFixed(2)} → ${Number(o.after_score).toFixed(2)}</span>` : ''}<span class="page-actions">${sessLink(o.session_id)}${o.status === 'trial' || o.status === 'kept' ? `<button class="btn ghost small" data-rev="${esc(o.id)}" type="button">撤销</button>` : ''}</span></div>
-          <p>${esc(o.value || '')}${o.reason ? `<br><span class="faint">原因：${esc(o.reason)}</span>` : ''}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有会话调整</b>智能体在会话里用 tune_harness 试用的工作方式调整会列在这里；表现好的调整之后可以沉淀为 genome 候选，经你批准上线。</div>'
+          <p>${esc(o.value || '')}${o.reason ? `<br><span class="faint">原因：${esc(o.reason)}</span>` : ''}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有会话调整</b></div>'
     } else {
-      html += `<div class="section-t">待你批准</div>${pending.length ? `<div class="timeline">${pending.map((c) => `<div class="tl-item"><i class="rail-dot"></i><div class="c">
-          <div class="h"><code>${esc(c.genome_id)}</code><span class="badge warn">待批准</span><span class="faint">${esc(c.target || '')}</span><span class="page-actions"><button class="btn ghost small" data-rej="${esc(c.genome_id)}" type="button">拒绝</button><button class="btn primary small" data-pro="${esc(c.genome_id)}" type="button">批准上线</button></span></div>
-          <p>${esc(c.change || c.diagnosis || '')}</p></div></div>`).join('')}</div>` : '<p class="muted">没有等待批准的改动。</p>'}
+      html += `<div class="section-t">待你批准</div>${pending.length ? `<div class="timeline">${pending.map((c) => {
+          const v = c.verification || {}
+          const badge = v.verified
+            ? `<span class="badge ok">已验证 ${esc(String(v.pass))}/${esc(String(v.total))}</span>`
+            : '<span class="badge warn">未验证</span>'
+          const evidenceLine = v.verified
+            ? `验证运行：<code>${esc(v.runId || '')}</code> · 通过 ${esc(String(v.pass))}/${esc(String(v.total))}`
+            : ''
+          const scopeLine = `适用范围：${esc(v.scope || '全局 harness')}`
+          // change is stored as a JSON array of bullet strings.
+          let change = c.change || c.diagnosis || ''
+          try { const list = JSON.parse(change); if (Array.isArray(list)) change = list.join('；') } catch {}
+          return `<div class="tl-item"><i class="rail-dot"></i><div class="c">
+          <div class="h"><code>${esc(c.genome_id)}</code><span class="badge warn">待批准</span>${badge}<span class="faint">${esc(c.target || '')}</span><span class="page-actions"><button class="btn ghost small" data-rej="${esc(c.genome_id)}" type="button">拒绝</button><button class="btn primary small" data-pro="${esc(c.genome_id)}" type="button">批准上线</button></span></div>
+          <p>${esc(change)}</p>
+          <p class="faint">${evidenceLine ? `${evidenceLine} · ` : ''}${scopeLine}</p></div></div>`
+        }).join('')}</div>` : '<p class="muted">没有待批准的候选</p>'}
         <div class="section-t">harness 版本</div><div class="timeline">${evo.lineage.slice().reverse().slice(0, 40).map((g) => `<div class="tl-item"><i class="rail-dot ${g.status === 'active' ? '' : 'dim'}"></i><div class="c">
           <div class="h"><code>${esc(g.id)}</code>${g.status === 'active' ? '<span class="badge ok">当前</span>' : `<span class="badge">${esc({ archived: '历史', rejected: '已拒绝', candidate: '候选' }[g.status] || g.status)}</span>`}<span class="faint">${esc(g.createdBy?.startsWith('evolution') ? '进化生成' : '手动')}</span>
           ${g.status === 'archived' ? `<span class="page-actions"><button class="btn ghost small" data-rb="${esc(g.id)}" type="button">回滚到此版本</button></span>` : ''}</div><p>${esc(g.note || '')}</p></div></div>`).join('')}</div>`
@@ -272,10 +423,10 @@ export async function renderTrajectory (root, arg) {
     if (pk) { pk.checked ? pick.add(pk.dataset.pick) : pick.delete(pk.dataset.pick); return draw() }
     if (e.target.closest('#consol')) {
       const ids = [...pick]
-      if (!(await confirmDialog({ title: '沉淀为 genome 候选', message: `把选中的 ${ids.length} 项写进一个新的 harness 版本候选？候选不会自动上线，需要你在「版本」里批准，可以随时回滚。`, confirmText: '生成候选' }))) return
+      if (!(await confirmDialog({ title: '沉淀为 genome 候选', message: `用选中的 ${ids.length} 项生成一个 harness 候选？`, confirmText: '生成候选' }))) return
       try {
         const r = await post('/api/evolve/consolidate', { overlayIds: ids.filter((x) => x.startsWith('O-')), memoryIds: ids.filter((x) => /^[LP]-/.test(x)) })
-        pick.clear(); trajTab = 'versions'; await store.refresh(); toast(`已生成候选 ${r.genome}，请在「版本」里查看并批准`, 'ok', 6000); return renderTrajectory(root)
+        pick.clear(); trajTab = 'versions'; await store.refresh(); toast(`已生成候选 ${r.genome}`, 'ok', 6000); return renderTrajectory(root)
       } catch (err) { return toast(err.message, 'err') }
     }
     const t = e.target.closest('[data-t]'); if (t) { trajTab = t.dataset.t; return draw() }
@@ -283,7 +434,7 @@ export async function renderTrajectory (root, arg) {
     const sl = e.target.closest('[data-sess]'); if (sl) { go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: sl.dataset.sess })) }
     try {
       if (e.target.closest('#addPref')) {
-        const text = await promptDialog({ title: '添加偏好', message: '写一条你希望智能体以后都遵守的习惯，例如「出图用 Okabe-Ito 配色，坐标轴标签不加粗」。', multiline: true })
+        const text = await promptDialog({ title: '添加偏好', message: '', multiline: true })
         if (!text) return
         await post('/api/memory', { kind: 'preference', trigger: '用户设定', content: text, pinned: true })
         return renderTrajectory(root)
@@ -296,13 +447,24 @@ export async function renderTrajectory (root, arg) {
         if (act.dataset.act === 'retire') await patch(`/api/memory/${id}`, { status: 'retired' })
         if (act.dataset.act === 'restore') await patch(`/api/memory/${id}`, { status: 'active' })
         if (act.dataset.act === 'edit') { const c = await promptDialog({ title: `编辑 ${id}`, message: m.trigger, defaultValue: m.content, multiline: true }); if (!c) return; await patch(`/api/memory/${id}`, { content: c }) }
-        if (act.dataset.act === 'del') { if (!(await confirmDialog({ title: '删除条目', message: `删除 ${id}？`, confirmText: '删除', danger: true }))) return; await fetch(`/api/memory/${id}`, { method: 'DELETE', headers: { 'x-evoscholar': '1' } }) }
+        if (act.dataset.act === 'del') { if (!(await confirmDialog({ title: '删除条目', message: `删除 ${id}？`, confirmText: '删除', danger: true }))) return; await del(`/api/memory/${id}`) }
         return renderTrajectory(root)
       }
       const rev = e.target.closest('[data-rev]'); if (rev) { await post(`/api/overlays/${rev.dataset.rev}/revert`); return renderTrajectory(root) }
       const b = e.target.closest('[data-pro],[data-rej],[data-rb]')
       if (!b) return
-      if (b.dataset.pro) { if (!(await confirmDialog({ title: '批准上线', message: `把 ${b.dataset.pro} 设为当前 harness？可以随时回滚。`, confirmText: '批准' }))) return; await post(`/api/evolution/${b.dataset.pro}/promote`) }
+      if (b.dataset.pro) {
+        const cand = pending.find((x) => x.genome_id === b.dataset.pro)
+        const v = cand?.verification
+        if (v?.verified) {
+          if (!(await confirmDialog({ title: '批准上线', message: `上线 ${b.dataset.pro}？验证 ${v.pass}/${v.total}，范围：${v.scope}`, confirmText: '批准' }))) return
+          await post(`/api/evolution/${b.dataset.pro}/promote`, {})
+        } else {
+          if (!(await confirmDialog({ title: '批准未验证候选', message: `${b.dataset.pro} 未经验证，范围：${v?.scope || '全局 harness'}`, confirmText: '继续确认', danger: true }))) return
+          if (!(await confirmDialog({ title: '二次确认：上线未验证候选', message: `确认上线未验证的 ${b.dataset.pro}？可以随时回滚。`, confirmText: '确认批准上线', danger: true }))) return
+          await post(`/api/evolution/${b.dataset.pro}/promote`, { confirmUnverified: true })
+        }
+      }
       if (b.dataset.rej) await post(`/api/evolution/${b.dataset.rej}/reject`, {})
       if (b.dataset.rb) { if (!(await confirmDialog({ title: '回滚', message: `回滚到 ${b.dataset.rb}？`, confirmText: '回滚' }))) return; await post('/api/genome/rollback', { to: b.dataset.rb }) }
       await store.refresh(); toast('已更新', 'ok'); renderTrajectory(root)

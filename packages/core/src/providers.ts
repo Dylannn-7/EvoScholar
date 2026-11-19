@@ -3,7 +3,11 @@ import { createChatCompletionsModel } from '@evoscholar/harness/chat-completions
 import { createMessagesModel } from '@evoscholar/harness/messages'
 import { createResponsesModel } from '@evoscholar/harness/responses'
 import type { AuthHeader, EvoConfig, ModelSetting, Protocol, ProviderOverride, ReasoningCapability } from './config'
+import type { Ledger } from './budget'
+import { gatewayTransport, normalizeGatewayBase } from './gateway'
 import { createGeminiModel } from './gemini'
+import { MiB, readJson } from './http-body'
+import { meterModel } from './metering'
 import presets from './presets.json'
 
 export type { Protocol } from './config'
@@ -44,9 +48,14 @@ export type ProviderInfo = {
   regions?: { id: string; label: string; bases: Bases }[]
   region?: string
   authHeader: AuthHeader
+  /** True when the user or the preset chose the header; false for the protocol-derived default. */
+  authHeaderExplicit: boolean
+  apiVersion?: string
   apiKeyEnv: string
   apiKeyUrl?: string
   hasKey: boolean
+  gatewayApproved: boolean
+  gatewayPrivateAccess: boolean
   modelsSource: 'preset' | 'live'
   modelsFetchedAt?: string
   reasoningEffort?: ReasoningCapability
@@ -64,6 +73,32 @@ const VISION: Record<string, boolean> = {
 }
 const VISION_VENDORS = new Set(['openai', 'anthropic', 'gemini', 'azure'])
 const PRESETS = presets as Preset[]
+
+export const API_VERSION_RE = /^\d{4}-\d{2}-\d{2}(-preview)?$/
+export function validApiVersion(value: string): boolean {
+  return API_VERSION_RE.test(value)
+}
+
+/** Central effort -> numeric thinking token budget table for protocols/models that use token budgets. */
+export const THINKING_BUDGET_TOKENS: Readonly<Record<string, number>> = Object.freeze({
+  none: 0,
+  minimal: 1024,
+  low: 1024,
+  medium: 4096,
+  high: 16384,
+  xhigh: 24576,
+  max: 32768
+})
+
+export function thinkingBudgetFor(effort: string, maxOutputTokens?: number): number | undefined {
+  const raw = THINKING_BUDGET_TOKENS[effort]
+  if (raw === undefined) return undefined
+  if (raw === 0) return 0
+  if (maxOutputTokens !== undefined && Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0) {
+    return Math.min(raw, Math.max(1, maxOutputTokens - 1))
+  }
+  return raw
+}
 
 export function presetIds(): string[] {
   return PRESETS.map((p) => p.id)
@@ -83,6 +118,42 @@ export function reasoningParam(protocol: Protocol, provider: string): string {
   if (protocol === 'gemini') return 'thinkingConfig.thinkingLevel'
   if (protocol === 'messages') return provider === 'anthropic' || provider === 'deepseek' ? 'output_config.effort' : 'thinking'
   return 'reasoning_effort'
+}
+
+function officialBase(base: string, preset?: Preset): boolean {
+  if (!base || !preset) return false
+  const all = [preset.bases, ...(preset.regions ?? []).map((region) => region.bases)]
+  return all.some((bases) => Object.values(bases).includes(base))
+}
+
+function providerKey(info: ProviderInfo, override?: ProviderOverride): string | undefined {
+  if (!info.baseUrl || info.baseUrl.includes('<')) return
+  try {
+    const origin = new URL(info.baseUrl).origin
+    const official = officialBase(info.baseUrl, PRESETS.find((p) => p.id === info.id))
+    const savedOrigin = override?.credentialOrigin
+    if (savedOrigin ? savedOrigin !== origin : !official) return
+    return process.env[info.apiKeyEnv]
+  } catch { return undefined }
+}
+
+function providerTransport(config: EvoConfig, info: ProviderInfo, supplied?: typeof fetch): typeof fetch {
+  const override = config.providers?.[info.id]
+  const preset = PRESETS.find((p) => p.id === info.id)
+  const official = officialBase(info.baseUrl, preset)
+  return async (input, init) => {
+    if (official) {
+      const target = new URL(input instanceof Request ? input.url : input)
+      const trusted = target.origin === new URL(info.baseUrl).origin ||
+        (preset?.modelsListUrl !== undefined && target.href === preset.modelsListUrl)
+      if (!trusted) throw new Error('模型列表地址与已授权的厂商地址不符')
+      return (supplied ?? globalThis.fetch)(input, { ...init, redirect: 'error' })
+    }
+    return gatewayTransport({
+      base: info.baseUrl, approval: override?.gatewayApproval,
+      localPort: config.localHttpPort ?? Number(process.env.EVOSCHOLAR_PORT ?? 4317), fetch: supplied
+    })(input, init)
+  }
 }
 
 function describe(id: string, p: Preset | undefined, o: ProviderOverride | undefined): ProviderInfo {
@@ -106,28 +177,38 @@ function describe(id: string, p: Preset | undefined, o: ProviderOverride | undef
       reasoningParam: param
     }
   })
-  return {
+  const baseUrl = o?.baseUrl ?? (o?.endpoint ? legacyBase(o.endpoint) : defaultBaseUrl)
+  const official = officialBase(baseUrl, p)
+  let gatewayApproved = official
+  try { gatewayApproved ||= !!o?.gatewayApproval && o.gatewayApproval.base === normalizeGatewayBase(baseUrl) } catch {}
+  const info: ProviderInfo = {
     id,
     label: o?.label ?? p?.label ?? id,
     custom: !p,
     official: Object.keys(bases) as Protocol[],
     defaultProtocol,
     protocol,
-    baseUrl: o?.baseUrl ?? (o?.endpoint ? legacyBase(o.endpoint) : defaultBaseUrl),
+    baseUrl,
     defaultBaseUrl,
     bases,
     regions: p?.regions,
     region: o?.region ?? p?.regions?.[0]?.id,
     authHeader: o?.authHeader ?? p?.authHeader ?? (protocol === 'gemini' ? 'x-goog-api-key' : protocol === 'messages' && id === 'anthropic' ? 'x-api-key' : 'bearer'),
+    authHeaderExplicit: !!(o?.authHeader ?? p?.authHeader),
+    ...(o?.apiVersion ? { apiVersion: o.apiVersion } : {}),
     apiKeyEnv: keyEnvFor(id, o),
     apiKeyUrl: p?.apiKeyUrl,
-    hasKey: !!process.env[keyEnvFor(id, o)],
+    hasKey: false,
+    gatewayApproved,
+    gatewayPrivateAccess: !!o?.gatewayApproval?.privateAccess,
     modelsSource: live ? 'live' : 'preset',
     modelsFetchedAt: o?.modelsFetchedAt,
     reasoningEffort: vendorEffort,
     reasoningParam: param,
     models
   }
+  info.hasKey = gatewayApproved && !!providerKey(info, o)
+  return info
 }
 
 /** Old configs stored a full endpoint URL for custom gateways; recover the API root. */
@@ -188,17 +269,55 @@ function authHeaders(style: AuthHeader, key: string): Record<string, string> {
   return { authorization: `Bearer ${key}` }
 }
 
-/** The harness adapters always send `Authorization: Bearer`; rewrite it for vendors that want another header. */
-function authFetch(style: AuthHeader, inner: typeof fetch = globalThis.fetch): typeof fetch | undefined {
-  if (style === 'bearer' || style === 'x-goog-api-key') return inner === globalThis.fetch ? undefined : inner
+const nativeAuth = (protocol: Protocol): AuthHeader =>
+  protocol === 'gemini' ? 'x-goog-api-key' : protocol === 'messages' ? 'x-api-key' : 'bearer'
+
+/**
+ * Rewrite the adapter's native auth header when the provider asks for another style.
+ * The derived default 'bearer' is left alone: Anthropic-compatible vendor endpoints have always
+ * received the adapter's x-api-key, and changing that silently could break working setups.
+ */
+function authFetch(protocol: Protocol, style: AuthHeader, explicit: boolean, inner: typeof fetch = globalThis.fetch): typeof fetch {
+  if (style === nativeAuth(protocol) || (!explicit && style === 'bearer')) return inner
   return (async (url: string | URL | Request, init?: RequestInit) => {
     const h = new Headers(init?.headers)
     const auth = h.get('authorization')
-    const key = auth?.replace(/^Bearer\s+/i, '') ?? h.get('x-api-key') ?? ''
+    const key = auth?.replace(/^Bearer\s+/i, '') ?? h.get('x-api-key') ?? h.get('api-key') ?? h.get('x-goog-api-key') ?? ''
     h.delete('authorization')
     h.delete('x-api-key')
+    h.delete('api-key')
+    h.delete('x-goog-api-key')
     for (const [k, v] of Object.entries(authHeaders(style, key))) h.set(k, v)
     return inner(url, { ...init, headers: h })
+  }) as typeof fetch
+}
+
+function apiVersionFetch(apiVersion: string | undefined, inner: typeof fetch): typeof fetch {
+  if (!apiVersion) return inner
+  if (!validApiVersion(apiVersion)) throw new Error(`API 版本格式不正确：${apiVersion}（示例：2024-10-21 或 2024-12-01-preview）`)
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const target = new URL(input instanceof Request ? input.url : input)
+    if (!target.searchParams.has('api-version')) target.searchParams.set('api-version', apiVersion)
+    return inner(target.href, init)
+  }) as typeof fetch
+}
+
+function clampThinkingBudgetFetch(inner: typeof fetch): typeof fetch {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    if (typeof init?.body === 'string') {
+      try {
+        const parsed = JSON.parse(init.body) as { max_tokens?: unknown; thinking?: Record<string, unknown> }
+        const max = typeof parsed.max_tokens === 'number' && Number.isSafeInteger(parsed.max_tokens) && parsed.max_tokens > 0
+          ? parsed.max_tokens : undefined
+        const budget = parsed.thinking?.budget_tokens
+        if (max !== undefined && typeof budget === 'number' && budget >= max) {
+          // The per-request max_tokens can be smaller than the model's; too small a budget is invalid.
+          parsed.thinking = max - 1 >= ANTHROPIC_MIN_BUDGET ? { ...parsed.thinking, budget_tokens: max - 1 } : { type: 'disabled' }
+          return inner(input, { ...init, body: JSON.stringify(parsed) })
+        }
+      } catch { /* forward unmodified body */ }
+    }
+    return inner(input, init)
   }) as typeof fetch
 }
 
@@ -268,11 +387,12 @@ export function parseModelList(json: unknown, protocol: Protocol): ModelSetting[
 export async function fetchProviderModels(
   config: EvoConfig,
   providerId: string,
-  fetchFn: typeof globalThis.fetch = globalThis.fetch
+  fetchFn?: typeof globalThis.fetch
 ): Promise<{ ok: true; models: ModelSetting[]; url: string } | { ok: false; error: string }> {
   const info = providerInfo(config, providerId)
   if (!info) return { ok: false, error: '未知厂商' }
-  const key = process.env[info.apiKeyEnv]
+  if (!info.gatewayApproved) return { ok: false, error: '请先确认网关地址和 API 根路径' }
+  const key = providerKey(info, config.providers?.[providerId])
   if (!key) return { ok: false, error: '还没有填写 API Key' }
   if (!info.baseUrl || info.baseUrl.includes('<')) return { ok: false, error: '还没有填写 Base URL' }
   try {
@@ -281,12 +401,16 @@ export async function fetchProviderModels(
       !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))))
       return { ok: false, error: '模型列表地址必须使用 HTTPS 或本机 HTTP，且不能包含账号密码' }
     if (info.protocol === 'gemini') url.searchParams.set('pageSize', '1000')
-    const res = await fetchFn(url.href, { headers: { ...authHeaders(info.authHeader, key), accept: 'application/json' }, signal: AbortSignal.timeout(10_000), redirect: 'error' })
+    if (info.apiVersion) {
+      if (!validApiVersion(info.apiVersion)) return { ok: false, error: `API 版本格式不正确：${info.apiVersion}` }
+      if (!url.searchParams.has('api-version')) url.searchParams.set('api-version', info.apiVersion)
+    }
+    const res = await providerTransport(config, info, fetchFn)(url.href, { headers: { ...authHeaders(info.authHeader, key), accept: 'application/json' }, signal: AbortSignal.timeout(10_000), redirect: 'error' })
     if (!res.ok) {
       await res.body?.cancel().catch(() => {})
       return { ok: false, error: `HTTP ${res.status}${res.status === 401 || res.status === 403 ? '（API Key 无效或没有权限）' : ''}` }
     }
-    const models = parseModelList(await res.json(), info.protocol)
+    const models = parseModelList(await readJson(res, 4 * MiB, '模型列表'), info.protocol)
     if (!models.length) return { ok: false, error: '上游没有返回模型列表' }
     return { ok: true, models, url: url.href }
   } catch (e) {
@@ -315,32 +439,55 @@ export function modelInfo(config: EvoConfig, ref: string) {
 }
 
 const THINKING_TOGGLE_VENDORS = new Set(['deepseek', 'zhipu', 'minimax', 'volcengine'])
+// Numeric budgets only for model families known to need them; anything else (including future
+// models) keeps the level/adaptive request that worked before.
+const GEMINI_BUDGET_MODEL = /^(?:models\/)?gemini-[12](?:[.-]|$)/i
+const ANTHROPIC_BUDGET_MODEL = /^claude-(?:3(?:[.-]|$)|(?:opus|sonnet|haiku)-4(?:-[0-5])?(?:-\d{8})?$)/i
+/** Anthropic rejects extended-thinking budgets below this. */
+const ANTHROPIC_MIN_BUDGET = 1024
 
 /** Translate a raw effort value into the vendor/protocol-specific request parameters. */
 export function resolveProviderParameters(
   protocol: Protocol,
   provider: string,
   raw?: Record<string, Json>,
-  fallbackEffort?: string
+  fallbackEffort?: string,
+  opts?: { model?: string; maxOutputTokens?: number }
 ): Record<string, Json> | undefined {
   const { effort: rawEffort, ...rest } = raw ?? {}
   const effort = typeof rawEffort === 'string' && rawEffort ? rawEffort : fallbackEffort
   if (!effort || effort === 'default') return Object.keys(rest).length ? rest : undefined
+  const model = opts?.model
 
   if (protocol === 'gemini') {
-    if (rest.thinkingConfig === undefined) rest.thinkingConfig = effort === 'none' ? { thinkingBudget: 0 } : { thinkingLevel: effort }
+    if (rest.thinkingConfig === undefined) {
+      if (effort === 'none') rest.thinkingConfig = { thinkingBudget: 0 }
+      else if (model && GEMINI_BUDGET_MODEL.test(model)) {
+        const budget = thinkingBudgetFor(effort, opts?.maxOutputTokens)
+        rest.thinkingConfig = budget !== undefined ? { thinkingBudget: budget } : { thinkingLevel: effort }
+      } else {
+        rest.thinkingConfig = { thinkingLevel: effort }
+      }
+    }
   } else if (protocol === 'responses') {
     if (rest.reasoning === undefined) rest.reasoning = { effort }
   } else if (protocol === 'messages') {
     if (effort === 'none') {
       if (rest.thinking === undefined) rest.thinking = { type: 'disabled' }
     } else if (provider === 'anthropic') {
-      if (rest.thinking === undefined) rest.thinking = { type: 'adaptive' }
-      if (rest.output_config === undefined) rest.output_config = { effort }
+      if (model && ANTHROPIC_BUDGET_MODEL.test(model)) {
+        const budget = thinkingBudgetFor(effort, opts?.maxOutputTokens)
+        if (rest.thinking === undefined) rest.thinking = budget === undefined ? { type: 'adaptive' }
+          : budget < ANTHROPIC_MIN_BUDGET ? { type: 'disabled' } : { type: 'enabled', budget_tokens: budget }
+      } else {
+        if (rest.thinking === undefined) rest.thinking = { type: 'adaptive' }
+        if (rest.output_config === undefined) rest.output_config = { effort }
+      }
     } else if (provider === 'deepseek') {
       if (rest.thinking === undefined) rest.thinking = { type: 'enabled' }
       if (rest.output_config === undefined) rest.output_config = { effort }
     } else if (rest.thinking === undefined) {
+      // Anthropic-compatible vendor endpoints have always received this shape; keep it.
       rest.thinking = { type: 'enabled' }
     }
   } else {
@@ -364,21 +511,31 @@ export function createModel(
   if (!info) throw new Error(`未知厂商「${provider}」`)
   const { url, protocol } = endpointFor(config, provider)
   const apiKey = () => {
-    const k = process.env[info.apiKeyEnv]
+    if (!info.gatewayApproved) throw new Error('请先确认网关地址和 API 根路径')
+    const k = providerKey(info, config.providers?.[provider])
     if (!k) throw new Error(`缺少 ${info.label} 的 API Key，请在「设置 → 模型与密钥」里填写`)
     return k
   }
   const mi = modelInfo(config, ref)
-  const parameters = resolveProviderParameters(protocol, provider, opts.parameters, opts.effort ?? config.reasoningEffort?.[ref])
+  const parameters = resolveProviderParameters(protocol, provider, opts.parameters, opts.effort ?? config.reasoningEffort?.[ref], {
+    model, maxOutputTokens: mi.maxOutputTokens
+  })
+  let transport = providerTransport(config, info, opts.fetch)
+  transport = apiVersionFetch(info.apiVersion, transport)
+  transport = authFetch(protocol, info.authHeader, info.authHeaderExplicit, transport)
+  const thinkingObj = parameters?.thinking as Record<string, unknown> | undefined
+  if (protocol === 'messages' && provider === 'anthropic' && typeof thinkingObj?.budget_tokens === 'number') {
+    transport = clampThinkingBudgetFetch(transport)
+  }
   if (protocol === 'gemini')
-    return createGeminiModel({ baseUrl: url, model, id: `${ref}@gemini`, apiKey, parameters, fetch: opts.fetch, inputCapabilities: { images: mi.vision } })
+    return createGeminiModel({ baseUrl: url, model, id: `${ref}@gemini`, apiKey, parameters, fetch: transport, inputCapabilities: { images: mi.vision } })
   const common = {
     endpoint: url,
     model,
     id: `${ref}@${protocol}`,
     apiKey,
     parameters,
-    fetch: authFetch(info.authHeader, opts.fetch ?? globalThis.fetch),
+    fetch: transport,
     inputCapabilities: { images: mi.vision }
   }
   if (protocol === 'messages') return createMessagesModel(common)
@@ -390,11 +547,14 @@ export function createModel(
 export async function testProviderConnection(
   config: EvoConfig,
   ref: string,
-  opts: { fetch?: typeof fetch; effort?: string; timeoutMs?: number } = {}
+  opts: { fetch?: typeof fetch; effort?: string; timeoutMs?: number; ledger?: Ledger } = {}
 ): Promise<{ ok: true; latencyMs: number; text: string; usage?: { inputTokens: number; outputTokens: number } } | { ok: false; error: string }> {
   const t0 = Date.now()
   try {
-    const model = createModel(config, ref, { fetch: opts.fetch, effort: opts.effort })
+    const rawModel = createModel(config, ref, { fetch: opts.fetch, effort: opts.effort })
+    const model = opts.ledger
+      ? meterModel(rawModel, { ledger: opts.ledger, modelRef: ref, category: () => 'usage' })
+      : rawModel
     const signal = AbortSignal.timeout(opts.timeoutMs ?? 30_000)
     let text = ''
     let finish: Extract<ModelEvent, { type: 'finish' }> | undefined

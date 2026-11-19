@@ -31,6 +31,33 @@ export function inside(root: string, p: string): string {
   return join(canonical, relative(probe, target))
 }
 
+/** Real path of p, resolving the nearest existing ancestor when p itself does not exist yet. */
+const real = (p: string): string => {
+  const abs = resolve(p)
+  try { return realpathSync(abs) } catch {}
+  const parent = dirname(abs)
+  return parent === abs ? abs : join(real(parent), relative(parent, abs))
+}
+
+/**
+ * App-owned paths: code, config, credentials, genomes and state under the app root or data dir.
+ * Session work areas are the exception: drafts (data/projects/<session>) and offline evaluation
+ * runs (data/runs/<run>). This matters when a project folder contains the app, e.g. the user's
+ * home or the source checkout itself.
+ */
+export function appPrivate(ws: { root: string; dataDir: string }, input: string): boolean {
+  const path = real(input)
+  for (const area of ['projects', 'runs']) if (within(real(join(ws.dataDir, area)), path)) return false
+  return within(real(ws.root), path) || within(real(ws.dataDir), path)
+}
+
+/** inside() for model-facing tools: also refuses app-private paths. */
+export function modelPath(env: { cwd: string; ws: { root: string; dataDir: string } }, p: string): string {
+  const path = inside(env.cwd, p)
+  if (appPrivate(env.ws, path)) throw new Error(`该路径属于 EvoScholar 自身的代码、配置或数据，模型工具不能访问：${p}`)
+  return path
+}
+
 const DENY: [RegExp, string][] = [
   [/\bsudo\b/, 'sudo'],
   [/\brm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+(\/|~|\$HOME)(\s|$|\/\*)/, '删除根目录或主目录'],

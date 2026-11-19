@@ -19,6 +19,7 @@ if ((Get-Command uv -ErrorAction SilentlyContinue) -or (Get-Command python -Erro
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
 Write-Host ''
-Write-Host '完成。启动工作台：npm start   然后打开 http://127.0.0.1:4317'
+Write-Host '完成。启动工作台：npm start   （会自动打开浏览器并配对）'
+Write-Host '让模型代码在离线容器里运行：安装并启动 Docker Desktop（家庭版用 WSL 2 后端），然后运行 npm run sandbox:build'
 Write-Host '第一次使用：在「设置 → 模型与密钥」里选厂商、填 API Key、获取模型。'
 Write-Host '不想先填 Key：npm run demo 打开一个用本地脚本模拟的演示（不联网、不花钱）。'

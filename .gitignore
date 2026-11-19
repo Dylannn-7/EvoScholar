@@ -18,3 +18,9 @@ rulepacks/*/source/
 /*.pdf
 __pycache__/
 *.pyc
+
+# Desktop packages
+release/
+
+# Contest submission material (personal, local only)
+contest/

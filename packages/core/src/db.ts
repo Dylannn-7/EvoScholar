@@ -220,8 +220,39 @@ const MIGRATIONS: string[] = [
      data TEXT,
      ts TEXT NOT NULL
    );
-   CREATE INDEX evolve_log_session ON evolve_log(session_id);`
+   CREATE INDEX evolve_log_session ON evolve_log(session_id);`,
+  // Crash recovery: timestamped budget reservations, authoritative active genome state, and reconciliation audit log.
+  `ALTER TABLE budget_reservations ADD COLUMN created_at TEXT;
+   CREATE TABLE IF NOT EXISTS genome_state (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   );
+   CREATE TABLE IF NOT EXISTS reconcile_log (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     ts TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     detail TEXT NOT NULL
+   );`,
+  // Candidate verification evidence: offline replay/eval run ID, pass/total counts, scope and timestamp.
+  `ALTER TABLE candidates ADD COLUMN verification_run TEXT;
+   ALTER TABLE candidates ADD COLUMN verification_pass INTEGER;
+   ALTER TABLE candidates ADD COLUMN verification_total INTEGER;
+   ALTER TABLE candidates ADD COLUMN verification_scope TEXT;
+   ALTER TABLE candidates ADD COLUMN verified_at TEXT;`
 ]
+
+export function withTransaction<T>(db: Db, action: () => T): T {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const result = action()
+    db.exec('COMMIT')
+    return result
+  } catch (error) {
+    try { db.exec('ROLLBACK') } catch {}
+    throw error
+  }
+}
 
 export function openDb(dataDir: string): Db {
   mkdirSync(dataDir, { recursive: true })

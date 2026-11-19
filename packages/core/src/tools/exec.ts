@@ -1,10 +1,12 @@
+import { createServer } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, lstatSync, statSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { join, relative, sep } from 'node:path'
 import type { Json } from '@evoscholar/harness'
-import { checkCommand, inside } from './sandbox'
+import { chooseExecution, type ExecutionJob, type IsolatedService, type ProcessResult } from '../execution'
+import { checkCommand, modelPath } from './sandbox'
 import { objectArgs, shellFor, textResult, type ToolEnv, type ToolFactory } from './types'
 
 const OUT_LIMIT = 20_000
@@ -73,6 +75,16 @@ export function runProcess(cmd: string, args: string[], env: ToolEnv, timeoutS: 
   return run(cmd, args, env, timeoutS, signal)
 }
 
+export async function runModelProcess(env: ToolEnv, job: ExecutionJob, timeout: number, signal?: AbortSignal) {
+  const active = signal ?? AbortSignal.timeout((timeout + 1) * 1000)
+  if (await chooseExecution(env) === 'isolated') {
+    const result = await env.executor!.run(env, job, timeout, active)
+    if (result.files?.length) env.onFiles?.(result.files)
+    return result
+  }
+  return run(...job.host, env, timeout, active)
+}
+
 /**
  * Kill a process and everything it started. On Windows `child.kill()` only ends the direct child
  * (e.g. PowerShell), leaving grandchildren that keep the output pipes open, so use taskkill /T.
@@ -105,7 +117,7 @@ function settled(child: ChildProcess, onDone: (code: number | null, sig: string 
 
 async function run(cmd: string, args: string[], env: ToolEnv, timeoutS: number, signal: AbortSignal) {
   signal.throwIfAborted()
-  return new Promise<{ code: number | null; signal: string | null; out: string; stdout: string; timedOut: boolean }>((resolveP, reject) => {
+  return new Promise<ProcessResult>((resolveP, reject) => {
     const child = spawn(cmd, args, { cwd: env.cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     let out = ''
     let bytes = 0
@@ -155,6 +167,11 @@ function report(r: { code: number | null; signal: string | null; out: string; ti
   return textResult(`[${status}]${files}\n${clip(r.out.trim()) || '（无输出）'}`, !r.timedOut && r.code !== 0 ? true : r.timedOut)
 }
 
+function validateTimeout(value: unknown, limit: number) {
+  if (value !== undefined && (!Number.isInteger(value) || Number(value) < 1 || Number(value) > limit))
+    throw new Error(`超时必须为 1–${limit} 秒`)
+}
+
 export const runPython: ToolFactory = (env) => ({
   name: 'run_python',
   version: '1',
@@ -174,7 +191,10 @@ export const runPython: ToolFactory = (env) => ({
   scheduling: 'exclusive',
   validate(i) {
     const a = objectArgs(i, ['code', 'file', 'args', 'timeout_s'])
-    if ((a.code === undefined) === (a.file === undefined)) throw new Error('Provide exactly one of code or file')
+    if ((a.code === undefined) === (a.file === undefined) ||
+      (a.code !== undefined && typeof a.code !== 'string') || (a.file !== undefined && typeof a.file !== 'string'))
+      throw new Error('请提供 code 或 file，且只能提供一个')
+    validateTimeout(a.timeout_s, 900)
     if (a.args !== undefined && (!Array.isArray(a.args) || !a.args.every((x) => typeof x === 'string'))) throw new Error('args must be strings')
     return a as Json
   },
@@ -184,18 +204,28 @@ export const runPython: ToolFactory = (env) => ({
   },
   async execute(args, ctx) {
     const a = args as { code?: string; file?: string; args?: string[]; timeout_s?: number }
-    let script: string
-    if (a.code !== undefined) {
-      const dir = inside(env.cwd, join('.evoscholar', 'cells'))
-      mkdirSync(dir, { recursive: true })
-      script = inside(env.cwd, join(dir, `cell-${randomUUID()}.py`))
-      writeFileSync(script, a.code, { encoding: 'utf8', flag: 'wx' })
-    } else script = inside(env.cwd, a.file!)
-    const before = snapshot(env.cwd)
-    env.trace?.({ kind: 'exec', tool: 'run_python', file: relative(env.cwd, script) })
-    const r = await run(pythonBin(env), [script, ...(a.args ?? [])], env, a.timeout_s ?? 120, ctx.signal)
+    const mode = await chooseExecution(env)
+    const args0 = a.args ?? []
+    const script = a.file === undefined ? undefined : modelPath(env, a.file)
+    const before = mode === 'host' ? snapshot(env.cwd) : new Map<string, number>()
+    let r
+    if (mode === 'isolated') {
+      const path = script ? relative(modelPath(env, '.'), script).split(sep).join('/') : '/control/cell.py'
+      const job: ExecutionJob = { host: [pythonBin(env), []], sandbox: ['python', path, ...args0], code: a.code }
+      r = await env.executor!.run(env, job, a.timeout_s ?? 120, ctx.signal)
+    } else {
+      let file = script
+      if (!file) {
+        const dir = modelPath(env, join('.evoscholar', 'cells'))
+        mkdirSync(dir, { recursive: true })
+        file = modelPath(env, join(dir, `cell-${randomUUID()}.py`))
+        writeFileSync(file, a.code!, { encoding: 'utf8', flag: 'wx' })
+      }
+      r = await run(pythonBin(env), [file, ...args0], env, a.timeout_s ?? 120, ctx.signal)
+    }
+    env.trace?.({ kind: 'exec', tool: 'run_python', mode, ...(a.file ? { file: a.file } : {}) })
     env.trace?.({ kind: 'exec.exit', tool: 'run_python', code: r.code, timedOut: r.timedOut })
-    return report(r, changedFiles(before, snapshot(env.cwd), env.cwd), env)
+    return report(r, mode === 'host' ? changedFiles(before, snapshot(env.cwd), env.cwd) : r.files ?? [], env)
   }
 })
 
@@ -213,23 +243,40 @@ export const runCommand: ToolFactory = (env) => ({
   validate(i) {
     const a = objectArgs(i, ['command', 'timeout_s'], ['command'])
     if (typeof a.command !== 'string' || !a.command.trim()) throw new Error('command required')
+    validateTimeout(a.timeout_s, 900)
     checkCommand(a.command)
     return a as Json
   },
   authorize: async (args, ctx) => approve(env, 'run_command', `运行命令：${(args as { command: string }).command}`, ctx.signal),
   async execute(args, ctx) {
     const a = args as { command: string; timeout_s?: number }
-    const before = snapshot(env.cwd)
-    env.trace?.({ kind: 'exec', tool: 'run_command', command: a.command })
-    const [cmd, cmdArgs] = shellFor(a.command)
-    const r = await run(cmd, cmdArgs, env, a.timeout_s ?? 120, ctx.signal)
+    const mode = await chooseExecution(env)
+    const before = mode === 'host' ? snapshot(env.cwd) : new Map<string, number>()
+    env.trace?.({ kind: 'exec', tool: 'run_command', command: a.command, mode })
+    const r = mode === 'isolated'
+      ? await env.executor!.run(env, { host: shellFor(a.command), sandbox: ['/bin/sh', '-c', a.command] }, a.timeout_s ?? 120, ctx.signal)
+      : await run(...shellFor(a.command), env, a.timeout_s ?? 120, ctx.signal)
     env.trace?.({ kind: 'exec.exit', tool: 'run_command', code: r.code, timedOut: r.timedOut })
-    return report(r, changedFiles(before, snapshot(env.cwd), env.cwd), env)
+    return report(r, mode === 'host' ? changedFiles(before, snapshot(env.cwd), env.cwd) : r.files ?? [], env)
   }
 })
 
-type Proc = { child: ChildProcess; out: string; read: number; closed: Promise<void>; error?: string }
+type Proc = { child: ChildProcess; out: string; read: number; closed: Promise<void>; error?: string; port?: number }
 const PROCS = new Map<string, Map<string, Proc>>()
+type ContainerProc = { service: IsolatedService; port?: number; previous: string }
+const containers = new Map<string, Map<string, ContainerProc>>()
+const sessionKey = (env: ToolEnv) => env.sessionId ?? env.cwd
+const containersFor = (env: ToolEnv) => {
+  const key = sessionKey(env)
+  if (!containers.has(key)) containers.set(key, new Map())
+  return containers.get(key)!
+}
+async function readContainer(id: string, job: ContainerProc, signal: AbortSignal) {
+  const { text, output } = await job.service.read(signal)
+  const change = output.startsWith(job.previous) ? output.slice(job.previous.length) : output
+  job.previous = output
+  return textResult(`进程 ${id}：${text}\n${clip(change.trim()) || '（没有新输出）'}`)
+}
 const procsFor = (env: ToolEnv) => {
   const key = env.sessionId ?? env.cwd
   if (!PROCS.has(key)) PROCS.set(key, new Map())
@@ -238,10 +285,14 @@ const procsFor = (env: ToolEnv) => {
 
 /** Stop every background process a session started (called when the session closes). */
 export async function stopAllProcesses(sessionKey: string): Promise<void> {
-  const m = PROCS.get(sessionKey)
-  if (!m) return
-  await Promise.all([...m.values()].map((p) => stopProc(p)))
+  const processes = PROCS.get(sessionKey)
+  const services = containers.get(sessionKey)
   PROCS.delete(sessionKey)
+  containers.delete(sessionKey)
+  await Promise.allSettled([
+    ...[...(processes?.values() ?? [])].map(stopProc),
+    ...[...(services?.values() ?? [])].map((job) => job.service.stop())
+  ])
 }
 
 async function stopProc(p: Proc): Promise<void> {
@@ -262,34 +313,70 @@ function procStatus(p: Proc): string {
   return '运行中'
 }
 
+async function unusedServicePort(port: number): Promise<void> {
+  const probe = createServer()
+  await new Promise<void>((resolve, reject) => {
+    probe.once('error', () => reject(new Error('后台服务端口已被占用')))
+    probe.listen({ host: '127.0.0.1', port, exclusive: true }, () => probe.close(() => resolve()))
+  })
+}
+
 export const startProcess: ToolFactory = (env) => ({
   name: 'start_process',
   version: '1',
-  description: '在工作目录中后台启动一个长时间运行的命令（如本地模拟服务），等待 wait_s 秒后返回进程 id 和到目前为止的输出。用完必须调用 stop_process。',
+  description: '在工作目录中后台启动一个长时间运行的命令（如本地模拟服务），等待 wait_s 秒后返回进程 ID。需要 http_get 时，填写 port 并让服务监听同一个回环端口。用完必须调用 stop_process。',
   parameters: {
     type: 'object',
-    properties: { command: { type: 'string' }, wait_s: { type: 'number', minimum: 0, maximum: 30, description: '默认 2 秒' } },
+    properties: { command: { type: 'string' }, port: { type: 'integer', minimum: 1024, maximum: 65535 }, wait_s: { type: 'number', minimum: 0, maximum: 30, description: '默认 2 秒' } },
     required: ['command'],
     additionalProperties: false
   },
   scheduling: 'exclusive',
   validate(i) {
-    const a = objectArgs(i, ['command', 'wait_s'], ['command'])
+    const a = objectArgs(i, ['command', 'wait_s', 'port'], ['command'])
     if (typeof a.command !== 'string' || !a.command.trim()) throw new Error('command required')
+    if (a.port !== undefined && (!Number.isInteger(a.port) || Number(a.port) < 1024 || Number(a.port) > 65535))
+      throw new Error('后台服务端口必须为 1024–65535')
     checkCommand(a.command)
     return a as Json
   },
   authorize: async (args, ctx) => approve(env, 'start_process', `后台启动：${(args as { command: string }).command}`, ctx.signal),
   async execute(args, ctx) {
-    const a = args as { command: string; wait_s?: number }
+    const a = args as { command: string; wait_s?: number; port?: number }
     ctx.signal.throwIfAborted()
     const procs = procsFor(env)
-    if (procs.size >= 4) return textResult('后台进程已有 4 个，请先 stop_process', true)
-    const [cmd, cmdArgs] = shellFor(process.platform === 'win32' ? a.command : `exec ${a.command}`)
+    const services = containersFor(env)
+    if (procs.size + services.size >= 4) return textResult('后台进程已有 4 个，请先 stop_process', true)
+    if (a.port !== undefined && [...procs.values(), ...services.values()].some((job) => job.port === a.port))
+      return textResult('本会话已登记这个端口', true)
+    const mode = await chooseExecution(env)
+    if (mode === 'isolated') {
+      const id = `p-${randomUUID()}`
+      const service = await env.executor!.start(env, { host: shellFor(a.command), sandbox: ['/bin/sh', '-c', a.command] }, ctx.signal)
+      const job = { service, port: a.port, previous: '' }
+      services.set(id, job)
+      try {
+        await delay((a.wait_s ?? 2) * 1000, undefined, { signal: ctx.signal })
+        const result = await readContainer(id, job, ctx.signal)
+        env.trace?.({ kind: 'process.start', id, mode })
+        return result
+      } catch (error) {
+        services.delete(id)
+        await service.stop()
+        throw error
+      }
+    }
+    if (a.port !== undefined) {
+      if (a.port === (env.ws.config.localHttpPort ?? Number(process.env.EVOSCHOLAR_PORT ?? 4317)))
+        return textResult('不能登记工作台端口', true)
+      await unusedServicePort(a.port)
+      ctx.signal.throwIfAborted()
+    }
+    const [cmd, cmdArgs] = shellFor(a.command)
     const child = spawn(cmd, cmdArgs, { cwd: env.cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     const id = `p-${randomUUID()}`
     const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
-    const p: Proc = { child, out: '', read: 0, closed }
+    const p: Proc = { child, out: '', read: 0, closed, port: a.port }
     child.on('error', (error) => { p.error = error.message })
     const add = (b: Buffer) => { p.out += b.toString('utf8'); if (p.out.length > 200_000) { p.out = p.out.slice(-100_000); p.read = 0 } }
     child.stdout!.on('data', add)
@@ -328,6 +415,11 @@ export const readProcess: ToolFactory = (env) => ({
   authorize: async () => true,
   async execute(args, ctx) {
     const a = args as { id: string; wait_s?: number }
+    const service = containersFor(env).get(a.id)
+    if (service) {
+      if (a.wait_s) await delay(a.wait_s * 1000, undefined, { signal: ctx.signal })
+      return readContainer(a.id, service, ctx.signal)
+    }
     const p = procsFor(env).get(a.id)
     if (!p) return textResult(`没有进程 ${a.id}`, true)
     if (a.wait_s) await delay(a.wait_s * 1000, undefined, { signal: ctx.signal })
@@ -347,6 +439,13 @@ export const stopProcess: ToolFactory = (env) => ({
   authorize: async (args, ctx) => approve(env, 'stop_process', `停止进程 ${(args as { id: string }).id}`, ctx.signal),
   async execute(args) {
     const id = (args as { id: string }).id
+    const services = containersFor(env)
+    const service = services.get(id)
+    if (service) {
+      try { await service.service.stop() } finally { services.delete(id) }
+      env.trace?.({ kind: 'process.stop', id })
+      return textResult(`进程 ${id} 已停止。`)
+    }
     const procs = procsFor(env)
     const p = procs.get(id)
     if (!p) return textResult(`没有进程 ${id}`, true)
@@ -360,7 +459,7 @@ export const stopProcess: ToolFactory = (env) => ({
 export const httpGet: ToolFactory = (env) => ({
   name: 'http_get',
   version: '1',
-  description: '对本机服务（localhost / 127.0.0.1）发起 HTTP GET，返回状态码和正文。访问外网请用 web_fetch。',
+  description: '对本会话登记的后台服务发起 HTTP GET。URL 必须是 http://127.0.0.1:登记端口/路径。',
   parameters: {
     type: 'object',
     properties: { url: { type: 'string' }, timeout_s: { type: 'integer', minimum: 1, maximum: 60 } },
@@ -370,17 +469,43 @@ export const httpGet: ToolFactory = (env) => ({
   scheduling: 'parallel',
   validate(i) {
     const a = objectArgs(i, ['url', 'timeout_s'], ['url'])
+    validateTimeout(a.timeout_s, 60)
     const u = new URL(String(a.url))
-    if (!/^https?:$/.test(u.protocol) || !['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)) throw new Error('http_get 只能访问本机地址')
+    if (u.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(u.hostname) || !u.port || u.username || u.password || u.hash)
+      throw new Error('http_get 只接受本会话登记的回环 HTTP 端口')
     return a as Json
   },
   authorize: async () => true,
   async execute(args, ctx) {
     const a = args as { url: string; timeout_s?: number }
     const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout((a.timeout_s ?? 15) * 1000)])
+    const url = new URL(a.url)
+    const timeout = a.timeout_s ?? 15
+    const service = [...containersFor(env).values()].find((p) => p.port === Number(url.port))
+    if (service) {
+      const result = await service.service.get(Number(url.port), url.pathname + url.search, timeout, signal)
+      env.trace?.({ kind: 'http', url: a.url, status: result.status, mode: 'isolated' })
+      return textResult(`HTTP ${result.status}\n${clip(result.body)}`)
+    }
+    const registered = [...procsFor(env).values()].some((p) =>
+      p.port === Number(url.port) && !p.error && p.child.exitCode === null && p.child.signalCode === null)
+    if (!registered) return textResult('这个端口未由本会话的后台服务登记', true)
+    url.hostname = '127.0.0.1'
     try {
-      const res = await fetch(a.url, { signal, redirect: 'error' })
-      const body = await res.text()
+      const res = await fetch(url, { signal, redirect: 'error' })
+      const reader = res.body?.getReader()
+      const decoder = new TextDecoder()
+      let body = ''
+      try {
+        while (reader && body.length < OUT_LIMIT) {
+          const { done, value } = await reader.read()
+          if (done) break
+          body += decoder.decode(value, { stream: true })
+        }
+        body += decoder.decode()
+      } finally {
+        if (reader) { await reader.cancel().catch(() => {}); reader.releaseLock() }
+      }
       env.trace?.({ kind: 'http', url: a.url, status: res.status })
       return textResult(`HTTP ${res.status}\n${clip(body)}`)
     } catch (e) {

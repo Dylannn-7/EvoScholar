@@ -1,6 +1,6 @@
 // EvoScholar web workbench v2 — no build step, no external requests.
 // Shell: icon rail + view router + shared state. Views live in ui/*.js.
-import { api } from './ui/api.js'
+import { api, post, storeToken } from './ui/api.js'
 import { icon } from './ui/icons.js'
 import { toast } from './ui/modal.js'
 import { initWorkbench } from './ui/workbench.js'
@@ -125,24 +125,82 @@ export function openPop (anchor, items, opts = {}) {
     if (!b) return
     const it = items[Number(b.dataset.i)]
     closePop()
-    it.onPick?.()
+    Promise.resolve().then(() => it.onPick?.()).catch((error) => toast(error.message, 'err'))
   })
   const inp = el.querySelector('input')
   if (inp) { inp.oninput = () => draw(inp.value); setTimeout(() => inp.focus(), 0) }
   popEl = el
   return el
 }
+// Icon-only buttons take their tooltip as an accessible name, so screen readers say more than "button".
+function nameButtons (root) {
+  for (const b of root.querySelectorAll ? root.querySelectorAll('button:not([aria-label])') : []) {
+    if (b.textContent.trim()) continue
+    const name = b.title || b.dataset.tip
+    if (name) b.setAttribute('aria-label', name)
+  }
+}
+new MutationObserver((records) => {
+  for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1) nameButtons(n.parentElement || n)
+}).observe(document.body, { childList: true, subtree: true })
+nameButtons(document)
 addEventListener('resize', () => syncFx())
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (RENDER[h] && h !== view) go(h) })
 addEventListener('mousedown', (e) => { if (popEl && !popEl.contains(e.target) && !e.target.closest('.tb.open')) closePop() })
 addEventListener('keydown', (e) => { if (e.key === 'Escape') closePop() })
 
 // ---------------------------------------------------------------- boot
-store.refresh().then(() => {
+function showPairing(message = '') {
+  workbench?.home()
+  const existing = document.querySelector('#pairing')
+  if (existing) { existing.querySelector('output').textContent = message; return }
+  const dialog = document.createElement('dialog')
+  dialog.id = 'pairing'
+  dialog.className = 'modal'
+  dialog.innerHTML = `<form class="modal-form"><h2>配对 EvoScholar</h2>
+    <p>请输入启动终端显示的配对码。</p>
+    <label class="field-label">配对码 <input class="input" name="code" type="password" inputmode="numeric" autocomplete="off" required></label>
+    <output role="status"></output>
+    <button class="btn primary" type="submit">配对</button></form>`
+  dialog.querySelector('output').textContent = message
+  dialog.addEventListener('cancel', (event) => event.preventDefault())
+  document.body.append(dialog)
+  dialog.showModal()
+  const form = dialog.querySelector('form')
+  form.onsubmit = async (event) => {
+    event.preventDefault()
+    const submit = form.querySelector('button')
+    submit.disabled = true
+    try {
+      await pair(new FormData(form).get('code'))
+      dialog.close(); dialog.remove()
+      await boot()
+    } catch (error) {
+      form.querySelector('output').textContent = error.message
+    } finally { submit.disabled = false }
+  }
+}
+async function pair(code) {
+  const result = await post('/api/auth/pair', { code })
+  storeToken(result.token)
+}
+async function boot() {
+  await store.refresh()
   const sid = new URLSearchParams(location.search).get('s')
   const [hash, sub] = location.hash.slice(1).split(':')
-  workbench = initWorkbench()
+  workbench ??= initWorkbench()
   if (sid) workbench.open(sid)
   else workbench.home()
   go(RENDER[hash] ? hash : 'workbench', sub)
-}).catch((e) => toast(`无法连接后台：${e.message}`, 'err', 8000))
+}
+addEventListener('evo:unpaired', () => showPairing(workbench ? '会话令牌已失效，请重新配对。' : ''))
+void (async () => {
+  const auto = new URLSearchParams(location.hash.slice(1)).get('pair')
+  if (auto) {
+    try { await pair(auto) }
+    catch (error) { showPairing(error.message); return }
+    finally { history.replaceState(null, '', location.pathname + location.search) }
+  }
+  try { await boot() }
+  catch (error) { showPairing(error.status === 401 ? '' : error.message) }
+})()

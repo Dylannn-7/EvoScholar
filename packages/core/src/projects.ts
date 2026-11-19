@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } fr
 import { randomUUID } from 'node:crypto'
 import type { Workspace } from './config'
 import type { Db } from './db'
+import { appPrivate } from './tools/sandbox'
 
 export type Project = { id: string; name: string; path: string; created_at: string; archived: number }
 export const OUT_DIR = 'evoscholar-out'
@@ -28,8 +29,7 @@ export function addProject(ws: Workspace, db: Db, folder: string, name?: string)
   if (!statSync(path).isDirectory()) throw new Error('不是文件夹')
   const root = parse(path).root
   if (path === root || path === homedir()) throw new Error('不能把磁盘根目录或用户主目录整体作为项目，请选择具体的文件夹')
-  const data = realpathSync(ws.dataDir)
-  if (path === data || path.startsWith(data + sep)) throw new Error('不能选择 EvoScholar 自己的数据目录')
+  if (appPrivate(ws, path)) throw new Error('不能选择 EvoScholar 自己的程序目录、数据目录或其中的文件夹')
   const existing = db.prepare('SELECT * FROM projects WHERE path = ?').get(path) as Project | undefined
   if (existing) {
     if (existing.archived) db.prepare('UPDATE projects SET archived = 0 WHERE id = ?').run(existing.id)

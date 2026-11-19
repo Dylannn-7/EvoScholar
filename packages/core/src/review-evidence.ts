@@ -1,7 +1,7 @@
 import { closeSync, fstatSync, openSync, readdirSync, readSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import { runPyHelper } from './tools/exec'
-import { inside } from './tools/sandbox'
+import { modelPath } from './tools/sandbox'
 import type { ToolEnv } from './tools/types'
 
 const TEXT = new Set(['.csv', '.tsv', '.json', '.md', '.txt', '.bib', '.tex'])
@@ -23,7 +23,7 @@ export async function reviewEvidence(env: ToolEnv, signal: AbortSignal): Promise
   }
   const scan = async (relative: string, depth: number): Promise<void> => {
     let entries
-    try { entries = readdirSync(inside(env.cwd, relative), { withFileTypes: true }) } catch { return }
+    try { entries = readdirSync(modelPath(env, relative), { withFileTypes: true }) } catch { return }
     const priority = (name: string) => name === 'task.md' ? 0 : name === 'answer.json' ? 1 : name === 'inputs' ? 3 : 2
     entries.sort((a, b) => priority(a.name) - priority(b.name) || a.name.localeCompare(b.name))
     for (const entry of entries.slice(0, 40)) {
@@ -36,7 +36,7 @@ export async function reviewEvidence(env: ToolEnv, signal: AbortSignal): Promise
       const cap = Math.min(EXCERPT_BYTES, PACK_BYTES - used - 256)
       if (cap <= 0) return
       try {
-        const file = inside(env.cwd, name)
+        const file = modelPath(env, name)
         const fd = openSync(file, 'r')
         try {
           const length = fstatSync(fd).size

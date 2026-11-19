@@ -5,6 +5,15 @@ import type { HarnessGenome } from '../genome'
 import type { Runtime } from '../session'
 import { readSkillFile } from '../skills'
 
+export type CandidateVerification = {
+  verified: boolean
+  runId: string | null
+  pass: number | null
+  total: number | null
+  scope: string
+  verifiedAt: string | null
+}
+
 export type CandidateRow = {
   genome_id: string
   evolution_run: string
@@ -22,6 +31,47 @@ export type CandidateRow = {
   status: string
   reason: string | null
   ts: string
+  verification_run: string | null
+  verification_pass: number | null
+  verification_total: number | null
+  verification_scope: string | null
+  verified_at: string | null
+  verification: CandidateVerification
+}
+
+type RawCandidateRow = Omit<CandidateRow, 'verification'>
+
+export function candidateVerification(row: Pick<RawCandidateRow, 'evolution_run' | 'dev_pass' | 'dev_total' | 'acc_pass' | 'acc_total' | 'verification_run' | 'verification_pass' | 'verification_total' | 'verification_scope' | 'verified_at'>): CandidateVerification {
+  if (row.verification_run && row.verification_total !== null && row.verification_total > 0 && row.verification_pass !== null) {
+    return {
+      verified: true,
+      runId: row.verification_run,
+      pass: row.verification_pass,
+      total: row.verification_total,
+      scope: row.verification_scope || '离线回放验证',
+      verifiedAt: row.verified_at
+    }
+  }
+  if (row.dev_total !== null && row.dev_total > 0 && row.dev_pass !== null) {
+    const total = row.dev_total + (row.acc_total ?? 0)
+    const pass = row.dev_pass + (row.acc_pass ?? 0)
+    return {
+      verified: true,
+      runId: row.evolution_run,
+      pass,
+      total,
+      scope: row.verification_scope || (row.acc_total ? '离线评测（开发集 + 验收集）' : '离线评测（开发集）'),
+      verifiedAt: row.verified_at
+    }
+  }
+  return {
+    verified: false,
+    runId: null,
+    pass: null,
+    total: null,
+    scope: row.verification_scope || '全局 harness',
+    verifiedAt: null
+  }
 }
 
 export type DiffLine = { op: ' ' | '+' | '-'; text: string }
@@ -66,7 +116,8 @@ export const renderDiff = (d: DiffLine[]) => d.map((l) => `${l.op} ${l.text}`).j
 
 export function listCandidates(rt: Runtime, status?: string): CandidateRow[] {
   const sql = `SELECT * FROM candidates ${status ? 'WHERE status = ?' : ''} ORDER BY ts DESC LIMIT 100`
-  return (status ? rt.db.prepare(sql).all(status) : rt.db.prepare(sql).all()) as CandidateRow[]
+  const rows = (status ? rt.db.prepare(sql).all(status) : rt.db.prepare(sql).all()) as RawCandidateRow[]
+  return rows.map((row) => ({ ...row, verification: candidateVerification(row) }))
 }
 
 function latestByCase(rt: Runtime, hash: string): Map<string, { pass: boolean; cost: number; split: string; failures: string[] }> {
@@ -89,6 +140,7 @@ function promptRefs(g: HarnessGenome): Record<string, string> {
 
 export type CandidateDetail = {
   candidate?: CandidateRow
+  verification?: CandidateVerification
   genome: HarnessGenome
   parent?: HarnessGenome
   genomeDiff: DiffLine[]
@@ -103,7 +155,8 @@ export type CandidateDetail = {
 export function candidateDetail(rt: Runtime, genomeId: string): CandidateDetail {
   const genome = rt.genomes.load(genomeId)
   const parent = genome.parent ? rt.genomes.load(genome.parent) : undefined
-  const candidate = rt.db.prepare(`SELECT * FROM candidates WHERE genome_id = ?`).get(genomeId) as CandidateRow | undefined
+  const rawCandidate = rt.db.prepare(`SELECT * FROM candidates WHERE genome_id = ?`).get(genomeId) as RawCandidateRow | undefined
+  const candidate = rawCandidate ? { ...rawCandidate, verification: candidateVerification(rawCandidate) } : undefined
   const strip = (g?: HarnessGenome) => {
     if (!g) return ''
     const { id: _i, parent: _p, createdAt: _c, createdBy: _b, status: _s, note: _n, ...rest } = g
@@ -138,7 +191,7 @@ export function candidateDetail(rt: Runtime, genomeId: string): CandidateDetail 
   const base = parent ? latestByCase(rt, rt.genomes.hash(parent)) : new Map()
   const assessed = candidate && rt.db.prepare(`SELECT genome_hash FROM eval_runs
     WHERE genome_id = ? AND evolution_run = ? ORDER BY id DESC LIMIT 1`)
-    .get(genome.id, candidate.evolution_run) as { genome_hash: string } | undefined
+    .get(genome.id, candidate.verification.runId ?? candidate.evolution_run) as { genome_hash: string } | undefined
   const cand = latestByCase(rt, assessed?.genome_hash ?? rt.genomes.hash(genome))
   const ids = [...new Set([...base.keys(), ...cand.keys()])].sort()
   const cases: CaseDelta[] = ids.map((id) => {
@@ -151,7 +204,7 @@ export function candidateDetail(rt: Runtime, genomeId: string): CandidateDetail 
     const row = rt.db.prepare(`SELECT report_path FROM evolution_runs WHERE id = ?`).get(candidate.evolution_run) as { report_path?: string } | undefined
     if (row?.report_path && existsSync(row.report_path)) report = readFileSync(row.report_path, 'utf8')
   }
-  return { candidate, genome, parent, genomeDiff, promptDiffs, skillDiffs, workflowDiff, cases, report }
+  return { candidate, verification: candidate?.verification, genome, parent, genomeDiff, promptDiffs, skillDiffs, workflowDiff, cases, report }
 }
 
 /** Genome lineage for the panel: id, parent, status, note. */

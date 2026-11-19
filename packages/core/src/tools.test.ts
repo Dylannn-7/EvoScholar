@@ -3,16 +3,17 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
 import type { AgentTool, Json, ToolContext } from '@evoscholar/harness'
-import { TOOL_FACTORIES, childEnv, checkCommand, guarded, inside, runProcess, stopAllProcesses, type ToolEnv } from './tools'
+import { TOOL_FACTORIES, appPrivate, childEnv, checkCommand, guarded, inside, runProcess, stopAllProcesses, type ToolEnv } from './tools'
 import { BudgetError } from './budget'
+import { FILE_LIMITS } from './limits'
 
 const ctx = (): ToolContext => ({ sessionId: 's', runId: 'r', invocationId: 'i', signal: new AbortController().signal, update() {} })
 function setup() {
   const cwd = mkdtempSync(join(tmpdir(), 'evo-cwd-'))
+  const app = mkdtempSync(join(tmpdir(), 'evo-app-'))
   const events: Record<string, unknown>[] = []
-  const env = { ws: { root: cwd, dataDir: join(cwd, 'nodata'), config: {} }, cwd, sessionId: 'tool-test', ledger: {}, category: () => 'dev', trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
+  const env = { ws: { root: app, dataDir: join(app, 'data'), config: {} }, cwd, sessionId: 'tool-test', ledger: {}, category: () => 'dev', trace: (e: Record<string, unknown>) => events.push(e) } as unknown as ToolEnv
   const tool = (name: string): AgentTool => TOOL_FACTORIES[name](env)
   const call = async (name: string, args: Record<string, unknown>) => {
     const t = tool(name)
@@ -61,7 +62,16 @@ test('file tools round-trip and edit', async () => {
 })
 
 test('run_python executes and reports changed files', async () => {
-  const { call } = setup()
+  const { call, env } = setup()
+  env.executor = {
+    available: async () => true,
+    start: async () => { throw new Error('Unexpected service') },
+    run: async (_env, job) => {
+      assert.equal(job.sandbox[1], '/control/cell.py')
+      const fail = job.code?.includes('sys.exit')
+      return { code: fail ? 75 : 0, out: 'done', stdout: 'done', signal: null, timedOut: false, files: fail ? [] : ['r.json'] }
+    }
+  }
   const r = await call('run_python', { code: 'import json\nopen("r.json","w").write(json.dumps({"x": 3}))\nprint("done")' })
   assert.match(text(r), /退出码 0/)
   assert.match(text(r), /r\.json/)
@@ -70,38 +80,35 @@ test('run_python executes and reports changed files', async () => {
   assert.match(text(fail), /75/)
 })
 
-test('background process + localhost http + stop', async (t) => {
-  const { cwd, call, events } = setup()
-  t.after(() => stopAllProcesses('tool-test'))
-  writeFileSync(join(cwd, 'srv.py'), `
-import http.server, socketserver
-class H(http.server.BaseHTTPRequestHandler):
-    n = 0
-    def do_GET(self):
-        H.n += 1
-        code = 429 if self.path.startswith('/primary') else 200
-        self.send_response(code); self.end_headers(); self.wfile.write(b'{"ok": %d}' % H.n)
-    def log_message(self, *a): pass
-with socketserver.TCPServer(('127.0.0.1', 0), H) as s:
-    print(f'http://127.0.0.1:{s.server_address[1]}', flush=True)
-    s.serve_forever()
-`)
-  let output = text(await call('start_process', { command: `${process.platform === 'win32' ? 'python' : 'python3'} srv.py`, wait_s: 0 }))
-  const processId = /进程 (\S+)：/.exec(output)
-  assert.ok(processId, output)
-  const [, id] = processId
-  const deadline = Date.now() + 10_000
-  const address = /http:\/\/127\.0\.0\.1:\d+/
-  while (!address.test(output) && Date.now() < deadline) {
-    await delay(50)
-    output += '\n' + text(await call('read_process', { id }))
-    if (/已退出|已终止/.test(output)) break
+test('background containers register only this session’s service port', async (t) => {
+  const { call, env, events, cwd } = setup()
+  let stopped = false
+  const port = 18921
+  env.executor = {
+    available: async () => true,
+    run: async () => { throw new Error('Unexpected command') },
+    start: async (_env, job) => {
+      assert.deepEqual(job.sandbox, ['/bin/sh', '-c', 'python srv.py'])
+      return {
+        read: async () => ({ running: !stopped, text: '运行中', output: 'fixture data' }),
+        get: async (requested, path) => {
+          assert.equal(requested, port)
+          return { status: path.startsWith('/primary') ? 429 : 200, body: '{"fixture": true}' }
+        },
+        stop: async () => { stopped = true }
+      }
+    }
   }
-  const url = address.exec(output)?.[0]
-  assert.ok(url, `服务未就绪：${output.slice(-1000)}`)
+  t.after(async () => { await stopAllProcesses('tool-test'); rmSync(cwd, { recursive: true, force: true }) })
+  const url = `http://127.0.0.1:${port}`
+  assert.equal((await call('http_get', { url })).isError, true)
+  const started = text(await call('start_process', { command: 'python srv.py', wait_s: 0, port }))
+  const processId = /进程 (\S+)：/.exec(started)
+  assert.ok(processId, started)
   assert.match(text(await call('http_get', { url: url + '/primary?q=queue' })), /HTTP 429/)
   assert.match(text(await call('http_get', { url: url + '/backup?q=queue' })), /HTTP 200/)
-  await call('stop_process', { id })
+  await call('stop_process', { id: processId[1] })
+  assert.equal(stopped, true)
   assert.deepEqual(events.filter((e) => e.kind === 'http').map((e) => e.status), [429, 200])
   await assert.rejects(async () => TOOL_FACTORIES.http_get({} as ToolEnv).validate({ url: 'https://example.com' }))
 })
@@ -113,6 +120,38 @@ test('tool exceptions become error results; budget errors still propagate', asyn
   assert.equal(r.isError, true)
   assert.match(r.content[0].text, /t 出错：bad json/)
   await assert.rejects(boom(new BudgetError('cap', 'round')).execute({}, ctx), BudgetError)
+})
+
+test('a project that contains the app cannot reach its code, config, credentials or state', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'evo-home-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const app = join(home, 'EvoScholar')
+  mkdirSync(join(app, 'data', 'projects', 's-draft'), { recursive: true })
+  mkdirSync(join(app, 'packages', 'core'), { recursive: true })
+  writeFileSync(join(app, '.env'), 'DEEPSEEK_API_KEY=sk-fixture')
+  writeFileSync(join(app, 'evoscholar.config.json'), '{}')
+  writeFileSync(join(home, 'notes.md'), '研究笔记')
+  const ws = { root: app, dataDir: join(app, 'data'), config: {} }
+  const env = { ws, cwd: home, sessionId: 't', ledger: {}, category: () => 'dev' } as unknown as ToolEnv
+  const run = async (name: string, args: Record<string, unknown>) => {
+    const tool = TOOL_FACTORIES[name](env)
+    return await tool.execute(tool.validate(args as Json), ctx()) as { content: { text?: string }[]; isError?: boolean }
+  }
+  assert.match(text(await run('read_file', { path: 'notes.md' })), /研究笔记/)
+  await assert.rejects(run('read_file', { path: 'EvoScholar/.env' }), /EvoScholar 自身/)
+  await assert.rejects(run('write_file', { path: 'EvoScholar/evoscholar.config.json', content: '{"x":1}' }), /EvoScholar 自身/)
+  await assert.rejects(run('write_file', { path: 'EvoScholar/packages/core/permissions.ts', content: '' }), /EvoScholar 自身/)
+  assert.equal(readFileSync(join(app, 'evoscholar.config.json'), 'utf8'), '{}')
+  const listing = text(await run('list_files', { depth: 3 }))
+  assert.match(listing, /notes\.md/)
+  assert.doesNotMatch(listing, /EvoScholar/)
+  // The drafts area stays a normal working directory.
+  const draft = { ...env, cwd: join(app, 'data', 'projects', 's-draft') } as ToolEnv
+  const write = TOOL_FACTORIES.write_file(draft)
+  await write.execute(write.validate({ path: 'out.txt', content: 'ok' }), ctx())
+  assert.equal(readFileSync(join(app, 'data', 'projects', 's-draft', 'out.txt'), 'utf8'), 'ok')
+  assert.ok(appPrivate(ws, join(app, 'packages')))
+  assert.ok(!appPrivate(ws, join(home, 'notes.md')))
 })
 
 test('file listings skip linked directories at the project boundary', async (t) => {
@@ -152,4 +191,30 @@ test('a child response that exceeds the stdout budget is rejected', async (t) =>
   assert.notEqual(result.code, 0)
   assert.match(result.out, /输出超过/)
   assert.ok(Buffer.byteLength(result.stdout) <= 8 * 1024 * 1024)
+})
+
+test('read_file streams large text files by line range, truncates at 256 KB, and rejects >10 MB images', async (t) => {
+  const { cwd, call } = setup()
+  t.after(() => rmSync(cwd, { recursive: true, force: true }))
+  const lines = Array.from({ length: 4000 }, (_, i) => `L${String(i + 1).padStart(4, '0')} ${'数据行内容'.repeat(12)}`)
+  writeFileSync(join(cwd, 'big.log'), lines.join('\n'))
+
+  const page1 = text(await call('read_file', { path: 'big.log', offset: 1, limit: 3 }))
+  assert.equal(page1, lines.slice(0, 3).join('\n'))
+  const pageMid = text(await call('read_file', { path: 'big.log', offset: 200, limit: 2 }))
+  assert.equal(pageMid, lines.slice(199, 201).join('\n'))
+
+  const full = text(await call('read_file', { path: 'big.log' }))
+  assert.ok(Buffer.byteLength(full, 'utf8') <= FILE_LIMITS.textReadBytes, 'truncated text stays within 256 KB')
+  assert.match(full, /已截断.*offset.*limit/)
+
+  writeFileSync(join(cwd, 'one-line.txt'), 'x'.repeat(300 * 1024))
+  const single = text(await call('read_file', { path: 'one-line.txt' }))
+  assert.ok(Buffer.byteLength(single, 'utf8') <= FILE_LIMITS.textReadBytes)
+  assert.match(single, /已截断.*offset.*limit/)
+
+  writeFileSync(join(cwd, 'huge.png'), Buffer.alloc(FILE_LIMITS.imageBytes + 1024, 1))
+  const imgRes = await call('read_file', { path: 'huge.png' })
+  assert.equal(imgRes.isError, true)
+  assert.match(text(imgRes), /10 MB.*缩小/)
 })

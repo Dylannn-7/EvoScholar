@@ -2,5 +2,6 @@
   "type": "github",
   "origin": "https://github.com/K-Dense-AI/scientific-agent-skills/tree/main/skills/matplotlib",
   "license": "https://github.com/matplotlib/matplotlib/tree/main/LICENSE",
-  "importedAt": "2026-11-18T17:07:39.356Z"
+  "importedAt": "2026-11-18T17:07:39.356Z",
+  "bundled": true
 }

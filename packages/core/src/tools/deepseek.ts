@@ -1,4 +1,5 @@
 import type { Json } from '@evoscholar/harness'
+import { MiB, readJson } from '../http-body'
 import { toolCostUsd } from '../pricing'
 import { objectArgs, textResult, type ToolEnv, type ToolFactory } from './types'
 
@@ -24,10 +25,11 @@ async function call(env: ToolEnv, kind: 'search' | 'fetch', body: Record<string,
       redirect: 'error'
     })
     if (!res.ok) {
+      await res.body?.cancel().catch(() => {})
       if (res.status < 500) actual = null
       return { ok: false as const, status: res.status, data: null }
     }
-    const data = (await res.json()) as Record<string, unknown>
+    const data = (await readJson(res, 4 * MiB, 'DeepSeek 工具响应')) as Record<string, unknown>
     const billable = kind === 'search' ? Array.isArray(data.results) && data.results.length > 0 : !!data.content
     actual = billable ? { costUsd } : null
     return { ok: true as const, status: res.status, data }

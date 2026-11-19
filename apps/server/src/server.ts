@@ -2,13 +2,19 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, extname, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { spawn } from 'node:child_process'
 import { IMG, body, httpError, send, serveFile } from './http'
+import { serveProjectFile } from './file-preview'
 import { createV2Routes } from './routes-v2'
+import { createLocalAuth } from './local-auth'
 import {
   Bench,
   BudgetError,
+  FILE_LIMITS,
+  MiB_BYTES,
   PROTECTED_LIMITS,
   VERDICTS,
+  base64DecodedBytes,
   candidateDetail,
   evolveRound,
   feedbackEvents,
@@ -128,8 +134,14 @@ function listCwd(cwd: string) {
   return out
 }
 
-export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: string[] }) {
+// The repository (or packaged app) root sits three levels above apps/server/dist.
+const APP_VERSION = (() => {
+  try { return String(JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf8')).version) } catch { return '' }
+})()
+
+export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: string[]; auth?: ReturnType<typeof createLocalAuth> }) {
   const ws = rt.ws
+  const auth = opts.auth ?? createLocalAuth()
   const WEB = resolve(opts.webDir)
   const alerts = opts.alerts ?? []
   const live = new Map<string, Live>()
@@ -445,12 +457,24 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     // Mutations require a custom header, which browsers cannot send cross-site without CORS approval.
     if (req.method !== 'GET' && req.headers['x-evoscholar'] !== '1') return send(res, 403, { error: 'missing x-evoscholar header' })
     // DNS-rebinding guard: the API only answers to loopback host names.
-    const host = String(req.headers.host ?? '').replace(/:\d+$/, '')
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(host)) return send(res, 403, { error: '无效的本机 Host' })
+    const host = /^(127\.0\.0\.1|localhost|\[::1\])(?::(\d+))?$/.exec(req.headers.host ?? '')
+    if (!host || Number(host[2] ?? 80) !== req.socket.localPort)
+      return send(res, 403, { error: '无效的本机 Host' })
     if (p.startsWith('/api/') && (req.headers['sec-fetch-site'] === 'cross-site' ||
       (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)))
       return send(res, 403, { error: '工作台接口仅限同源访问' })
-    if (p.startsWith('/api/') && (await v2(req, res, url))) return
+    if (p === '/api/auth/pair' && req.method === 'POST') {
+      const credentials = await body(req, 1024)
+      const { status, ...result } = auth.exchange(credentials.code)
+      return send(res, status, result)
+    }
+    let grant: string | undefined
+    if (p === '/api' || p.startsWith('/api/')) {
+      grant = auth.verify(req.headers.authorization)
+      if (!grant) return send(res, 401, { error: '请先配对工作台' })
+      ws.config.localHttpPort = req.socket.localPort
+      if (await v2(req, res, url)) return
+    }
 
     if (p === '/api/state' && req.method === 'GET') {
       const g = rt.genomes.load()
@@ -462,11 +486,22 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         projects: listProjects(rt.db),
         sessions: listSessions(),
         pending: (rt.db.prepare(`SELECT COUNT(*) n FROM candidates WHERE status = 'pending'`).get() as { n: number }).n,
+        app: { version: APP_VERSION, workspace: ws.root },
         alerts
       })
     }
+    if (p === '/api/workspace/reveal' && req.method === 'POST') {
+      const [cmd, args] = process.platform === 'darwin' ? ['open', [ws.root]]
+        : process.platform === 'win32' ? ['explorer.exe', [ws.root]] : ['xdg-open', [ws.root]]
+      const child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true })
+      child.on('error', () => {})
+      child.unref()
+      return send(res, 200, { ok: true })
+    }
     if (p === '/api/budget' && req.method === 'GET') {
       return send(res, 200, {
+        scope: 'dev-and-history',
+        notice: '开发与历史花费（日常使用只统计 token，不统计金额）',
         summary: rt.ledger.summary(),
         peak: isDeepSeekPeak(),
         recent: rt.db.prepare('SELECT ts, category, kind, model, input_tokens, cache_read_tokens, output_tokens, peak, cost_cny, estimated FROM ledger ORDER BY id DESC LIMIT 50').all()
@@ -574,12 +609,14 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
           messages: structuredClone(srcState.messages),
           compactions: structuredClone(srcState.compactions ?? []),
           requests: [],
-          pending: []
+          // Unfinished calls travel with the messages that reference them; the next prompt settles them.
+          pending: structuredClone(srcState.pending ?? [])
         })
       }
       rt.db
         .prepare(`INSERT INTO sessions (id, created_at, genome_id, title, stage, category, pinned, archived) VALUES (?,?,?,?,?,?,0,0)`)
         .run(newId, new Date().toISOString(), rt.genomes.activeId(), newTitle, null, 'usage')
+      rt.evolve.inheritExternalSource(srcId, newId)
       const srcProj = join(ws.dataDir, 'projects', srcId)
       const dstProj = join(ws.dataDir, 'projects', newId)
       mkdirSync(join(dstProj, '.evoscholar'), { recursive: true })
@@ -629,7 +666,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     mm = m(/^\/api\/sessions\/([\w-]+)\/events$/)
     if (mm && req.method === 'GET') {
       const l = await getLive(mm[1])
-      if (res.destroyed) return
+      if (res.destroyed || !grant || !auth.watch(grant, res)) return
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
       res.write(`data: ${JSON.stringify({ type: 'hello', busy: l.busy })}\n\n`)
       l.clients.add(res)
@@ -669,19 +706,47 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         const refs = (Array.isArray(b.refs) ? b.refs : []).map(String).slice(0, 20)
         const vision = modelInfo(ws.config, l.rs.model).vision
         const notes: string[] = []
+        let imageCount = 0
+        let imageTotalBytes = 0
+        /** Referenced project images that do not fit are passed by path instead of failing the message. */
+        const fitsImageLimits = (bytes: number) => bytes <= FILE_LIMITS.imageBytes &&
+          imageCount < FILE_LIMITS.messageImagesMax && imageTotalBytes + bytes <= FILE_LIMITS.messageImagesTotalBytes
+        const checkImageLimits = (bytes: number, label: string) => {
+          if (bytes > FILE_LIMITS.imageBytes) {
+            throw httpError(413, `图片 ${label} 超过单张上限 ${Math.round(FILE_LIMITS.imageBytes / MiB_BYTES)} MB（当前 ${(bytes / MiB_BYTES).toFixed(1)} MB），请先缩小后重试`)
+          }
+          imageCount++
+          if (imageCount > FILE_LIMITS.messageImagesMax) {
+            throw httpError(413, `单条消息最多附带 ${FILE_LIMITS.messageImagesMax} 张图片，请减少图片数量后重试`)
+          }
+          imageTotalBytes += bytes
+          if (imageTotalBytes > FILE_LIMITS.messageImagesTotalBytes) {
+            throw httpError(413, `单条消息图片总大小超过 ${Math.round(FILE_LIMITS.messageImagesTotalBytes / MiB_BYTES)} MB 上限，请减少或压缩图片后重试`)
+          }
+        }
+        const attached = new Set(attachments)
         for (const rel of [...attachments, ...refs]) {
           const f = inside(l.rs.cwd, rel)
           if (!existsSync(f) || !statSync(f).isFile()) continue
           const ext = extname(f).toLowerCase()
           const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.gif' ? 'image/gif' : ext === '.webp' ? 'image/webp' : ''
-          if (mime && vision && statSync(f).size < 8 * 1024 * 1024) {
+          if (mime && vision) {
+            const size = statSync(f).size
+            if (!attached.has(rel) && !fitsImageLimits(size)) { notes.push(rel); continue }
+            checkImageLimits(size, rel)
             blocks.push({ type: 'image', mimeType: mime, source: `data:${mime};base64,${readFileSync(f).toString('base64')}`, filename: basename(f) })
             notes.push(`${rel}（图片，已附在消息里）`)
           } else notes.push(rel)
         }
         if (notes.length) text += `\n\n[${attachments.length ? '附件' : '引用文件'}] ${notes.join('；')}`
-        for (const img of (b.images ?? []) as { mimeType: string; data: string }[])
-          if (/^image\/(png|jpeg|gif|webp)$/.test(img.mimeType)) blocks.push({ type: 'image', mimeType: img.mimeType, source: `data:${img.mimeType};base64,${img.data}` })
+        for (const img of (Array.isArray(b.images) ? b.images : []) as { mimeType?: string; data?: string }[]) {
+          const mimeType = String(img?.mimeType ?? '')
+          if (/^image\/(png|jpeg|gif|webp)$/.test(mimeType)) {
+            const data = String(img?.data ?? '')
+            checkImageLimits(base64DecodedBytes(data), `第 ${imageCount + 1} 张`)
+            blocks.push({ type: 'image', mimeType, source: `data:${mimeType};base64,${data}` })
+          }
+        }
         if (l.meta.permission === 'plan') text = `${PLAN_MODE_NOTE}\n\n${text}`
         blocks.unshift({ type: 'text', text })
         const live0 = l
@@ -771,7 +836,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       const cwd = sessionDirectory(mm[1])
       const f = inside(cwd, url.searchParams.get('path') ?? '')
       if (!existsSync(f) || !statSync(f).isFile()) return send(res, 404, { error: 'not found' })
-      return serveFile(res, f, { projectFile: true })
+      return await serveProjectFile(rt, res, f, url.searchParams.get('preview') === 'first-page')
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/upload$/)
     if (mm && req.method === 'POST') {
@@ -835,8 +900,13 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     mm = m(/^\/api\/evolution\/(g-[\w-]+)\/(promote|reject)$/)
     if (mm && req.method === 'POST') {
       const b = await body(req)
-      if (mm[2] === 'promote') promote(rt, mm[1])
-      else reject(rt, mm[1], b.reason ? String(b.reason).slice(0, 300) : undefined)
+      try {
+        if (mm[2] === 'promote') promote(rt, mm[1], { confirmUnverified: b.confirmUnverified === true })
+        else reject(rt, mm[1], b.reason ? String(b.reason).slice(0, 300) : undefined)
+      } catch (e) {
+        const err = e as Error & { status?: number }
+        throw httpError(err.status ?? 400, err.message)
+      }
       await resetIdleSessions()
       return send(res, 200, { ok: true, active: rt.genomes.activeId() })
     }
