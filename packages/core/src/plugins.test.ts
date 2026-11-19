@@ -43,15 +43,15 @@ test('kernel static policy blocks network, processes, dynamic code and path esca
     assert.ok(checkKernelCode(bad).length, bad)
 })
 
-test('forge -> trial, reuse in two other sessions -> active; patch_skill and propose_rule', async (t) => {
+test('forged skills need approval after two successful reuses; patch_skill and propose_rule', async (t) => {
   const dir = ws()
   const rt = openRuntime(openWorkspace(dir))
   t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
   const cwd = join(dir, 'work'); mkdirSync(cwd)
   writeFileSync(join(cwd, 'm.csv'), 'a,b\n1,2\n3,4\n')
   const events: { kind: string; text: string }[] = []
-  const make = (sid: string) => {
-    const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => 'dev' }
+  const make = (sid: string, approve?: ToolEnv['approve']) => {
+    const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => 'dev', approve }
     const tools = kernelTools({ store: rt.evolve, sessionId: sid, env, emit: (e) => events.push(e), addOverlay: (op, target, value, reason) => rt.evolve.addOverlay({ sessionId: sid, op, target, value, reason }) })
     return (name: string, args: unknown) => tools.find((x) => x.name === name)!.execute(args as never, {} as never) as Promise<{ content: { type: string; text?: string }[]; isError?: boolean }>
   }
@@ -70,6 +70,13 @@ test('forge -> trial, reuse in two other sessions -> active; patch_skill and pro
   assert.equal(skillSource(dir, 'csv-sum').status, 'trial', 'reuse in the forging session does not count')
   await make('s-b')('run_skill', { name: 'csv-sum', args: { path: 'm.csv' } })
   await make('s-c')('run_skill', { name: 'csv-sum', args: { path: 'm.csv' } })
+  assert.equal(skillSource(dir, 'csv-sum').status, 'trial', 'unattended reuse never promotes a skill')
+  const approvals: string[] = []
+  await make('s-c', async (tool, _summary, kind) => {
+    approvals.push(`${tool}/${kind}`)
+    return true
+  })('run_skill', { name: 'csv-sum', args: { path: 'm.csv' } })
+  assert.deepEqual(approvals, ['run_skill/evolution'])
   assert.equal(skillSource(dir, 'csv-sum').status, 'active')
   assert.ok(events.some((e) => e.kind === 'learned' && /转正/.test(e.text)))
 
@@ -101,15 +108,21 @@ test('skill import from folder, zip and GitHub; enable/disable is a genome chang
   assert.deepEqual([...zipped.keys()].sort(), ['SKILL.md', 'scripts/x.py'])
   assert.equal(installSkillFiles(dir, zipped, { type: 'zip' }).name, 'zip-skill')
   assert.deepEqual(parseGithubUrl('https://github.com/o/r/tree/main/skills/foo'), { owner: 'o', repo: 'r', ref: 'main', path: 'skills/foo' })
-  const gh = (async (url: string) => {
+  const sha = 'a'.repeat(40)
+  const treeSha = 'b'.repeat(40)
+  const gh = (async (url: string, init?: RequestInit) => {
+    assert.equal(init?.redirect, 'error')
+    if (url.endsWith('/commits/main')) return Response.json({ sha, commit: { tree: { sha: treeSha } } })
     if (url.endsWith('/repos/o/r')) return Response.json({ default_branch: 'main' })
-    if (url.includes('/git/trees/')) return Response.json({ tree: [{ path: 'skills/foo/SKILL.md', type: 'blob' }, { path: 'skills/foo/references/x.md', type: 'blob' }, { path: 'other/SKILL.md', type: 'blob' }] })
+    if (url.includes(`/git/trees/${treeSha}?`)) return Response.json({ tree: [{ path: 'skills/foo/SKILL.md', type: 'blob', mode: '100644' }, { path: 'skills/foo/references/x.md', type: 'blob', mode: '100644' }, { path: 'other/SKILL.md', type: 'blob', mode: '100644' }] })
+    assert.match(url, new RegExp(sha))
     if (url.endsWith('skills/foo/SKILL.md')) return new Response(skillMd('foo'))
     if (url.endsWith('references/x.md')) return new Response('x')
     if (url.endsWith('/LICENSE')) return new Response('MIT License')
     return new Response('', { status: 404 })
   }) as unknown as typeof fetch
   const fetched = await fetchGithubSkill('https://github.com/o/r/tree/main/skills/foo', gh)
+  assert.match(fetched.origin, new RegExp(sha))
   assert.deepEqual([...fetched.files.keys()].sort(), ['LICENSE.repo.md', 'SKILL.md', 'references/x.md'])
 
   const before = rt.genomes.activeId()
@@ -130,4 +143,30 @@ test('skill import from folder, zip and GitHub; enable/disable is a genome chang
   promote(rt, c.genome)
   assert.equal(rt.genomes.activeId(), c.genome)
   assert.ok(readFileSync(join(dir, cand.instructions.system), 'utf8').includes('经用户批准'))
+})
+
+test('folder imports skip linked directories and enforce the input byte limit', (t) => {
+  const folder = mkdtempSync(join(tmpdir(), 'evo-import-'))
+  const sibling = mkdtempSync(join(tmpdir(), 'evo-import-sibling-'))
+  t.after(() => {
+    rmSync(folder, { recursive: true, force: true })
+    rmSync(sibling, { recursive: true, force: true })
+  })
+  writeFileSync(join(folder, 'SKILL.md'), '---\nname: sample\ndescription: Sample\n---\n')
+  writeFileSync(join(sibling, 'note.md'), 'fixture')
+  symlinkSync(sibling, join(folder, 'reference'), process.platform === 'win32' ? 'junction' : 'dir')
+  assert.deepEqual([...readFolder(folder).keys()], ['SKILL.md'])
+  writeFileSync(join(folder, 'large.md'), Buffer.alloc(8 * 1024 * 1024))
+  assert.throws(() => readFolder(folder), /太大/)
+})
+
+test('approval requires a pending candidate record after an interrupted write', (t) => {
+  const dir = ws()
+  const rt = openRuntime(openWorkspace(dir))
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  const active = rt.genomes.load()
+  const candidate = { ...active, id: rt.genomes.nextId(), parent: active.id, createdBy: 'consolidate/manual', status: 'candidate' as const }
+  rt.genomes.save(candidate)
+  assert.throws(() => promote(rt, candidate.id), /缺少.*记录/)
+  assert.equal(rt.genomes.activeId(), active.id)
 })

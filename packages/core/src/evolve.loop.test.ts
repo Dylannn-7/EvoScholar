@@ -116,3 +116,47 @@ test('memory text validation and the other two protocols accept projected contex
     assert.match(body, /L-0001/)
   }
 })
+
+test('automatic updates preserve the trust and scope of existing memories', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-memory-'))
+  cpSync(join(REPO, 'evoscholar.config.json'), join(dir, 'evoscholar.config.json'))
+  const rt = openRuntime(openWorkspace(dir))
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  const fields = { kind: 'lesson', trigger: '对齐测试样表的行列', content: '固定按日期和样本编号排列' } as const
+  const approved = rt.evolve.upsert({ ...fields, source: 'user' }).item
+  const external = rt.evolve.upsert({ ...fields, source: 'model', untrusted: true }).item
+  assert.notEqual(external.id, approved.id)
+  assert.equal(external.trust, 'untrusted')
+  assert.equal(external.status, 'trial')
+  assert.equal(rt.evolve.get(approved.id)?.status, 'active')
+})
+
+test('a completed turn at its step limit does not start a self-check request', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-step-limit-'))
+  for (const d of ['genomes', 'prompts', 'skills']) cpSync(join(REPO, d), join(dir, d), { recursive: true })
+  cpSync(join(REPO, 'evoscholar.config.json'), join(dir, 'evoscholar.config.json'))
+  const rt = openRuntime(openWorkspace(dir))
+  const oldKey = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'fixture-key'
+  const replies = [
+    call('write_file', { path: 'fixture.png', content: 'fixture' }, 'fixture-call'),
+    say('已生成。'),
+    say('自检完成。')
+  ]
+  let requests = 0
+  t.mock.method(globalThis, 'fetch', async () => replies[requests++]!)
+  const genome = rt.genomes.load()
+  genome.budgets.maxSteps = 2
+  const rs = await openResearchSession(rt, {
+    genome, model: 'deepseek/deepseek-flash', evolve: { store: rt.evolve, projectId: null }
+  })
+  t.after(async () => {
+    await rs.dispose()
+    if (oldKey === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = oldKey
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  assert.equal((await rs.ask('生成测试文件')).status, 'complete')
+  assert.equal(requests, 2)
+})

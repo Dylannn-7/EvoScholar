@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { atomicWriteFile } from './atomic-file'
 import { dirname, join, resolve } from 'node:path'
 
 export type BudgetConfig = {
@@ -9,7 +10,7 @@ export type BudgetConfig = {
   evolutionRoundsPerDay: number
   webCallsPerDay: number
   alertAt: number[]
-  /** When false/unset, daily user usage (`category: 'usage'`) is recorded without hard budget blocking. */
+  /** Legacy setting retained for loading existing config files. */
   enforceUsageCap?: boolean
 }
 export type BudgetCategory = 'usage' | 'evolution' | 'dev' | 'reserve'
@@ -123,6 +124,6 @@ export function applySettings(ws: Workspace): void {
 
 export function saveSettings(ws: Workspace): void {
   mkdirSync(ws.dataDir, { recursive: true })
-  writeFileSync(settingsFile(ws.dataDir), JSON.stringify(ws.settings, null, 2) + '\n', { mode: 0o600 })
+  atomicWriteFile(settingsFile(ws.dataDir), JSON.stringify(ws.settings, null, 2) + '\n', 0o600)
   applySettings(ws)
 }

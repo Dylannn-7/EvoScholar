@@ -1,23 +1,34 @@
-import { existsSync, realpathSync } from 'node:fs'
+import { lstatSync, realpathSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+
+function within(root: string, path: string): boolean {
+  const rel = relative(root, path)
+  return rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel)
+}
 
 /** Resolve a model-supplied path inside `root`; throws if it escapes (including via symlinks). */
 export function inside(root: string, p: string): string {
+  if (typeof p !== 'string' || p.includes('\0')) throw new Error('无效的文件路径')
+  if (process.platform === 'win32') {
+    const path = p.replace(/^[A-Za-z]:[\\/]/, '/')
+    if (path.split(/[\\/]/).some((part) => part.includes(':') ||
+      (part !== '.' && part !== '..' && (/[ .]$/.test(part) || /^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)/i.test(part)))))
+      throw new Error('无效的 Windows 文件路径')
+  }
   const base = realpathSync(root)
   // Absolute paths may be spelled via the symlinked form of root (macOS: /var → /private/var).
   const logical = resolve(root)
   const abs = isAbsolute(p) ? resolve(p) : undefined
   const target = abs === undefined ? resolve(base, p)
-    : logical !== base && (abs === logical || abs.startsWith(logical + sep)) ? join(base, relative(logical, abs))
+    : within(logical, abs) ? join(base, relative(logical, abs))
     : abs
-  const within = (x: string) => x === base || x.startsWith(base + sep)
-  if (!within(target)) throw new Error(`路径不在工作目录内：${p}`)
+  if (!within(base, target)) throw new Error(`路径不在工作目录内：${p}`)
   let probe = target
-  while (!existsSync(probe)) probe = dirname(probe)
-  if (!within(realpathSync(probe))) throw new Error(`路径不在工作目录内：${p}`)
-  const rel = relative(base, target)
-  if (rel.startsWith('..')) throw new Error(`路径不在工作目录内：${p}`)
-  return target
+  // lstat sees a dangling link. A failed realpath on that link must fail closed.
+  while (!lstatSync(probe, { throwIfNoEntry: false })) probe = dirname(probe)
+  const canonical = realpathSync(probe)
+  if (!within(base, canonical)) throw new Error(`路径不在工作目录内：${p}`)
+  return join(canonical, relative(probe, target))
 }
 
 const DENY: [RegExp, string][] = [

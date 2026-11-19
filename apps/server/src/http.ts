@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createReadStream } from 'node:fs'
+import { pipeline } from 'node:stream'
 import { extname } from 'node:path'
 
 export const IMG = /\.(png|jpe?g|gif|webp|svg)$/i
@@ -30,21 +31,43 @@ export function send(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body))
 }
 
-export function serveFile(res: ServerResponse, file: string) {
-  res.writeHead(200, { 'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-store' })
-  createReadStream(file).pipe(res)
+export function serveFile(res: ServerResponse, file: string, opts: { projectFile?: boolean } = {}) {
+  const ext = extname(file).toLowerCase()
+  const headers: Record<string, string> = {
+    'content-type': MIME[ext] ?? 'application/octet-stream',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff'
+  }
+  if (opts.projectFile) {
+    headers['content-security-policy'] = "sandbox; default-src 'none'"
+    if (ext === '.html' || ext === '.js') headers['content-disposition'] = 'attachment'
+  }
+  const stream = createReadStream(file)
+  stream.once('error', () => {
+    if (!res.headersSent) send(res, 404, { error: '无法读取文件' })
+  })
+  stream.once('open', () => {
+    if (res.destroyed) return stream.destroy()
+    res.writeHead(200, headers)
+    pipeline(stream, res, () => {})
+  })
 }
 
 export async function body(req: IncomingMessage, limit = 30 * 1024 * 1024): Promise<any> {
+  if (Number(req.headers['content-length']) > limit) throw httpError(413, '请求体过大')
   const chunks: Buffer[] = []
   let n = 0
-  for await (const c of req) {
+  for await (const c of req.iterator({ destroyOnReturn: false })) {
     n += (c as Buffer).length
-    if (n > limit) throw Object.assign(new Error('请求体过大'), { status: 413 })
+    if (n > limit) throw httpError(413, '请求体过大')
     chunks.push(c as Buffer)
   }
-  const raw = Buffer.concat(chunks).toString('utf8')
-  return raw ? JSON.parse(raw) : {}
+  if (!n) return {}
+  let parsed: unknown
+  try { parsed = JSON.parse(Buffer.concat(chunks, n).toString('utf8')) }
+  catch { throw httpError(400, '请求体必须为有效的 JSON') }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw httpError(400, '请求体必须为 JSON 对象')
+  return parsed
 }
 
 

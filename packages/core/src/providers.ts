@@ -234,15 +234,19 @@ function parseLiveReasoningEffort(raw: Record<string, unknown>): ReasoningCapabi
 /** Parse an upstream model list (OpenAI-style `data`, Anthropic `data`, Gemini `models`). */
 export function parseModelList(json: unknown, protocol: Protocol): ModelSetting[] {
   const j = (json ?? {}) as { data?: Record<string, unknown>[]; models?: Record<string, unknown>[] }
-  const rows = j.data ?? j.models ?? []
+  const rows = j.data ?? j.models
+  if (!Array.isArray(rows)) return []
   const seen = new Set<string>()
   const out: ModelSetting[] = []
   for (const raw of rows) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
     if (protocol === 'gemini' || j.models) {
       const methods = raw.supportedGenerationMethods
       if (Array.isArray(methods) && !methods.includes('generateContent')) continue
     }
-    const id = String(raw?.id ?? raw?.name ?? '').trim().replace(/^models\//, '')
+    const value = raw.id ?? raw.name
+    if (typeof value !== 'string') continue
+    const id = value.trim().replace(/^models\//, '')
     if (!id || seen.has(id)) continue
     seen.add(id)
     const cw = Number(raw.context_window ?? raw.context_length ?? raw.input_token_limit ?? raw.inputTokenLimit ?? raw.max_input_tokens ?? 0)
@@ -271,11 +275,17 @@ export async function fetchProviderModels(
   const key = process.env[info.apiKeyEnv]
   if (!key) return { ok: false, error: '还没有填写 API Key' }
   if (!info.baseUrl || info.baseUrl.includes('<')) return { ok: false, error: '还没有填写 Base URL' }
-  const url = new URL(modelsListUrl(info, config.providers?.[providerId]?.modelsListUrl))
-  if (info.protocol === 'gemini') url.searchParams.set('pageSize', '1000')
   try {
-    const res = await fetchFn(url.href, { headers: { ...authHeaders(info.authHeader, key), accept: 'application/json' }, signal: AbortSignal.timeout(10_000) })
-    if (!res.ok) return { ok: false, error: `HTTP ${res.status}${res.status === 401 || res.status === 403 ? '（API Key 无效或没有权限）' : ''}` }
+    const url = new URL(modelsListUrl(info, config.providers?.[providerId]?.modelsListUrl))
+    if (url.username || url.password || (url.protocol !== 'https:' &&
+      !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))))
+      return { ok: false, error: '模型列表地址必须使用 HTTPS 或本机 HTTP，且不能包含账号密码' }
+    if (info.protocol === 'gemini') url.searchParams.set('pageSize', '1000')
+    const res = await fetchFn(url.href, { headers: { ...authHeaders(info.authHeader, key), accept: 'application/json' }, signal: AbortSignal.timeout(10_000), redirect: 'error' })
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {})
+      return { ok: false, error: `HTTP ${res.status}${res.status === 401 || res.status === 403 ? '（API Key 无效或没有权限）' : ''}` }
+    }
     const models = parseModelList(await res.json(), info.protocol)
     if (!models.length) return { ok: false, error: '上游没有返回模型列表' }
     return { ok: true, models, url: url.href }
@@ -390,7 +400,7 @@ export async function testProviderConnection(
     let finish: Extract<ModelEvent, { type: 'finish' }> | undefined
     for await (const ev of model.stream({
       requestId: `probe-${t0}`,
-      instructions: 'You are a connectivity probe. Reply with the single word OK.',
+      instructions: '这是连通性测试，只回复 OK。',
       messages: [{ id: 'probe', role: 'user', content: [{ type: 'text', text: 'ping' }] }],
       tools: [],
       maxOutputTokens: 256

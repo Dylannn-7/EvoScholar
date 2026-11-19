@@ -1,5 +1,7 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { atomicWriteFile } from './atomic-file'
+import { inside } from './tools/sandbox'
 import { createHash } from 'node:crypto'
 import YAML from 'yaml'
 import type { Json } from '@evoscholar/harness'
@@ -36,25 +38,27 @@ export class GenomeRepo {
     this.dir = join(root, 'genomes')
   }
   activeId(): string {
-    return readFileSync(join(this.dir, 'ACTIVE'), 'utf8').trim()
+    return readFileSync(inside(this.dir, 'ACTIVE'), 'utf8').trim()
   }
   setActive(id: string): void {
     this.load(id)
-    writeFileSync(join(this.dir, 'ACTIVE'), id + '\n')
+    atomicWriteFile(inside(this.dir, 'ACTIVE'), id + '\n')
   }
   list(): string[] {
     return readdirSync(this.dir).filter((f) => f.endsWith('.yaml')).map((f) => f.slice(0, -5)).sort()
   }
   load(id = this.activeId()): HarnessGenome {
-    const file = join(this.dir, `${id}.yaml`)
+    if (!/^g-[\w-]+$/.test(id)) throw new Error('无效的 genome 版本编号')
+    const file = inside(this.dir, `${id}.yaml`)
     if (!existsSync(file)) throw new Error(`Genome not found: ${id}`)
     const g = YAML.parse(readFileSync(file, 'utf8')) as HarnessGenome
     validateGenome(g)
+    if (g.id !== id) throw new Error('Genome 编号与文件名不一致')
     return g
   }
   save(g: HarnessGenome): void {
     validateGenome(g)
-    writeFileSync(join(this.dir, `${g.id}.yaml`), YAML.stringify(g))
+    atomicWriteFile(inside(this.dir, `${g.id}.yaml`), YAML.stringify(g))
   }
   nextId(): string {
     const nums = this.list().map((id) => Number(/^g-(\d+)$/.exec(id)?.[1] ?? -1))
@@ -81,9 +85,7 @@ export class GenomeRepo {
   text(ref: string | undefined): string {
     if (!ref) return ''
     if (!/^[\w./@-]+\.md$/.test(ref)) return ref
-    const file = resolve(this.root, ref)
-    if (!file.startsWith(resolve(this.root))) throw new Error('Prompt path escapes workspace')
-    return readFileSync(file, 'utf8')
+    return readFileSync(inside(this.root, ref), 'utf8')
   }
   /**
    * Behavioural fingerprint: everything that changes what the agent does (prompts, tool
@@ -115,7 +117,7 @@ export function validateGenome(g: HarnessGenome): void {
   ) || new Set(g.skills.map((s) => s.name)).size !== g.skills.length)) throw new Error(`${g.id}: invalid skill references`)
   validateWorkflows(g.workflows, g.tools.enabled)
   const b = g.budgets
-  if (!b) throw new Error(`${g.id}: budgets missing`)
+  if (!b || !Number.isSafeInteger(b.maxSteps) || !Number.isSafeInteger(b.maxOutputTokens)) throw new Error(`${g.id}: budgets missing`)
   for (const k of Object.keys(PROTECTED_LIMITS) as (keyof typeof PROTECTED_LIMITS)[]) {
     const v = b[k]
     if (v !== undefined && (!Number.isSafeInteger(v) || v < 1 || v > PROTECTED_LIMITS[k]))

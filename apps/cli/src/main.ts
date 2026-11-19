@@ -79,8 +79,11 @@ async function chat(rt: Runtime, args: string[], oneShot?: string) {
   const run = async (text: string) => {
     try {
       const { status } = await rs.ask(text)
-      const s = rt.ledger.summary()
-      console.log(dim(`\n[${status}] 累计 ¥${s.totalCny.toFixed(4)} / ¥${s.capCny}`))
+      if (category === 'usage') console.log(dim(`\n[${status}]`))
+      else {
+        const s = rt.ledger.summary()
+        console.log(dim(`\n[${status}] 累计 ¥${s.totalCny.toFixed(4)} / ¥${s.capCny}`))
+      }
     } catch (e) {
       console.log(yellow(`\n${e instanceof BudgetError ? '预算拦截' : '出错'}：${(e as Error).message}`))
     }

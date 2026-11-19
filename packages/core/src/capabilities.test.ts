@@ -117,3 +117,19 @@ test('usage category does not enforce hard cap by default while dev category rem
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('legacy cap settings cannot price or block new product usage', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-usage-only-'))
+  cpSync(join(REPO, 'evoscholar.config.json'), join(dir, 'evoscholar.config.json'))
+  const ws = openWorkspace(dir)
+  ws.config.budget.enforceUsageCap = true
+  ws.config.budget.totalCny = 0
+  const rt = openRuntime(ws, () => {})
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  assert.doesNotThrow(() => rt.ledger.assertCanSpend('usage', 100))
+  const usd = rt.ledger.record({ category: 'usage', kind: 'model', provider: 'deepseek', inputTokens: 11, outputTokens: 3, costUsd: 1 })
+  assert.equal(usd, 0)
+  assert.deepEqual({ ...rt.db.prepare('SELECT cost_cny, input_tokens, output_tokens FROM ledger').get() },
+    { cost_cny: 0, input_tokens: 11, output_tokens: 3 })
+  assert.throws(() => rt.ledger.assertCanSpend('dev', 1), BudgetError)
+})
