@@ -15,9 +15,10 @@ function ws() {
   for (const d of ['genomes', 'prompts', 'skills']) cpSync(join(REPO, d), join(dir, d), { recursive: true })
   cpSync(join(REPO, 'evoscholar.config.json'), join(dir, 'evoscholar.config.json'))
   mkdirSync(join(dir, 'data'))
-  symlinkSync(join(REPO, 'python'), join(dir, 'python'))
+  const kind = process.platform === 'win32' ? 'junction' : 'dir'
+  symlinkSync(join(REPO, 'python'), join(dir, 'python'), kind)
   const venv = join(REPO, 'data', `pyenv-${process.platform}-${process.arch}`)
-  if (existsSync(venv)) symlinkSync(venv, join(dir, 'data', `pyenv-${process.platform}-${process.arch}`))
+  if (existsSync(venv)) symlinkSync(venv, join(dir, 'data', `pyenv-${process.platform}-${process.arch}`), kind)
   return dir
 }
 const text = (r: { content: { type: string; text?: string }[] }) => r.content.map((c) => c.text ?? '').join('')

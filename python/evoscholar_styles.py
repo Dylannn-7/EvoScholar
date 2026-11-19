@@ -53,7 +53,7 @@ _CATALOG: list[dict[str, Any]] = [
 ]
 
 LIBRARIES = {
-    'EvoScholar': {'url': 'https://github.com/Dylannn-7/EvoScholar', 'license': 'MIT'},
+    'EvoScholar': {'url': 'https://github.com/Dylannn-7/EvoScholar', 'license': 'Apache-2.0'},
     'SciencePlots': {'url': 'https://github.com/garrettj403/SciencePlots', 'license': 'MIT', 'cite': 'Garrett, J. D. SciencePlots. Zenodo, doi:10.5281/zenodo.4106649'},
     'tueplots': {'url': 'https://github.com/pnkraemer/tueplots', 'license': 'MIT'},
     'aquarel': {'url': 'https://github.com/lgienapp/aquarel', 'license': 'MIT'},

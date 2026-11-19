@@ -1,10 +1,10 @@
 // Creates data/pyenv with the scientific stack used by run_python. Uses uv when available.
 import { execSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 const root = process.cwd()
 const venv = join(root, 'data', `pyenv-${process.platform}-${process.arch}`)
-const pkgs = 'numpy pandas scipy matplotlib seaborn scienceplots tueplots cmcrameri aquarel python-docx bibtexparser pymupdf openpyxl pyyaml pillow'
+const pkgs = readFileSync(join(process.cwd(), 'scripts', 'requirements.txt'), 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).join(' ')
 const has = (cmd) => { try { execSync(`${cmd} --version`, { stdio: 'ignore' }); return true } catch { return false } }
 const sh = (cmd) => { console.log('$ ' + cmd); execSync(cmd, { stdio: 'inherit' }) }
 if (has('uv')) {

@@ -1,70 +1,130 @@
 # EvoScholar
 
-**一个会自我进化的个人科研工作台。** 接入你自己的模型 API，就能拥有一个会根据你的使用习惯不断改进的科研助理：文献检索、数据处理与出图、论文写作规范检查。
+**会自我进化的个人科研工作台。** 接入你自己的模型 API，在本地文件夹里做文献检索与核验、数据处理与出图、论文和学位论文规范检查。智能体在每一轮思考—行动里观察失败、反思、记下经验、调整自己的工作方式；持久的改动经你批准才上线，随时可以回滚。
 
-> A self-evolving personal research workbench. Bring your own model API; the agent harness
-> (prompts, skills, tool routing, workflows) evolves from your own usage, gated by offline
-> evaluation and your approval.
+[English](README.en.md) · [更新记录](CHANGELOG.md)
 
-## 特点
+![工作台：思维链里的自进化步骤](docs/images/workbench.jpg)
 
-- **Harness 层进化**：进化的是一份声明式的 `HarnessGenome`（指令、技能、工具路由、工作流），不改内核代码。每个候选版本先离线评测，再由你审批上线，可以一键回滚。
-- **多厂商**：内置 DeepSeek（默认）、OpenAI、Anthropic、Kimi、智谱 GLM、阿里百炼（Qwen）、MiniMax、火山方舟、OpenCode Zen/Go、OpenRouter 预设；任何兼容 Chat Completions / Messages / Responses 协议的端点都可以用「URL + Key」接入。
-- **预算硬上限**：付费调用发出前预留额度，并发请求共用同一本账。
-- **本地优先**：数据、轨迹和 Key 都只存在你的电脑上。
+## 能做什么
 
-## 快速开始 / Quick start
+- **文献**：多源检索（Semantic Scholar、OpenAlex、Crossref、arXiv 等，加 DeepSeek 联网搜索），去重合并，引用逐条核验（DOI、题名、作者、撤稿状态），PDF 全文提取。
+- **数据与出图**：在你的项目文件夹里运行 Python 处理数据；按期刊规则包（Nature、IEEE、Optica、NeurIPS 等）出图，出图后自动检查尺寸、字号、分辨率和配色；26 种出图风格（SciencePlots、tueplots、aquarel、cmcrameri）可选。
+- **写作规范**：LaTeX / Word / Markdown / PDF 稿件按学校或期刊规则包检查（含华中科技大学学位论文、GB/T 7714-2025 等），每条问题附依据；你标记的误报和纠正会沉淀成自己的规则。
 
-需要 Node.js ≥ 22.13 和 Python 3。Requires Node.js ≥ 22.13 and Python 3.
+## 自进化是怎么发生的
+
+进化的对象是 **harness**（提示词、技能、工具说明、路由、工作流）和你的个人记忆，而不是模型本身。全部发生在智能体的循环里，并显示在思维链中：
+
+| 步骤 | 发生了什么 |
+|------|------------|
+| 回忆 | 每轮开始前，把相关的经验（L-编号）和你的偏好（P-编号）注入上下文；工具失败时再按失败内容检索一次 |
+| 反思 | 工具报错、检查不通过、引用核验异常时，要求模型先反思再继续；同一个失败调用第三次会被拦截 |
+| 调整 | 模型可以记经验、在本会话试用新的工作方式、给技能打补丁、把跑通的流程锻造成带测试的可执行技能、提出写作规则 |
+| 选择 | 遇到配色、版式这类口味问题，给你 2–3 个方案点选，你的选择成为偏好 |
+| 自检 | 有没解决的失败、或生成了图和稿件却没检查时，交付前自动再核对一轮 |
+| 归因 | 每轮按结果打分，被用到的经验随之加分或扣分；你的好评、差评会补记进去 |
+| 沉淀 | 表现好的调整和高分经验可以合成一个新的 harness 版本，**经你批准才上线**，可以回滚 |
+
+经验先「试用」，被验证有效后才「生效」；来自网页或 PDF 的内容只能生成需要人工确认的条目，防止提示注入变成长期记忆。所有条目都能在「轨迹」页查看来源会话、编辑、置顶或撤销。
+
+## 快速开始
+
+需要 [Node.js](https://nodejs.org/) ≥ 22.13；文献、数据和出图功能还需要 Python 3.10+（有 [uv](https://docs.astral.sh/uv/) 更快）。
+
+**macOS / Linux**
 
 ```bash
 git clone https://github.com/Dylannn-7/EvoScholar.git
-cd EvoScholar
-npm ci
-npm run build
-npm run setup:python
-npm test
-npm run demo:evolution
 ```
-
-演示使用本地模拟网关和临时工作区。它会运行三道公开样题，生成待审批的候选，展示改动，最后上线候选并回滚到起始版本。全程无需 API Key，实际费用为 ¥0。
-
-The demo uses a local mock gateway and a temporary workspace. It runs three bundled cases, shows the proposed change, approves the candidate, and rolls back to the original genome. It requires no API key and incurs no API charges.
-
-日常使用时，复制 `.env.example` 为 `.env`，填写 `DEEPSEEK_API_KEY` 后启动工作台。To use a real model, copy `.env.example` to `.env`, set `DEEPSEEK_API_KEY`, and start the workbench.
 
 ```bash
-npm start                   # http://127.0.0.1:4317
-npm run chat                # CLI 对话 / CLI chat
-npm run es -- budget        # API 账单 / API spending
+cd EvoScholar && sh scripts/install.sh
 ```
 
-Web 的「设置 → 进化」与 CLI 的 `es eval`、`es evolve` 默认使用仓库里的公开样题。本地有 `evals/bench.py` 和 `evals/manifest.json` 时，优先使用该评测集。连接真实模型时，这些评测会产生 API 费用。
+**Windows（PowerShell）**
 
-The web Evolution panel and the `es eval` and `es evolve` commands use the bundled cases by default. A local `evals/bench.py` and `evals/manifest.json` take precedence. Runs against a real model incur API charges.
+```bash
+git clone https://github.com/Dylannn-7/EvoScholar.git
+```
 
-## 目录
+```bash
+cd EvoScholar; powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
 
-| 路径 | 内容 |
-| --- | --- |
-| `packages/harness` | aipoch/open-science `agent-harness` 的 fork（未修改，见 `FORK.md`） |
-| `packages/core` | 模型网关、预算记账、genome、工具、轨迹记录 |
-| `apps/cli` | 命令行入口 |
-| `examples/evolution` | 公开进化样题与判分脚本 |
-| `genomes/` | 各代 harness genome，`ACTIVE` 指向当前版本 |
-| `prompts/` | genome 引用的提示词 |
-| `evoscholar.config.json` | 你的受保护设置（预算、厂商端点），进化引擎不能修改 |
+然后启动并打开 http://127.0.0.1:4317 ：
 
-## 开发文档
+```bash
+npm start
+```
 
-- `docs/HANDOFF.md`：当前进度、架构、决策和后续计划
-- `docs/frontend-visual-plan.md`：前端视觉方案
-- `CLAUDE.md`：给 Claude Code 的开发约定
+1. **设置 → 模型与密钥**：选厂商 → 选协议（默认是厂商官方推荐的）→ 确认 Base URL（已预填，可改）→ 填 API Key → 获取模型 → 测试连接。
+2. **添加项目**：左侧「+」选一个本地文件夹。会话在这个文件夹里工作，交付文件写到 `evoscholar-out/<会话>/`，上传的文件放在 `evoscholar-in/`，不会改动其他已有文件（除非你明确要求）。
+3. **新建会话**：在输入框里选模型、思考程度和权限模式，可以拖入文件或图片、输入 `@` 引用项目文件。
+4. 交付文件随时可以在 **资料空间** 找到，不用翻长会话。
 
-## 预算
+**先不想填 Key？** 运行演示模式：本地脚本扮演模型，带一个示例项目，不联网、不花钱，可以完整看到思考、工具调用、失败后的反思、记经验、选项卡和交付文件。
 
-默认总额 ¥200，分为日常使用 ¥130、进化 ¥40、开发测试 ¥20、预留 ¥10，可以在 `evoscholar.config.json` 里修改。付费请求按本地价格表和模型输出上限预留额度。有用量回执时按实际用量结算，可能已计费但缺少回执时标为估算。进程意外退出时，未结算的预留会继续占用额度。自定义模型费用取决于本地估价，供应商账单以供应商记录为准。
+```bash
+npm run demo
+```
 
-## 致谢与许可
+![设置：选厂商、协议、Base URL、获取模型、测试连接](docs/images/settings.jpg)
 
-Apache-2.0。`packages/harness` 来自 [aipoch/open-science](https://github.com/aipoch/open-science)（Apache-2.0），详见 `NOTICE`。
+## 模型与协议
+
+- 预设厂商：DeepSeek、OpenAI、Anthropic、Google Gemini、Azure OpenAI、Kimi、智谱 GLM、阿里百炼、MiniMax、火山方舟、OpenRouter、OpenCode；也可以添加任意自定义网关。
+- 协议：OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini generateContent。
+- 模型名和思考程度直接读取上游的原始取值；只有部分厂商在接口里提供思考程度，其余使用预设。
+- **权限模式**（参照 Claude Code）：询问 / 自动接受编辑 / 计划（只读）/ 完全放行。无论哪种模式，文件和命令都只能在项目文件夹内，持久的 harness 改动都需要你批准。
+- 工作台只统计 token 用量（按时间、模型、项目、会话），不统计费用：不同厂商和网关的价格各不相同，请以厂商账单为准。
+
+## 插件
+
+「插件」页管理技能、工具、规则包和出图风格。技能使用 [Agent Skills](https://github.com/anthropics/skills) 格式（`SKILL.md` + 可选的 references / scripts），可以从 GitHub 路径、zip 或本地文件夹导入。内置技能之外，已集成 [K-Dense scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills) 的 scientific-visualization、matplotlib、seaborn。
+
+![26 种出图风格](docs/images/figure-styles.jpg)
+
+## 数据与隐私
+
+一切都在你的电脑上：
+
+| 位置 | 内容 |
+|------|------|
+| `.env` | API Key（只写本机，不提交） |
+| `data/settings.json` | 厂商设置、默认模型、默认权限 |
+| `data/evoscholar.sqlite` | 会话、轨迹、经验与偏好、用量、资料空间索引 |
+| `data/rulepacks/user.yaml` | 你自己沉淀的写作规则 |
+| 项目文件夹的 `evoscholar-out/`、`evoscholar-in/`、`.evoscholar/memory.md` | 交付文件、上传文件、项目记忆的可读镜像 |
+
+运行代码的子进程拿不到任何 `*_API_KEY` 环境变量；网页只监听 127.0.0.1，并拒绝非本机 Host 的请求。
+
+## 开发
+
+```bash
+npm run build
+```
+
+```bash
+npm test
+```
+
+```bash
+cd python && python -m unittest
+```
+
+命令行：`npm run es -- chat | ask | providers | genome | budget`。目录结构：
+
+| 目录 | 内容 |
+|------|------|
+| `packages/harness` | 智能体内核，来自 [aipoch/open-science](https://github.com/aipoch/open-science) 的 agent-harness，保持与上游一致 |
+| `packages/core` | 会话、工具、厂商与协议（含 Gemini 适配器）、循环内自进化（`src/evolve/`）、插件、项目、资料空间、用量 |
+| `apps/server` · `apps/web` | 本地 HTTP 服务与网页工作台（无构建步骤的 ES modules，three.js 粒子背景） |
+| `python/` | 文献、出图、写作检查与出图风格的 Python 工具 |
+| `genomes/` · `prompts/` · `skills/` · `rulepacks/` | harness 版本、提示词、技能、规则包 |
+
+设计文档：[docs/PLAN.md](docs/PLAN.md)、[docs/in-loop-evolution.md](docs/in-loop-evolution.md)。
+
+## 许可
+
+Apache-2.0。第三方组件与署名见 [NOTICE](NOTICE)。

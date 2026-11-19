@@ -120,7 +120,8 @@
 | P2 | 已提交（401dfe2）。前端重写为 `app.js`（外壳、路由、弹出菜单）+ `ui/workbench.js`（项目树、透明会话、输入框）+ `ui/settings.js`（接入向导）+ `ui/pages.js`（插件、资料空间、用量、轨迹）；复用 markdown / modal，审阅弹窗抽到 `ui/review.js`；无 emoji；用模拟网关跑通「项目 → 会话 → 审批 → 交付文件 → 资料空间 → 用量」 | ¥0 |
 | P3 | 已提交（9585706）。`packages/core/src/evolve/`（store、loop）接入 `openResearchSession`；思维链里的回忆 / 反思 / 调整 / 选择 / 自检 / 学到；选项卡；撤销；轨迹页（时间线、记忆管理、会话调整、版本）。DeepSeek 实测：真实失败后模型自主 reflect 并记下可复用经验 | ¥0.0286 |
 | P4 | 已提交（4e1ddee）。可执行技能（forge / run / patch）、规则提案与用户规则包、沉淀为 genome 候选、技能导入（文件夹 / zip / GitHub）、启用停用；出图风格库（SciencePlots、tueplots、aquarel、cmcrameri，26 种风格，带样图和默认风格）；导入 K-Dense 的 scientific-visualization、matplotlib、seaborn 三个技能并启用（g-0009，figure-style 升到 v2）。DeepSeek 实测：模型锻造技能一次通过，另外两个会话复用后自动转正 | ¥0.2594 |
-| P5 | 已提交。粒子形状随思维链切换（文献 = 星座，数据 / 出图 = 曲线，写作 = 文字行，作答与交付 = 环），形状在世界空间正对镜头、居中于对话区；反思 = 收缩再重组，进化（回忆 / 调整 / 学到 / 偏好）= 紫色波纹，交付 = 白色波纹，等待确认 = 近乎静止 + 慢闪，思考 = 加速旋涡 + 呼吸；高画质 45–49 fps | ¥0 |
+| P5 | 已提交（a2d8fb3）。粒子形状随思维链切换（文献 = 星座，数据 / 出图 = 曲线，写作 = 文字行，作答与交付 = 环），形状在世界空间正对镜头、居中于对话区；反思 = 收缩再重组，进化（回忆 / 调整 / 学到 / 偏好）= 紫色波纹，交付 = 白色波纹，等待确认 = 近乎静止 + 慢闪，思考 = 加速旋涡 + 呼吸；高画质 45–49 fps | ¥0 |
+| P6 | 已提交。`scripts/install.sh` / `install.ps1` 一键安装；`npm run demo` 零成本演示（内置脚本模型 + 示例项目，走完反思 → 记经验 → 选项 → 交付 → 下一会话回忆）；GitHub Actions（Linux / macOS / Windows：构建、TS 测试、Python 测试）；中英文 README、CHANGELOG、版本 0.2.0；测试的 Windows 兼容（junction、python 命令名）。在全新目录里从零安装、测试、演示均通过；Windows 只能等 CI 验证 | ¥0 |
 
 ## 6. 不变的硬规则
 

@@ -22,7 +22,9 @@ npm run setup:python                # per-platform venv: data/pyenv-<platform>-<
 npm start                           # web workbench at http://127.0.0.1:4317
 npm run es -- <cmd>                 # CLI: chat | ask | budget | providers | genome
 npm run es -- ask --category dev --yes --cwd <dir> "<prompt>"   # one-shot, auto-approve tools
+npm run demo                        # zero-cost interactive demo: scripted model + sample project
 npm run demo:evolution              # offline evolution demo (mock gateway, no API key)
+sh scripts/install.sh               # one-step install (Windows: scripts/install.ps1)
 ```
 
 Evaluation tasks (private, local only; regression guard, not the evolution driver):
