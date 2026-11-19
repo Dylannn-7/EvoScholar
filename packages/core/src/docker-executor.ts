@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { uptime } from 'node:os'
 import { join } from 'node:path'
 import type { Workspace } from './config'
 import type { ExecutionBackend, ExecutionJob, ExecutionStatus, IsolatedService, ProcessResult } from './execution'
@@ -11,6 +12,8 @@ const LABEL = 'io.evoscholar'
 // Docker Desktop's resource saver pauses its VM when idle; the first CLI call wakes it and can
 // take several seconds. A stopped daemon still fails fast, so a generous timeout costs nothing.
 const PROBE_S = 15
+/** Host boot time in minutes. A container from an earlier boot cannot belong to a live process. */
+export const bootMinute = () => Math.round((Date.now() / 1000 - uptime()) / 60)
 type Engine = (command: string, args: string[], timeout: number, signal: AbortSignal) => Promise<ProcessResult>
 type Stage = ReturnType<typeof stageDirectory>
 type SessionStage = { stage: Stage; project: StagedProject; running: boolean }
@@ -25,6 +28,7 @@ export function dockerCreateArgs(box: {
     '--init', '--tmpfs', '/tmp:rw,nosuid,nodev,size=128m',
     '--log-driver', 'json-file', '--log-opt', 'max-size=1m',
     '--label', `${LABEL}.workspace=${box.owner}`, '--label', `${LABEL}.session=${box.session}`, '--label', `${LABEL}.pid=${process.pid}`,
+    '--label', `${LABEL}.boot=${bootMinute()}`,
     '--mount', `type=bind,source=${box.work},target=/work`,
     '--mount', `type=bind,source=${box.control},target=/control,readonly`,
     '--workdir', '/work', '--env', 'HOME=/tmp', '--env', 'MPLBACKEND=Agg', '--env', 'MPLCONFIGDIR=/tmp/matplotlib',
@@ -84,12 +88,15 @@ export class DockerExecutor implements ExecutionBackend {
       if (!await this.linuxEngine(binary)) return
       const list = await this.engine(binary, [
         'ps', '-a', '--filter', `label=${LABEL}.workspace=${this.owner}`,
-        '--format', `{{.ID}} {{.Label "${LABEL}.pid"}}`
+        '--format', `{{.ID}} {{.Label "${LABEL}.pid"}} {{.Label "${LABEL}.boot"}}`
       ], 5, AbortSignal.timeout(5500))
       if (list.code !== 0) return
       for (const line of list.stdout.split(/\r?\n/)) {
-        const [id, pid] = line.trim().split(/\s+/)
-        if (/^[a-f0-9]{12,64}$/.test(id) && pid && !processIsAlive(pid)) await this.remove(binary, id)
+        const [id, pid, boot] = line.trim().split(/\s+/)
+        if (!/^[a-f0-9]{12,64}$/.test(id) || !pid) continue
+        // After a reboot the recorded PID may belong to an unrelated process, so check the boot too.
+        const earlierBoot = !boot || Math.abs(Number(boot) - bootMinute()) > 2
+        if (earlierBoot || !processIsAlive(pid)) await this.remove(binary, id)
       }
     } catch { /* Runtime is optional. Later job requests check availability again. */ }
   }

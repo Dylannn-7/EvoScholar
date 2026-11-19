@@ -29,6 +29,7 @@ import {
   getProject,
   libraryPath,
   listDirs,
+  libraryCounts,
   listLibrary,
   listProjects,
   listProviders,
@@ -283,7 +284,8 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
           q: q.get('q') ?? undefined,
           deliverable: q.get('deliverable') === '1',
           limit: Number(q.get('limit')) || undefined
-        })
+        }),
+        counts: libraryCounts(rt.db)
       }), true
     }
     if ((mm = /^\/api\/library\/(\d+)$/.exec(p))) {

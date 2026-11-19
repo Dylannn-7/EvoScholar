@@ -232,11 +232,12 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 .stopb { background: rgba(255, 255, 255, .16); color: #fff; } .stopb:hover { background: rgba(255, 255, 255, .24); }
 
 /* popover menus */
-.pop { position: fixed; z-index: 60; min-width: 220px; max-width: 360px; max-height: 420px; overflow-y: auto; padding: 6px; border-radius: 14px; background: rgba(26, 26, 32, .96); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); box-shadow: 0 0 0 1px var(--hair-2), 0 18px 48px rgba(0, 0, 0, .6); }
+.pop { position: fixed; z-index: 60; min-width: 220px; max-width: 360px; max-height: 420px; overflow-y: auto; overflow-x: hidden; padding: 6px; border-radius: 14px; background: rgba(26, 26, 32, .96); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); box-shadow: 0 0 0 1px var(--hair-2), 0 18px 48px rgba(0, 0, 0, .6); }
 .pop .grp { font: 600 10px/1 var(--sans); letter-spacing: .14em; color: var(--text-3); padding: 10px 10px 6px; }
 .pop .it { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; border-radius: 9px; background: transparent; cursor: pointer; text-align: left; color: var(--text); }
 .pop .it:hover, .pop .it.kb { background: var(--fill-2); }
-.pop .it .d { display: block; font-size: 11.5px; color: var(--text-3); }
+.pop .it > span:not(.tick):not(.r) { flex: 1; min-width: 0; }
+.pop .it .d { display: block; font-size: 11.5px; color: var(--text-3); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .pop .it .tick { margin-left: auto; color: var(--accent); }
 .pop .it .r { margin-left: auto; color: var(--text-3); font-size: 11px; }
 .pop input.input { margin-bottom: 6px; height: 30px; }
@@ -313,6 +314,7 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 .lib-view button { padding: 4px 8px; display: grid; place-items: center; }
 .lib-chip { display: inline-flex; align-items: center; gap: 6px; border: 0; background: var(--fill-2); color: var(--text); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; margin: 2px 0 6px; }
 .lgroup { margin-top: 14px; }
+.lib-note { margin: 2px 0 6px; font-size: 12px; }
 .lgroup-h { display: flex; align-items: baseline; gap: 4px; font-size: 12.5px; color: var(--text-2); margin-bottom: 9px; }
 .lgroup-h a { color: var(--text); cursor: pointer; text-decoration: none; } .lgroup-h a:hover { text-decoration: underline; }
 .lgroup-t { margin-left: auto; font-size: 11.5px; color: var(--text-3); }
@@ -439,3 +441,10 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 /* settings: runtime setup rows */
 .env-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 6px 0; font-size: 13px; }
 .env-log { margin: 10px 0 0; max-height: 180px; overflow: auto; padding: 10px 12px; border-radius: 10px; background: rgba(0, 0, 0, .35); color: var(--text-2); font: 11.5px/1.5 var(--mono); white-space: pre-wrap; }
+
+/* transcript: denied or stopped steps, stop marker, expired cards */
+.step.denied .ms { color: var(--warn); }
+.stop-line { margin: 10px 0; font-size: 12px; color: var(--text-3); }
+.card-inline.expired { opacity: .55; }
+.kv-path { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.kv-path code { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }

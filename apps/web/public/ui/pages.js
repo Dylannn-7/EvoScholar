@@ -151,11 +151,19 @@ export async function renderLibrary (root, arg) {
   if (arg) Object.assign(lib, { scope: arg.project ? (arg.project === 'drafts' ? 'drafts' : `p:${arg.project}`) : 'all', session: arg.session || '', selected: 0 })
   const body = shell(root, '资料空间', '')
   body.classList.add('lib-body')
+  const LIMIT = 2000
   let files = []
-  const load = async () => { files = (await api('/api/library?limit=2000')).files }
+  let counts = { total: 0, deliverable: 0, upload: 0, drafts: 0, projects: {} }
+  // The newest files load at once; a search goes to the server so older files are found too.
+  const load = async () => {
+    const r = await api(`/api/library?limit=${LIMIT}${lib.q ? `&q=${encodeURIComponent(lib.q)}` : ''}`)
+    files = r.files
+    counts = r.counts || counts
+  }
   const draw = () => {
     const S = store.state
-    const count = (scope) => files.filter((f) => inScope(f, scope)).length
+    const count = (scope) => scope === 'all' ? counts.total : scope === 'deliverable' ? counts.deliverable
+      : scope === 'upload' ? counts.upload : scope === 'drafts' ? counts.drafts : counts.projects[scope.slice(2)] ?? 0
     const scopes = [['all', '全部', 'library'], ['deliverable', '交付物', 'star'], ['upload', '上传', 'upload']]
     const projects = [...S.projects.map((p) => [`p:${p.id}`, p.name]), ['drafts', '草稿']].filter(([id]) => count(id))
     const q = lib.q.toLowerCase()
@@ -189,6 +197,7 @@ export async function renderLibrary (root, arg) {
           <div class="seg">${[['', '全部'], ['figure', '图'], ['document', '文档'], ['data', '数据'], ['code', '代码']].map(([id, l]) => `<button type="button" class="${lib.type === id ? 'on' : ''}" data-type="${id}">${l}</button>`).join('')}</div>
           <div class="seg lib-view">${[['grid', '网格'], ['list', '列表']].map(([id, l]) => `<button type="button" class="${lib.view === id ? 'on' : ''}" data-view="${id}" aria-label="${l}" title="${l}">${icon(id, 14)}</button>`).join('')}</div>
         </div>
+        ${!lib.q && counts.total > files.length ? `<p class="faint lib-note">显示最近 ${files.length} 个文件，搜索可查找更早的文件</p>` : ''}
         ${lib.session ? `<button type="button" class="lib-chip" id="lsx">${esc(sessTitle)} ${icon('close', 11)}</button>` : ''}
         ${ordered.length ? ordered.map((g) => `<div class="lgroup">
             <div class="lgroup-h">${g.session ? `<a data-sess="${esc(g.session)}">${esc(g.title)}</a>` : `<span>${esc(g.title)}</span>`}<span class="faint"> · ${esc(g.project)}</span><span class="lgroup-t">${esc(ago(g.latest))}</span></div>
@@ -213,7 +222,15 @@ export async function renderLibrary (root, arg) {
     loadApiImages(body)
     const qi = body.querySelector('#lq')
     let t
-    qi.oninput = (e) => { clearTimeout(t); t = setTimeout(() => { lib.q = e.target.value.trim(); draw(); const n = body.querySelector('#lq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length) }, 200) }
+    qi.oninput = (e) => {
+      clearTimeout(t)
+      t = setTimeout(async () => {
+        lib.q = e.target.value.trim()
+        try { await load() } catch (err) { toast(err.message, 'err') }
+        draw()
+        const n = body.querySelector('#lq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length)
+      }, 250)
+    }
   }
   body.addEventListener('click', async (e) => {
     const el = e.target.closest('[data-scope],[data-type],[data-view],[data-id],[data-sess],[data-open],[data-star],[data-reveal],[data-download],#lsx')
@@ -231,7 +248,7 @@ export async function renderLibrary (root, arg) {
       const paneHidden = !body.querySelector('.lib-prev')?.offsetParent
       if (el.dataset.id) { lib.selected = f.id; if (paneHidden && f.exists) return openFilePreviewModal(null, f.path, `/api/library/${f.id}/file`); return draw() }
       if (el.dataset.open) return openFilePreviewModal(null, f.path, `/api/library/${f.id}/file`)
-      if (el.dataset.star) { await patch(`/api/library/${f.id}`, { deliverable: !f.deliverable }); f.deliverable = f.deliverable ? 0 : 1; return draw() }
+      if (el.dataset.star) { await patch(`/api/library/${f.id}`, { deliverable: !f.deliverable }); f.deliverable = f.deliverable ? 0 : 1; counts.deliverable += f.deliverable ? 1 : -1; return draw() }
       if (el.dataset.reveal) return await post(`/api/library/${f.id}/reveal`)
       if (el.dataset.download) return await downloadLibraryFile(f)
     } catch (err) { toast(err.message, 'err') }
@@ -330,13 +347,16 @@ export async function renderTrajectory (root, arg) {
             : '<span class="badge warn">未验证</span>'
           const evidenceLine = v.verified
             ? `验证运行：<code>${esc(v.runId || '')}</code> · 通过 ${esc(String(v.pass))}/${esc(String(v.total))}`
-            : '验证证据：未验证（尚未关联离线回放或评测通过记录）'
+            : ''
           const scopeLine = `适用范围：${esc(v.scope || '全局 harness')}`
+          // change is stored as a JSON array of bullet strings.
+          let change = c.change || c.diagnosis || ''
+          try { const list = JSON.parse(change); if (Array.isArray(list)) change = list.join('；') } catch {}
           return `<div class="tl-item"><i class="rail-dot"></i><div class="c">
           <div class="h"><code>${esc(c.genome_id)}</code><span class="badge warn">待批准</span>${badge}<span class="faint">${esc(c.target || '')}</span><span class="page-actions"><button class="btn ghost small" data-rej="${esc(c.genome_id)}" type="button">拒绝</button><button class="btn primary small" data-pro="${esc(c.genome_id)}" type="button">批准上线</button></span></div>
-          <p>${esc(c.change || c.diagnosis || '')}</p>
-          <p class="faint">${evidenceLine} · ${scopeLine}</p></div></div>`
-        }).join('')}</div>` : '<p class="muted">没有等待批准的改动。</p>'}
+          <p>${esc(change)}</p>
+          <p class="faint">${evidenceLine ? `${evidenceLine} · ` : ''}${scopeLine}</p></div></div>`
+        }).join('')}</div>` : '<p class="muted">没有待批准的候选</p>'}
         <div class="section-t">harness 版本</div><div class="timeline">${evo.lineage.slice().reverse().slice(0, 40).map((g) => `<div class="tl-item"><i class="rail-dot ${g.status === 'active' ? '' : 'dim'}"></i><div class="c">
           <div class="h"><code>${esc(g.id)}</code>${g.status === 'active' ? '<span class="badge ok">当前</span>' : `<span class="badge">${esc({ archived: '历史', rejected: '已拒绝', candidate: '候选' }[g.status] || g.status)}</span>`}<span class="faint">${esc(g.createdBy?.startsWith('evolution') ? '进化生成' : '手动')}</span>
           ${g.status === 'archived' ? `<span class="page-actions"><button class="btn ghost small" data-rb="${esc(g.id)}" type="button">回滚到此版本</button></span>` : ''}</div><p>${esc(g.note || '')}</p></div></div>`).join('')}</div>`
@@ -349,10 +369,10 @@ export async function renderTrajectory (root, arg) {
     if (pk) { pk.checked ? pick.add(pk.dataset.pick) : pick.delete(pk.dataset.pick); return draw() }
     if (e.target.closest('#consol')) {
       const ids = [...pick]
-      if (!(await confirmDialog({ title: '沉淀为 genome 候选', message: `把选中的 ${ids.length} 项写进一个新的 harness 版本候选？候选不会自动上线，需要你在「版本」里批准，可以随时回滚。`, confirmText: '生成候选' }))) return
+      if (!(await confirmDialog({ title: '沉淀为 genome 候选', message: `用选中的 ${ids.length} 项生成一个 harness 候选？`, confirmText: '生成候选' }))) return
       try {
         const r = await post('/api/evolve/consolidate', { overlayIds: ids.filter((x) => x.startsWith('O-')), memoryIds: ids.filter((x) => /^[LP]-/.test(x)) })
-        pick.clear(); trajTab = 'versions'; await store.refresh(); toast(`已生成候选 ${r.genome}，请在「版本」里查看并批准`, 'ok', 6000); return renderTrajectory(root)
+        pick.clear(); trajTab = 'versions'; await store.refresh(); toast(`已生成候选 ${r.genome}`, 'ok', 6000); return renderTrajectory(root)
       } catch (err) { return toast(err.message, 'err') }
     }
     const t = e.target.closest('[data-t]'); if (t) { trajTab = t.dataset.t; return draw() }
@@ -383,11 +403,11 @@ export async function renderTrajectory (root, arg) {
         const cand = pending.find((x) => x.genome_id === b.dataset.pro)
         const v = cand?.verification
         if (v?.verified) {
-          if (!(await confirmDialog({ title: '批准上线', message: `把 ${b.dataset.pro} 设为当前 harness？（验证 ${v.pass}/${v.total}，适用范围：${v.scope}）。可以随时回滚。`, confirmText: '批准' }))) return
+          if (!(await confirmDialog({ title: '批准上线', message: `上线 ${b.dataset.pro}？验证 ${v.pass}/${v.total}，范围：${v.scope}`, confirmText: '批准' }))) return
           await post(`/api/evolution/${b.dataset.pro}/promote`, {})
         } else {
-          if (!(await confirmDialog({ title: '批准未验证候选', message: `候选 ${b.dataset.pro} 当前为「未验证」，尚未关联离线回放或评测记录（适用范围：${v?.scope || '全局 harness'}）。确定继续吗？`, confirmText: '继续确认', danger: true }))) return
-          if (!(await confirmDialog({ title: '二次确认：上线未验证候选', message: `请再次确认将未验证候选 ${b.dataset.pro} 设为当前 harness。上线后如有异常可随时回滚。`, confirmText: '确认批准上线', danger: true }))) return
+          if (!(await confirmDialog({ title: '批准未验证候选', message: `${b.dataset.pro} 未经验证，范围：${v?.scope || '全局 harness'}`, confirmText: '继续确认', danger: true }))) return
+          if (!(await confirmDialog({ title: '二次确认：上线未验证候选', message: `确认上线未验证的 ${b.dataset.pro}？可以随时回滚。`, confirmText: '确认批准上线', danger: true }))) return
           await post(`/api/evolution/${b.dataset.pro}/promote`, { confirmUnverified: true })
         }
       }

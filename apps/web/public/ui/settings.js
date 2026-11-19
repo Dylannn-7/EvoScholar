@@ -269,9 +269,12 @@ function appearance (body) {
 
 function about (body) {
   const s = store.state
+  const app = s.app || {}
   body.innerHTML = `<div class="panel"><h3>EvoScholar</h3>
+    ${app.version ? `<div class="kv"><span>版本</span><span>${esc(app.version)}</span></div>` : ''}
     <div class="kv"><span>当前 genome</span><span><code>${esc(s.genome.id)}</code></span></div>
-    <div class="kv"><span>数据</span><span><code>data/</code>、<code>.env</code></span></div>
+    ${app.workspace ? `<div class="kv"><span>工作区</span><span class="kv-path"><code title="${esc(app.workspace)}">${esc(app.workspace)}</code><button class="btn ghost small" id="revealWorkspace" type="button">在文件夹中显示</button></span></div>` : ''}
     <div class="kv"><span>项目文件</span><span><code>evoscholar-out/</code>、<code>evoscholar-in/</code></span></div>
     <div class="kv"><span>源代码</span><span><a href="https://github.com/Dylannn-7/EvoScholar" target="_blank" rel="noopener">github.com/Dylannn-7/EvoScholar</a></span></div></div>`
+  body.querySelector('#revealWorkspace')?.addEventListener('click', () => post('/api/workspace/reveal').catch((err) => toast(err.message, 'err')))
 }

@@ -39,7 +39,7 @@ export function consolidate(
     atomicWriteFile(writtenPrompt, text)
     g.instructions = { ...g.instructions, system: ref }
     if (notes.length) { changes.push(`系统指令追加 ${notes.length} 条规则`); scopes.add('全局系统指令') }
-    if (lessons.length) { changes.push(`系统指令写入 ${lessons.length} 条高分经验`); scopes.add('全局系统指令') }
+    if (lessons.length) { changes.push(`系统指令写入 ${lessons.length} 条经验`); scopes.add('全局系统指令') }
   }
   for (const o of overlays.filter((x) => x.op === 'tool.note' && x.target)) {
     const prev = g.tools.overrides?.[o.target!]?.description

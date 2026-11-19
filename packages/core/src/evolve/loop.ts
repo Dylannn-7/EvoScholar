@@ -390,7 +390,14 @@ export function installEvolveLoop(h: EvolveHooks) {
     return `【自检】交付前请核对：${reasons.join('；')}。需要的话补跑检查或修正；确认无误后简短说明结论。`
   }
 
-  function finishTurn(status: string) {
+  function finishTurn(status: string, opts: { credit?: boolean } = {}) {
+    // Turns that end in a runtime error or a user stop are not evidence about memories or overlays.
+    if (opts.credit === false) {
+      for (const p of st.wrote) {
+        try { st.outputHashes.set(p, createHash('sha1').update(readFileSync(inside(h.cwd, p))).digest('hex')) } catch {}
+      }
+      return { score: undefined, confidence: 0 }
+    }
     const failures = st.signals.length
     const unresolved = st.unresolved.size
     let score = 0.7

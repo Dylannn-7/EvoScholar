@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, extname, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { spawn } from 'node:child_process'
 import { IMG, body, httpError, send, serveFile } from './http'
 import { serveProjectFile } from './file-preview'
 import { createV2Routes } from './routes-v2'
@@ -132,6 +133,11 @@ function listCwd(cwd: string) {
   walk(cwd, 3)
   return out
 }
+
+// The repository (or packaged app) root sits three levels above apps/server/dist.
+const APP_VERSION = (() => {
+  try { return String(JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf8')).version) } catch { return '' }
+})()
 
 export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: string[]; auth?: ReturnType<typeof createLocalAuth> }) {
   const ws = rt.ws
@@ -480,8 +486,17 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         projects: listProjects(rt.db),
         sessions: listSessions(),
         pending: (rt.db.prepare(`SELECT COUNT(*) n FROM candidates WHERE status = 'pending'`).get() as { n: number }).n,
+        app: { version: APP_VERSION, workspace: ws.root },
         alerts
       })
+    }
+    if (p === '/api/workspace/reveal' && req.method === 'POST') {
+      const [cmd, args] = process.platform === 'darwin' ? ['open', [ws.root]]
+        : process.platform === 'win32' ? ['explorer.exe', [ws.root]] : ['xdg-open', [ws.root]]
+      const child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true })
+      child.on('error', () => {})
+      child.unref()
+      return send(res, 200, { ok: true })
     }
     if (p === '/api/budget' && req.method === 'GET') {
       return send(res, 200, {
@@ -594,7 +609,8 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
           messages: structuredClone(srcState.messages),
           compactions: structuredClone(srcState.compactions ?? []),
           requests: [],
-          pending: []
+          // Unfinished calls travel with the messages that reference them; the next prompt settles them.
+          pending: structuredClone(srcState.pending ?? [])
         })
       }
       rt.db

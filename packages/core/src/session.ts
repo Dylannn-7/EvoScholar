@@ -8,7 +8,8 @@ import {
   type AgentSession,
   type ContentBlock,
   type ModelRequest,
-  type RunStatus
+  type RunStatus,
+  type ToolResult
 } from '@evoscholar/harness'
 import { DockerExecutor } from './docker-executor'
 import type { ExecutionBackend } from './execution'
@@ -222,6 +223,8 @@ export async function openResearchSession(
       remainingSteps = b.maxSteps
       let status: RunStatus = 'failed'
       let answer = ''
+      // Errors from the runtime or provider say nothing about the lessons used; neither does a stop.
+      let creditable = false
       try {
         recorder.beginTurn(textOf(blocks))
         if (opts.outputDir) try { mkdirSync(inside(cwd, opts.outputDir), { recursive: true }) } catch {}
@@ -231,17 +234,20 @@ export async function openResearchSession(
           session.configure({ model: workflow?.model ?? model, tools: next.tools, instructions: next.instructions })
           configured = next.version
         }
+        await settleInterrupted(session)
         status = await session.prompt(blocks)
         const check = status === 'complete' && remainingSteps > 0 ? loop?.selfCheck() : undefined
         if (check) status = await session.prompt([{ type: 'text', text: check }])
         const snap = await session.snapshot()
         const last = [...snap.messages].reverse().find((m) => m.role === 'assistant')
         answer = textOf(last?.content)
+        // A stop ends as 'cancelled', or 'blocked' when a tool call was cut off; neither is evidence.
+        creditable = status === 'complete' || status === 'failed'
         return { status, answer }
       } finally {
         try {
           recorder.endTurn(status, answer)
-          try { loop?.finishTurn(status) } catch {}
+          try { loop?.finishTurn(status, { credit: creditable }) } catch {}
         } finally { asking = false }
       }
     },
@@ -253,4 +259,27 @@ export async function openResearchSession(
       }
     }
   }
+}
+
+const INTERRUPTED: ToolResult = {
+  content: [{ type: 'text', text: '已停止：这个调用没有完成，结果未知。需要的话请重新调用，不要假设它已经生效。' }],
+  isError: true
+}
+
+/**
+ * A stopped turn (or a crash) can leave tool calls without results, and the harness refuses a new
+ * prompt until each one has a result. Close them as interrupted so the session stays usable.
+ */
+export async function settleInterrupted(session: AgentSession): Promise<number> {
+  let snap = await session.snapshot()
+  // A run still marked running belongs to a worker that is gone (crash or earlier process).
+  if (snap.run?.status === 'running') { await session.recover(snap.run.id); snap = await session.snapshot() }
+  let settled = 0
+  for (const pending of snap.pending) {
+    if (pending.status === 'waiting') await session.respond(pending.invocationId, INTERRUPTED)
+    else if (pending.status === 'unknown') await session.reconcile(pending.invocationId, INTERRUPTED)
+    else continue
+    settled++
+  }
+  return settled
 }

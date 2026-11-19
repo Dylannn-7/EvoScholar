@@ -33,6 +33,7 @@ files:
   - "!**/*.tsbuildinfo"
   - "!python/test_*.py"
   - "!apps/web/test/**"
+  - "!apps/desktop/test/**"
 mac:
   target:
     - target: dmg
