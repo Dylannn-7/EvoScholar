@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { spawn } from 'node:child_process'
+import { createSetupJobs, type SetupKind } from './setup-jobs'
 import { dirname, join } from 'node:path'
 import {
   DEFAULT_SANDBOX_IMAGE,
@@ -75,6 +76,7 @@ function checkBaseUrl(raw: string): string {
 export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Promise<void>; onOverlayChange?: () => void }) {
   const ws = rt.ws
   const settings = () => ws.settings
+  const setupJobs = createSetupJobs(ws)
 
   const modelsPayload = () => ({
     providers: listProviders(ws.config),
@@ -183,6 +185,11 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
       if (!model) return send(res, 400, { error: '没有可测试的模型，请先获取模型' }), true
       const r = await testProviderConnection(ws.config, `${id}/${model}`, { ledger: rt.ledger })
       return send(res, r.ok ? 200 : 400, r.ok ? r : { error: r.error }), true
+    }
+    if ((mm = /^\/api\/setup\/(python|sandbox)$/.exec(p))) {
+      const kind = mm[1] as SetupKind
+      if (method === 'POST') { setupJobs.start(kind); return send(res, 202, setupJobs.status(kind)), true }
+      if (method === 'GET') return send(res, 200, setupJobs.status(kind)), true
     }
     if (p === '/api/settings/execution/status' && method === 'GET') {
       const state = rt.executor.status ? await rt.executor.status() : (await rt.executor.available() ? 'ready' : 'engine')

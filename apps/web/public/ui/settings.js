@@ -198,8 +198,12 @@ function defaults (body, m, root) {
     <div class="panel"><h3>默认权限模式</h3>
       <div class="perm-grid">${PERMS.map(([id, label, desc]) => `<button type="button" class="proto ${(d.permission || 'ask') === id ? 'on' : ''}" data-perm="${id}"><span class="n">${label}</span><span class="d" style="font-family:var(--sans)">${desc}</span></button>`).join('')}</div>
     </div>
+    <div class="panel"><h3>运行环境</h3>
+      <div class="env-row"><span>Python</span><span class="muted" id="env-python">检测中…</span><button class="btn ghost small" data-setup="python" type="button">安装</button></div>
+      <div class="env-row"><span>容器镜像</span><span class="muted" id="env-sandbox">检测中…</span><button class="btn ghost small" data-setup="sandbox" type="button">构建</button></div>
+      <pre class="env-log" id="env-log" hidden></pre>
+    </div>
     <div class="panel"><h3>代码执行</h3>
-      
       <p class="muted" id="execution-status">检测中…</p>
       <form id="execution-settings" class="modal-form">
         <label class="field-label">容器命令<input class="input" name="engine" value="${esc(execution.engine)}" required></label>
@@ -211,12 +215,28 @@ function defaults (body, m, root) {
     </div>`
   body.querySelector('[name="hostMode"]').onchange = (e) => { body.querySelector('#hostWarn').hidden = !e.target.checked }
   const statusLine = body.querySelector('#execution-status')
-  api('/api/settings/execution/status').then((s) => {
-    const fallback = s.hostMode ? '使用宿主模式' : '代码执行已停用'
-    statusLine.textContent = s.state === 'ready' ? '容器可用'
-      : s.state === 'image' ? `缺少执行镜像（npm run sandbox:build）· ${fallback}`
-        : `未检测到 Docker · ${fallback}`
-  }).catch(() => { statusLine.textContent = '无法检测容器状态' })
+  // Runtime setup: install the Python environment or build the sandbox image without a terminal.
+  const envLine = (id, text, button) => { body.querySelector(`#env-${id}`).textContent = text; const b = body.querySelector(`[data-setup="${id}"]`); if (button) b.textContent = button }
+  const refreshEnv = async () => {
+    if (!body.isConnected) return
+    try {
+      const [py, sb, ex] = await Promise.all([api('/api/setup/python'), api('/api/setup/sandbox'), api('/api/settings/execution/status')])
+      envLine('python', py.running ? '安装中…' : py.ready ? '已就绪' : py.ok === false ? '安装失败' : '未安装', py.ready ? '重新安装' : '安装')
+      envLine('sandbox', sb.running ? '构建中…' : ex.state === 'ready' ? '已就绪' : sb.ok === false ? '构建失败' : ex.state === 'engine' ? '未检测到 Docker' : '未构建', ex.state === 'ready' ? '重新构建' : '构建')
+      const fallback = ex.hostMode ? '使用宿主模式' : '代码执行已停用'
+      statusLine.textContent = ex.state === 'ready' ? '容器可用' : ex.state === 'image' ? `缺少执行镜像 · ${fallback}` : `未检测到 Docker · ${fallback}`
+      const shown = [py, sb].find((j) => j.running) || [py, sb].find((j) => j.ok === false && j.log)
+      const log = body.querySelector('#env-log')
+      log.hidden = !shown
+      if (shown) { log.textContent = shown.log.split('\n').slice(-12).join('\n'); log.scrollTop = log.scrollHeight }
+      body.querySelectorAll('[data-setup]').forEach((b) => { b.disabled = py.running || sb.running })
+      if (py.running || sb.running) setTimeout(refreshEnv, 1500)
+    } catch { statusLine.textContent = '无法检测运行环境' }
+  }
+  body.querySelectorAll('[data-setup]').forEach((b) => (b.onclick = async () => {
+    try { await post(`/api/setup/${b.dataset.setup}`); refreshEnv() } catch (err) { toast(err.message, 'err') }
+  }))
+  refreshEnv()
   body.querySelector('#execution-settings').onsubmit = async (event) => {
     event.preventDefault()
     const fields = new FormData(event.currentTarget)

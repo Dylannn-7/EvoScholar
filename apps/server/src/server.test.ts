@@ -450,6 +450,11 @@ test('all API reads require a bearer, and cross-port origins are forbidden', asy
   const status = await (await localFetch(base + '/api/settings/execution/status')).json() as { state: string; hostMode: boolean }
   assert.ok(['ready', 'engine', 'image'].includes(status.state))
   assert.equal(status.hostMode, false)
+  const py = await (await localFetch(base + '/api/setup/python')).json() as { running: boolean; ready: boolean }
+  assert.equal(py.running, false)
+  assert.equal(typeof py.ready, 'boolean')
+  assert.equal((await fetch(base + '/api/setup/python')).status, 401)
+  assert.equal((await localFetch(base + '/api/setup/anything')).status, 404)
   const gateway = 'http://127.0.0.1:19000/v1'
   const update = (data: object) => localFetch(base + '/api/providers/fixture', {
     method: 'PUT', headers: { 'x-evoscholar': '1' }, body: JSON.stringify({ custom: true, ...data })

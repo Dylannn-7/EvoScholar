@@ -4,6 +4,8 @@
   "private": true,
   "description": "EvoScholar: a self-evolving personal research workbench (literature, data and figures, manuscript checks) whose agent harness evolves in the loop",
   "license": "Apache-2.0",
+  "author": "EvoScholar",
+  "main": "apps/desktop/main.cjs",
   "engines": {
     "node": ">=22.13.0"
   },
@@ -22,10 +24,21 @@
     "setup:python": "node scripts/setup-python.mjs",
     "sandbox:build": "node scripts/build-sandbox.mjs",
     "test": "node --no-warnings --test packages/core/dist/*.test.js apps/server/dist/*.test.js apps/web/test/*.test.mjs",
-    "demo": "node --no-warnings scripts/demo.mjs"
+    "demo": "node --no-warnings scripts/demo.mjs",
+    "app": "npm run build && electron .",
+    "dist": "npm run build && electron-builder",
+    "app:smoke": "node scripts/app-smoke.mjs"
+  },
+  "dependencies": {
+    "@evoscholar/core": "0.1.0",
+    "@evoscholar/harness": "0.1.0",
+    "@evoscholar/server": "0.1.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
     "typescript": "^5.9.3"
   }
 }

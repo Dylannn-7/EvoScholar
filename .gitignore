@@ -18,3 +18,6 @@ rulepacks/*/source/
 /*.pdf
 __pycache__/
 *.pyc
+
+# Desktop packages
+release/

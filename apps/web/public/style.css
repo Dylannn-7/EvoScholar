@@ -435,3 +435,7 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 .sfacts .sw { display: flex; gap: 3px; }
 .sfacts .sw i { width: 18px; height: 10px; border-radius: 3px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .12) inset; }
 .sfacts .sf { font-size: 11.5px; color: var(--text-2); line-height: 1.5; }
+
+/* settings: runtime setup rows */
+.env-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 6px 0; font-size: 13px; }
+.env-log { margin: 10px 0 0; max-height: 180px; overflow: auto; padding: 10px 12px; border-radius: 10px; background: rgba(0, 0, 0, .35); color: var(--text-2); font: 11.5px/1.5 var(--mono); white-space: pre-wrap; }
