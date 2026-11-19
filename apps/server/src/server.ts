@@ -855,8 +855,13 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     mm = m(/^\/api\/evolution\/(g-[\w-]+)\/(promote|reject)$/)
     if (mm && req.method === 'POST') {
       const b = await body(req)
-      if (mm[2] === 'promote') promote(rt, mm[1])
-      else reject(rt, mm[1], b.reason ? String(b.reason).slice(0, 300) : undefined)
+      try {
+        if (mm[2] === 'promote') promote(rt, mm[1], { confirmUnverified: b.confirmUnverified === true })
+        else reject(rt, mm[1], b.reason ? String(b.reason).slice(0, 300) : undefined)
+      } catch (e) {
+        const err = e as Error & { status?: number }
+        throw httpError(err.status ?? 400, err.message)
+      }
       await resetIdleSessions()
       return send(res, 200, { ok: true, active: rt.genomes.activeId() })
     }

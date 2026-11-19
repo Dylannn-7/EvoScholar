@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BudgetError } from '../budget'
-import type { HarnessGenome } from '../genome'
+import { withTransaction } from '../db'
+import { modelFor, type HarnessGenome } from '../genome'
 import { isDeepSeekPeak } from '../pricing'
+import { endpointFor, parseModelRef } from '../providers'
 import type { Runtime } from '../session'
 import { Bench, type BenchCase } from './bench'
 import { mutate } from './mutate'
 import { reflect, type Proposal } from './reflect'
+import { candidateVerification } from './review'
 import { passCount, runSuite, type CaseResult } from './runner'
 
 export type EvolveOptions = {
@@ -150,8 +153,10 @@ export async function evolveRound(rt: Runtime, opts: EvolveOptions = {}): Promis
           continue
         }
         const g = mutate(rt, base, p, runId)
-        rt.db.prepare(`INSERT INTO candidates (genome_id, evolution_run, parent, target, diagnosis, change, base_dev_pass, dev_total, status, ts) VALUES (?,?,?,?,?,?,?,?, 'evaluating', ?)`)
-          .run(g.id, runId, base.id, p.target, p.diagnosis, JSON.stringify(p.bullets), passCount(baseline), dev.length, now())
+        withTransaction(rt.db, () => {
+          rt.db.prepare(`INSERT INTO candidates (genome_id, evolution_run, parent, target, diagnosis, change, base_dev_pass, dev_total, status, ts) VALUES (?,?,?,?,?,?,?,?, 'evaluating', ?)`)
+            .run(g.id, runId, base.id, p.target, p.diagnosis, JSON.stringify(p.bullets), passCount(baseline), dev.length, now())
+        })
         log(`候选 ${g.id}（${p.target}）：${p.diagnosis}`)
         const candDev = await suite(g, dev)
         let verdict = judge(baseline, candDev)
@@ -182,8 +187,13 @@ export async function evolveRound(rt: Runtime, opts: EvolveOptions = {}): Promis
           } else summary.reason = `验收集退步（${summary.baseAccPass} → ${summary.accPass}）`
         }
         const cost = (rt.db.prepare(`SELECT COALESCE(SUM(cost_cny),0) c FROM eval_runs WHERE evolution_run = ? AND genome_id = ?`).get(runId, g.id) as { c: number }).c
-        rt.db.prepare(`UPDATE candidates SET dev_pass=?, acc_pass=?, acc_total=?, base_acc_pass=?, cost_cny=?, status=?, reason=? WHERE genome_id=?`)
-          .run(summary.devPass, summary.accPass ?? null, summary.accTotal ?? null, summary.baseAccPass ?? null, cost, summary.status, summary.reason, g.id)
+        const verTotal = summary.devTotal + (summary.accTotal ?? 0)
+        const verPass = summary.devPass + (summary.accPass ?? 0)
+        const verScope = summary.accTotal ? '离线评测（开发集 + 验收集）' : '离线评测（开发集）'
+        rt.db.prepare(`UPDATE candidates SET dev_pass=?, acc_pass=?, acc_total=?, base_acc_pass=?, cost_cny=?, status=?, reason=?,
+          verification_run=?, verification_pass=?, verification_total=?, verification_scope=?, verified_at=? WHERE genome_id=?`)
+          .run(summary.devPass, summary.accPass ?? null, summary.accTotal ?? null, summary.baseAccPass ?? null, cost, summary.status, summary.reason,
+            runId, verPass, verTotal, verScope, now(), g.id)
         if (summary.status === 'discarded') { g.status = 'rejected'; g.note = `${g.note}（自动淘汰：${summary.reason}）`.slice(0, 300); rt.genomes.save(g) }
         candidates.push(summary)
         log(`${g.id}：${summary.status === 'pending' ? '待你审批' : '淘汰'} —— ${summary.reason}`)
@@ -235,32 +245,122 @@ ${rows.join('\n')}
 `
 }
 
-/** Approve a pending candidate: it becomes the active genome; the previous one is archived. */
-export function promote(rt: Runtime, genomeId: string): HarnessGenome {
-  const row = rt.db.prepare(`SELECT status FROM candidates WHERE genome_id = ?`).get(genomeId) as { status: string } | undefined
+export type CandidateVerificationInput = {
+  runId: string
+  pass: number
+  total: number
+  scope?: string
+  verifiedAt?: string
+}
+
+/** Attach offline replay or evaluation verification evidence to a candidate record. */
+export function recordCandidateVerification(rt: Runtime, genomeId: string, evidence: CandidateVerificationInput): void {
+  const runId = evidence.runId.trim()
+  if (!runId) throw new Error('验证运行 ID 不能为空')
+  if (!Number.isSafeInteger(evidence.total) || evidence.total < 1 || !Number.isSafeInteger(evidence.pass) || evidence.pass < 0 || evidence.pass > evidence.total)
+    throw new Error('验证通过数与总数无效')
+  withTransaction(rt.db, () => {
+    const row = rt.db.prepare(`SELECT status, verification_scope FROM candidates WHERE genome_id = ?`).get(genomeId) as { status: string; verification_scope: string | null } | undefined
+    if (!row) throw new Error(`候选记录不存在：${genomeId}`)
+    if (row.status !== 'pending' && row.status !== 'evaluating') throw new Error(`候选 ${genomeId} 当前状态为 ${row.status}，无法记录验证`)
+    const scope = evidence.scope?.trim() || row.verification_scope || '离线回放验证'
+    rt.db.prepare(`UPDATE candidates SET verification_run=?, verification_pass=?, verification_total=?, verification_scope=?, verified_at=? WHERE genome_id=?`)
+      .run(runId, evidence.pass, evidence.total, scope, evidence.verifiedAt ?? now(), genomeId)
+  })
+}
+
+/** Verify a pending candidate against the local benchmark using only a loopback mock gateway. */
+export async function verifyCandidateOffline(
+  rt: Runtime,
+  genomeId: string,
+  opts: { selector?: string; scope?: string; concurrency?: number; useCache?: boolean; capCny?: number; onCase?: (r: CaseResult) => void } = {}
+): Promise<{ runId: string; pass: number; total: number; scope: string; results: CaseResult[] }> {
   const g = rt.genomes.load(genomeId)
-  if (!row) throw new Error(`${genomeId} 缺少${g.createdBy.startsWith('evolution/') ? '评测' : '候选'}记录，不能上线`)
-  if (row.status !== 'pending') throw new Error(`${genomeId} 当前状态为 ${row.status}，不能上线`)
+  const row = rt.db.prepare(`SELECT status, verification_scope FROM candidates WHERE genome_id = ?`).get(genomeId) as { status: string; verification_scope: string | null } | undefined
+  if (!row || row.status !== 'pending') throw new Error(`候选 ${genomeId} 不是待审批状态，无法验证`)
+  const ref = modelFor(g, 'main', { defaults: rt.ws.settings.defaults })
+  const { url } = endpointFor(rt.ws.config, parseModelRef(ref).provider)
+  const host = new URL(url).hostname
+  if (!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(host))
+    throw new Error('候选验证只能使用本机离线 mock 网关，禁止调用真实模型 API')
+  const bench = new Bench(rt.ws.root)
+  bench.checkAvailable()
+  const selector = opts.selector ?? 'all'
+  const all = bench.cases()
+  const ids = selector.split(',').map((s) => s.trim()).filter(Boolean)
+  const cases = selector === 'all' ? all
+    : selector === 'development' || selector === 'acceptance' ? bench.cases(selector)
+    : all.filter((c) => ids.includes(c.id))
+  if (!cases.length) throw new Error(`没有匹配的评测任务：${selector}`)
+  const runId = `verify-${now().replace(/[-:T]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`
+  const results = await runSuite({ ...rt, ledger: rt.ledger.forRound(runId, opts.capCny) }, bench, g, cases, {
+    evolutionRun: runId,
+    baseDir: join(rt.ws.dataDir, 'runs', runId),
+    concurrency: opts.concurrency ?? 2,
+    useCache: opts.useCache ?? false,
+    category: 'dev',
+    onCase: opts.onCase
+  })
+  const pass = passCount(results)
+  const total = results.length
+  const scope = opts.scope?.trim() || row.verification_scope || `离线回放（${selector}，${total} 题）`
+  recordCandidateVerification(rt, genomeId, { runId, pass, total, scope })
+  return { runId, pass, total, scope, results }
+}
+
+/** Approve a pending candidate: it becomes the active genome; the previous one is archived. */
+export function promote(rt: Runtime, genomeId: string, opts: { confirmUnverified?: boolean } = {}): HarnessGenome {
+  const g = rt.genomes.load(genomeId)
   const prev = rt.genomes.load()
   if (!g.parent || g.budgets.maxSteps > Math.min(prev.budgets.maxSteps, rt.genomes.load(g.parent).budgets.maxSteps))
     throw new Error('候选版本不得提高步数上限')
   if (g.status !== 'candidate') throw new Error(`${genomeId} 不是候选版本`)
   rt.genomes.hash(g)
-  prev.status = 'archived'
-  rt.genomes.save(prev)
-  g.status = 'active'
-  rt.genomes.save(g)
-  rt.genomes.setActive(g.id)
-  rt.db.prepare(`UPDATE candidates SET status='approved' WHERE genome_id = ?`).run(genomeId)
+  rt.genomes.commitActiveSwitch(rt.db, prev.id, g.id, {
+    onCommit: () => {
+      const row = rt.db.prepare(
+        `SELECT status, evolution_run, dev_pass, dev_total, acc_pass, acc_total,
+                verification_run, verification_pass, verification_total, verification_scope, verified_at
+         FROM candidates WHERE genome_id = ?`
+      ).get(genomeId) as {
+        status: string
+        evolution_run: string
+        dev_pass: number | null
+        dev_total: number | null
+        acc_pass: number | null
+        acc_total: number | null
+        verification_run: string | null
+        verification_pass: number | null
+        verification_total: number | null
+        verification_scope: string | null
+        verified_at: string | null
+      } | undefined
+      if (!row) throw new Error(`${genomeId} 缺少${g.createdBy.startsWith('evolution/') ? '评测' : '候选'}记录，不能上线`)
+      if (row.status !== 'pending') throw new Error(`${genomeId} 当前状态为 ${row.status}，不能上线`)
+      const ver = candidateVerification(row)
+      if (!ver.verified && opts.confirmUnverified !== true) {
+        throw Object.assign(new Error(`${genomeId} 尚未通过离线验证，批准上线需要二次确认`), { status: 400, code: 'UNVERIFIED_CANDIDATE' })
+      }
+      rt.db.prepare(`UPDATE candidates SET status='approved' WHERE genome_id = ?`).run(genomeId)
+    },
+    afterCommit: () => {
+      g.status = 'active'
+      rt.genomes.save(g)
+      prev.status = 'archived'
+      rt.genomes.save(prev)
+    }
+  })
   return g
 }
 
 export function reject(rt: Runtime, genomeId: string, reason = '用户拒绝'): void {
   const g = rt.genomes.load(genomeId)
   if (g.status === 'active') throw new Error('不能拒绝当前上线版本，请用回滚')
+  withTransaction(rt.db, () => {
+    rt.db.prepare(`UPDATE candidates SET status='rejected', reason=? WHERE genome_id = ?`).run(reason, genomeId)
+  })
   g.status = 'rejected'
   rt.genomes.save(g)
-  rt.db.prepare(`UPDATE candidates SET status='rejected', reason=? WHERE genome_id = ?`).run(reason, genomeId)
 }
 
 /** Re-activate the parent of the active genome (or a given archived genome). */
@@ -272,11 +372,14 @@ export function rollback(rt: Runtime, to?: string): HarnessGenome {
   const target = rt.genomes.load(targetId)
   if (target.status !== 'archived') throw new Error('只能回滚到已归档的上线版本')
   rt.genomes.hash(target)
-  cur.status = 'archived'
-  rt.genomes.save(cur)
-  target.status = 'active'
-  rt.genomes.save(target)
-  rt.genomes.setActive(target.id)
+  rt.genomes.commitActiveSwitch(rt.db, cur.id, target.id, {
+    afterCommit: () => {
+      target.status = 'active'
+      rt.genomes.save(target)
+      cur.status = 'archived'
+      rt.genomes.save(cur)
+    }
+  })
   return target
 }
 

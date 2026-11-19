@@ -5,7 +5,7 @@ import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } fro
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import { join, resolve } from 'node:path'
-import { openRuntime, openWorkspace } from '@evoscholar/core'
+import { consolidate, openRuntime, openWorkspace, recordCandidateVerification } from '@evoscholar/core'
 import { createLocalAuth } from './local-auth'
 import { createServerApp } from './server'
 import { body, send } from './http'
@@ -464,4 +464,65 @@ test('all API reads require a bearer, cross-port origins are forbidden, and logo
   assert.equal((await second.json() as { provider: { hasKey: boolean } }).provider.hasKey, false)
   assert.equal((await localFetch(base + '/api/auth/logout', { method: 'POST', headers: { 'x-evoscholar': '1' } })).status, 200)
   assert.equal((await localFetch(base + '/api/state')).status, 401)
+})
+
+test('candidate approval requires confirmation when unverified and returns verification evidence via API', async (t) => {
+  const dir = tempWorkspace()
+  const rt = openRuntime(openWorkspace(dir), () => {})
+  const auth = createLocalAuth()
+  const app = createServerApp(rt, { webDir: WEB, auth })
+  const srv = createServer(app.handler)
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve))
+  t.after(async () => {
+    await app.dispose()
+    await new Promise<void>((resolve) => srv.close(() => resolve()))
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+  const localFetch = await localhostClient(base, auth)
+  const H = { 'content-type': 'application/json', 'x-evoscholar': '1' }
+
+  // 1. Unverified consolidated candidate: shows verified=false, requires confirmUnverified=true to promote.
+  const oid1 = rt.evolve.addOverlay({ sessionId: 's1', op: 'prompt.note', value: '写结论前核对单位', reason: 'r1' })
+  rt.evolve.setOverlay(oid1, 'kept', 0.9)
+  const c1 = consolidate(rt, { overlayIds: [oid1] })
+
+  const evo1 = await (await localFetch(`${base}/api/evolution`)).json() as { candidates: { genome_id: string; verification: { verified: boolean; scope: string; runId: string | null } }[] }
+  const row1 = evo1.candidates.find((c) => c.genome_id === c1.genome)!
+  assert.equal(row1.verification.verified, false)
+  assert.equal(row1.verification.runId, null)
+  assert.match(row1.verification.scope, /全局系统指令/)
+
+  const blocked = await localFetch(`${base}/api/evolution/${c1.genome}/promote`, { method: 'POST', headers: H, body: JSON.stringify({}) })
+  assert.equal(blocked.status, 400)
+  assert.match((await blocked.json() as { error: string }).error, /未通过离线验证/)
+
+  const confirmed = await localFetch(`${base}/api/evolution/${c1.genome}/promote`, { method: 'POST', headers: H, body: JSON.stringify({ confirmUnverified: true }) })
+  assert.equal(confirmed.status, 200)
+  assert.equal(rt.genomes.activeId(), c1.genome)
+
+  // 2. Verified consolidated candidate: returns runId/pass/total/scope in list and detail API, promotes directly.
+  const oid2 = rt.evolve.addOverlay({ sessionId: 's2', op: 'tool.note', target: 'write_file', value: '保留数值类型', reason: 'r2' })
+  rt.evolve.setOverlay(oid2, 'kept', 0.95)
+  const c2 = consolidate(rt, { overlayIds: [oid2] })
+  recordCandidateVerification(rt, c2.genome, { runId: 'verify-mock-42', pass: 2, total: 2, scope: '离线示例回放（2 题）' })
+
+  const evo2 = await (await localFetch(`${base}/api/evolution`)).json() as { candidates: { genome_id: string; verification: { verified: boolean; runId: string; pass: number; total: number; scope: string } }[] }
+  const row2 = evo2.candidates.find((c) => c.genome_id === c2.genome)!
+  assert.equal(row2.verification.verified, true)
+  assert.equal(row2.verification.runId, 'verify-mock-42')
+  assert.equal(row2.verification.pass, 2)
+  assert.equal(row2.verification.total, 2)
+  assert.equal(row2.verification.scope, '离线示例回放（2 题）')
+
+  const detail = await (await localFetch(`${base}/api/evolution/${c2.genome}`)).json() as { verification: { verified: boolean; runId: string; pass: number; total: number; scope: string } }
+  assert.equal(detail.verification.verified, true)
+  assert.equal(detail.verification.runId, 'verify-mock-42')
+  assert.equal(detail.verification.pass, 2)
+  assert.equal(detail.verification.total, 2)
+
+  const ok = await localFetch(`${base}/api/evolution/${c2.genome}/promote`, { method: 'POST', headers: H, body: JSON.stringify({}) })
+  assert.equal(ok.status, 200)
+  assert.equal(rt.genomes.activeId(), c2.genome)
 })

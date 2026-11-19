@@ -1,11 +1,13 @@
 // Plugins: skill import (Anthropic Agent Skills format) from a folder, a zip or a GitHub path;
 // enabling / disabling skills (a user-approved genome change); figure style catalog; user rules.
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { inflateRawSync } from 'node:zlib'
 import YAML from 'yaml'
+import { atomicWriteFile } from './atomic-file'
 import type { Runtime } from './session'
-import { listSkills, readSkillFile, skillNameValid, skillSource, writeSkillSource, type SkillSource } from './skills'
+import { listSkills, readSkillFile, skillNameValid, skillSource, type SkillSource } from './skills'
 import { inside } from './tools/sandbox'
 import { pythonBin, runProcess } from './tools/exec'
 import { readUserRules, writeUserRules } from './evolve/kernels'
@@ -65,12 +67,23 @@ export function installSkillFiles(root: string, files: FileMap, source: SkillSou
       warnings.push('附带脚本里有联网或子进程调用；智能体只能阅读这些脚本，运行时仍需你的确认')
     const license = String(fm.license ?? '') || ([...files.keys()].find((k) => /^LICENSE/i.test(k)) ? '见 LICENSE' : '')
     if (!license) warnings.push('没有找到许可证信息，请确认可以使用')
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
-    cpSync(staged, dir, { recursive: true })
-    writeSkillSource(root, name, { ...source, license: license || undefined, importedAt: new Date().toISOString() })
+    atomicWriteFile(join(staged, '.source.json'), JSON.stringify({ ...source, license: license || undefined, importedAt: new Date().toISOString() }, null, 2))
+    if (existsSync(dir)) {
+      const backup = join(skills, `.backup-${name}-${randomUUID()}`)
+      renameSync(dir, backup)
+      try {
+        renameSync(staged, dir)
+      } catch (error) {
+        try { if (!existsSync(dir) && existsSync(backup)) renameSync(backup, dir) } catch {}
+        throw error
+      }
+      rmSync(backup, { recursive: true, force: true })
+    } else {
+      renameSync(staged, dir)
+    }
     return { name, files: files.size, warnings }
   } finally {
-    rmSync(staged, { recursive: true, force: true })
+    if (existsSync(staged)) rmSync(staged, { recursive: true, force: true })
   }
 }
 
@@ -250,7 +263,7 @@ export function setSkillEnabled(rt: Runtime, name: string, on: boolean) {
   if (has === on) return g
   return rt.genomes.deriveManual((x) => {
     x.skills = on ? [...(x.skills ?? []), { name, version: meta.version }] : (x.skills ?? []).filter((s) => s.name !== name)
-  }, `${on ? '启用' : '停用'}技能 ${name}（用户在插件页操作）`)
+  }, `${on ? '启用' : '停用'}技能 ${name}（用户在插件页操作）`, rt.db)
 }
 
 export function removeImportedSkill(rt: Runtime, name: string) {

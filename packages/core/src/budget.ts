@@ -96,8 +96,8 @@ export class Ledger {
     const { id, warnings } = this.transaction(() => {
       const warnings = this.assertCanSpend(entry.category, costCny, { web })
       const { lastInsertRowid: id } = this.db.prepare(
-        'INSERT INTO budget_reservations (category, kind, round_id, cost_cny) VALUES (?, ?, ?, ?)'
-      ).run(entry.category, entry.kind, this.round?.id ?? null, costCny)
+        'INSERT INTO budget_reservations (category, kind, round_id, cost_cny, created_at) VALUES (?, ?, ?, ?, ?)'
+      ).run(entry.category, entry.kind, this.round?.id ?? null, costCny, new Date().toISOString())
       return { id, warnings }
     })
     return {
@@ -160,6 +160,24 @@ export class Ledger {
     if (opts.web && s.webCallsToday + held.web >= s.webCallsPerDay)
       throw new BudgetError(`今日联网调用额度不足（含预留，上限 ${s.webCallsPerDay} 次）`, 'web')
     return warnings
+  }
+
+  /** Release stale unresolved budget reservations (e.g. after a crash) and write a reconciliation record. */
+  reconcileReservations(maxAgeMs = 30 * 60_000): { released: number; releasedCny: number; detail?: string } {
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString()
+    return this.transaction(() => {
+      const stale = this.db.prepare(
+        `SELECT id, category, kind, round_id, cost_cny, created_at FROM budget_reservations
+         WHERE created_at IS NULL OR created_at <= ?`
+      ).all(cutoff) as { id: number; category: string; kind: string; round_id: string | null; cost_cny: number; created_at: string | null }[]
+      if (!stale.length) return { released: 0, releasedCny: 0 }
+      const releasedCny = stale.reduce((sum, row) => sum + Number(row.cost_cny || 0), 0)
+      this.db.prepare(`DELETE FROM budget_reservations WHERE created_at IS NULL OR created_at <= ?`).run(cutoff)
+      const detail = `释放 ${stale.length} 条超时未结算预算预留（合计 ¥${releasedCny.toFixed(4)}）`
+      this.db.prepare(`INSERT INTO reconcile_log (ts, kind, detail) VALUES (?, 'budget_reservation', ?)`)
+        .run(new Date().toISOString(), detail)
+      return { released: stale.length, releasedCny, detail }
+    })
   }
 
   private checkAlerts() {

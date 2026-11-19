@@ -6,7 +6,8 @@ import { join, resolve } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
 import {
   checkKernelCode, consolidate, fetchGithubSkill, installSkillFiles, kernelTools, openRuntime, openWorkspace, parseGithubUrl,
-  promote, readFolder, readUserRules, readZip, setSkillEnabled, skillSource, type ExecutionBackend, type ToolEnv
+  promote, readFolder, readUserRules, readZip, recordCandidateVerification, setSkillEnabled, skillSource, verifyCandidateOffline,
+  type ExecutionBackend, type ToolEnv
 } from './index'
 
 const REPO = resolve(__dirname, '../../..')
@@ -152,9 +153,25 @@ test('skill import from folder, zip and GitHub; enable/disable is a genome chang
   assert.match(rt.genomes.text(cand.instructions.system), /写文件后先重读一遍[\s\S]*先列目录确认真实文件名/)
   assert.equal(rt.evolve.overlays(undefined, true).find((o) => o.id === oid)!.status, 'promoted')
   assert.throws(() => consolidate(rt, { overlayIds: [oid] }), /至少一项/)
-  promote(rt, c.genome)
+  assert.throws(() => promote(rt, c.genome), /未通过离线验证/)
+  promote(rt, c.genome, { confirmUnverified: true })
   assert.equal(rt.genomes.activeId(), c.genome)
   assert.ok(readFileSync(join(dir, cand.instructions.system), 'utf8').includes('经用户批准'))
+})
+
+test('consolidated candidates require offline loopback gateway for verification and record evidence', async (t) => {
+  const dir = ws()
+  const rt = openRuntime(openWorkspace(dir))
+  t.after(() => { rt.db.close(); rmSync(dir, { recursive: true, force: true }) })
+  const oid = rt.evolve.addOverlay({ sessionId: 's-ver', op: 'prompt.note', value: '输出 JSON 保持数值类型', reason: 'test' })
+  rt.evolve.setOverlay(oid, 'kept', 0.9)
+  const c = consolidate(rt, { overlayIds: [oid] })
+  // Remote default endpoint is refused by offline verifier.
+  await assert.rejects(() => verifyCandidateOffline(rt, c.genome), /离线 mock 网关/)
+  // Recording offline verification evidence allows promotion without confirmUnverified.
+  recordCandidateVerification(rt, c.genome, { runId: 'verify-offline-1', pass: 3, total: 3, scope: '公开示例评测集（3 题）' })
+  promote(rt, c.genome)
+  assert.equal(rt.genomes.activeId(), c.genome)
 })
 
 test('folder imports skip linked directories and enforce the input byte limit', (t) => {

@@ -220,8 +220,8 @@ async function main() {
       return
     }
     case 'promote': {
-      if (!args[0]) throw new Error('用法：es promote <genome-id>')
-      const g = promote(rt, args[0])
+      if (!args[0]) throw new Error('用法：es promote <genome-id> [--confirm-unverified]')
+      const g = promote(rt, args[0], { confirmUnverified: args.includes('--confirm-unverified') || args.includes('--yes') })
       return console.log(green(`已上线 ${g.id}（父版本 ${g.parent} 已归档；es rollback 可回滚）`))
     }
     case 'reject': {
