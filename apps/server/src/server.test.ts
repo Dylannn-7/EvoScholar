@@ -636,6 +636,14 @@ test('candidate approval requires confirmation when unverified and returns verif
   assert.equal(detail.verification.pass, 2)
   assert.equal(detail.verification.total, 2)
 
+  // Versions view: compare any two genomes (base defaults to the parent); unknown ids are 404.
+  const root = rt.genomes.load(c1.genome).parent!
+  const vs = await (await localFetch(`${base}/api/evolution/${c2.genome}?base=${root}`)).json() as { parent: { id: string }; genomeDiff: { op: string; text: string }[] }
+  assert.equal(vs.parent.id, root)
+  assert.ok(vs.genomeDiff.some((l) => l.op !== ' '))
+  assert.equal((await localFetch(`${base}/api/evolution/${c2.genome}?base=g-9999`)).status, 404)
+  assert.equal((await localFetch(`${base}/api/evolution/g-9999`)).status, 404)
+
   const ok = await localFetch(`${base}/api/evolution/${c2.genome}/promote`, { method: 'POST', headers: H, body: JSON.stringify({}) })
   assert.equal(ok.status, 200)
   assert.equal(rt.genomes.activeId(), c2.genome)

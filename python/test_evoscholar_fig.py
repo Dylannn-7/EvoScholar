@@ -101,6 +101,20 @@ class FigureChecks(unittest.TestCase):
         self.assertNotIn('axes.label', self.rules(r['issues']))
         self.assertNotIn('axes.units', self.rules(r['issues']))
 
+    def test_text_off_canvas_is_flagged(self):
+        F.apply_style('optica')
+        fig, ax = plt.subplots(figsize=F.figsize('optica', 'single'), layout=None)
+        ax.plot([1550, 1551, 1552], [0.2, 0.9, 0.3])
+        ax.set(xlabel='Wavelength (nm)', ylabel='Transmission (a.u.)')
+        fig.subplots_adjust(left=0.2, right=0.95, top=0.95, bottom=0.02)
+        r = F.check_figure(fig, 'optica')
+        clipped = [i for i in r['issues'] if i['rule'] == 'text.clipped']
+        self.assertEqual(len(clipped), 1)
+        self.assertIn('Wavelength (nm)', clipped[0]['message'])
+        self.assertIn('下', clipped[0]['message'])
+        fig.subplots_adjust(bottom=0.3)
+        self.assertNotIn('text.clipped', self.rules(F.check_figure(fig, 'optica')['issues']))
+
     def test_training_epoch_needs_no_unit(self):
         F.apply_style('nature')
         fig, ax = plt.subplots(figsize=F.figsize('nature', 'single'))

@@ -151,10 +151,14 @@ export type CandidateDetail = {
   report?: string
 }
 
-/** Everything the approval panel needs: genome + prompt diffs against the parent and per-case pass changes. */
-export function candidateDetail(rt: Runtime, genomeId: string): CandidateDetail {
+/**
+ * Everything the approval panel needs: genome + prompt diffs against the parent and per-case pass changes.
+ * `baseId` compares against any other genome instead of the parent (the versions view picks two).
+ */
+export function candidateDetail(rt: Runtime, genomeId: string, baseId?: string): CandidateDetail {
   const genome = rt.genomes.load(genomeId)
-  const parent = genome.parent ? rt.genomes.load(genome.parent) : undefined
+  const parentId = baseId ?? genome.parent
+  const parent = parentId ? rt.genomes.load(parentId) : undefined
   const rawCandidate = rt.db.prepare(`SELECT * FROM candidates WHERE genome_id = ?`).get(genomeId) as RawCandidateRow | undefined
   const candidate = rawCandidate ? { ...rawCandidate, verification: candidateVerification(rawCandidate) } : undefined
   const strip = (g?: HarnessGenome) => {
