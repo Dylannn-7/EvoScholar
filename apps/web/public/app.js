@@ -31,6 +31,11 @@ darkQuery.addEventListener?.('change', () => { if (themePref === 'system') apply
   let initial = new URLSearchParams(location.search).get('theme')
   if (!THEMES.includes(initial)) { try { initial = localStorage.getItem('evoscholar.theme') } catch {} }
   setThemePreference(THEMES.includes(initial) ? initial : 'dark')
+  // The macOS desktop shell hides the title bar; the page then leaves room for the window buttons.
+  // Kept for the tab's lifetime: the router rewrites the URL, and a reload must not lose it.
+  let shellMac = new URLSearchParams(location.search).get('shell') === 'mac'
+  try { if (shellMac) sessionStorage.setItem('evoscholar.shell', 'mac'); else shellMac = sessionStorage.getItem('evoscholar.shell') === 'mac' } catch {}
+  if (shellMac) document.documentElement.dataset.shell = 'mac'
 }
 
 // ---------------------------------------------------------------- particles
