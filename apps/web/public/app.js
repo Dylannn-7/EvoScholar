@@ -9,6 +9,30 @@ import { renderLibrary, renderPlugins, renderTrajectory, renderUsage } from './u
 
 export const $ = (s, el = document) => el.querySelector(s)
 
+// ---------------------------------------------------------------- theme (dark / light / follow system)
+const THEMES = ['dark', 'light', 'system']
+const darkQuery = matchMedia('(prefers-color-scheme: dark)')
+let themePref = 'dark'
+function applyTheme () {
+  const resolved = themePref === 'system' ? (darkQuery.matches ? 'dark' : 'light') : themePref
+  document.documentElement.dataset.theme = resolved
+}
+/** Remember the preference locally and apply it; the server copy is written by the settings page. */
+export function setThemePreference (pref) {
+  if (!THEMES.includes(pref)) return
+  themePref = pref
+  try { localStorage.setItem('evoscholar.theme', pref) } catch {}
+  applyTheme()
+}
+export const themePreference = () => themePref
+darkQuery.addEventListener?.('change', () => { if (themePref === 'system') applyTheme() })
+{
+  // The desktop shell passes the saved theme in the URL so the first paint already matches.
+  let initial = new URLSearchParams(location.search).get('theme')
+  if (!THEMES.includes(initial)) { try { initial = localStorage.getItem('evoscholar.theme') } catch {} }
+  setThemePreference(THEMES.includes(initial) ? initial : 'dark')
+}
+
 // ---------------------------------------------------------------- particles
 const NOOP = { setState () {}, setDim () {}, setBudgetLevel () {}, reform () {}, setQuality () {}, setMouseStrength () {}, quality: 'off' }
 export const fx = { impl: NOOP, call (m, ...a) { try { this.impl[m]?.(...a) } catch {} } }
@@ -54,6 +78,7 @@ export const store = {
   state: null,
   async refresh () {
     this.state = await api('/api/state')
+    if (this.state.ui?.theme && this.state.ui.theme !== themePref) setThemePreference(this.state.ui.theme)
     renderRail()
     return this.state
   }

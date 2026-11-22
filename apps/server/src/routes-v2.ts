@@ -7,6 +7,8 @@ import { createSetupJobs, type SetupKind } from './setup-jobs'
 import { dirname, join } from 'node:path'
 import {
   DEFAULT_SANDBOX_IMAGE,
+  THEME_PREFERENCES,
+  type ThemePreference,
   PERMISSION_LABELS,
   PERMISSION_MODES,
   PROTOCOLS,
@@ -222,6 +224,13 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
       settings().execution = next
       saveSettings(ws)
       return send(res, 200, { execution: next }), true
+    }
+    if (p === '/api/settings/ui' && method === 'PUT') {
+      const b = await body(req)
+      if (!THEME_PREFERENCES.includes(b.theme as ThemePreference)) throw httpError(400, '未知界面主题')
+      settings().ui = { ...settings().ui, theme: b.theme as ThemePreference }
+      saveSettings(ws)
+      return send(res, 200, { ui: settings().ui }), true
     }
     if (p === '/api/settings/defaults' && method === 'PUT') {
       const b = await body(req)

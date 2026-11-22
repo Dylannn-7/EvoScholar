@@ -50,8 +50,10 @@ test('provider endpoints follow protocol, editable base URL, region and auth sty
     ws.settings.providers.zhipu = { region: 'china' }
     ws.settings.providers.kimi = { baseUrl: 'https://proxy.example.com/v1' }
     ws.settings.providers.mygw = { custom: true, label: 'My GW', protocol: 'chat-completions', baseUrl: 'http://localhost:9000/v1', models: [{ id: 'm1' }] }
+    ws.settings.ui = { theme: 'system' }
     saveSettings(ws)
     const ws2 = openWorkspace(dir)
+    assert.deepEqual(ws2.settings.ui, { theme: 'system' }, 'theme preference persists in settings.json')
     assert.equal(endpointFor(ws2.config, 'deepseek').url, 'https://api.deepseek.com/anthropic/v1/messages')
     assert.equal(endpointFor(ws2.config, 'zhipu').url, 'https://open.bigmodel.cn/api/paas/v4/chat/completions')
     assert.equal(endpointFor(ws2.config, 'kimi').url, 'https://proxy.example.com/v1/chat/completions')
