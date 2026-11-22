@@ -6,7 +6,7 @@ export type CheckVerdict = 'valid' | 'false_positive' | 'unsure'
 export const VERDICTS: Record<string, CheckVerdict> = { valid: 'valid', ok: 'valid', 有效: 'valid', fp: 'false_positive', false_positive: 'false_positive', 误报: 'false_positive', unsure: 'unsure', 不确定: 'unsure' }
 
 type Finding = { id: string; rule: string; pack?: string; loc: string; message: string; evidence?: string }
-type Report = { summary: { file: string; packs?: string[]; variant?: string | null }; findings: Finding[] }
+type Report = { summary: { file: string; source_path?: string; packs?: string[]; variant?: string | null }; findings: Finding[] }
 
 export function readCheckReport(file: string): Report {
   const r = JSON.parse(readFileSync(file, 'utf8')) as Report

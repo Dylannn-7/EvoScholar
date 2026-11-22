@@ -83,6 +83,7 @@ class FigureChecks(unittest.TestCase):
         F.panel_labels(fig, venue='nature')
         r = F.save(fig, 'out/fig1', venue='nature', columns='single')
         self.assertTrue(r['ok'], F.format_report(r))
+        self.assertIn('89 mm 栏宽下有效 DPI', F.format_report(r))
         self.assertEqual([i for i in r['issues'] if i['level'] == 'error'], [])
         pdf = next(f for f in r['files'] if f['path'].endswith('.pdf'))
         self.assertAlmostEqual(pdf['measured']['width_mm'], 89, delta=0.5)
@@ -125,6 +126,34 @@ class FigureChecks(unittest.TestCase):
         r = F.check_file('low.png', 'ieee')
         self.assertIn('dpi', self.rules(r['issues']))
         self.assertFalse(r['ok'])
+
+    def test_target_column_uses_effective_dpi(self):
+        from PIL import Image
+        img = Image.new('RGB', (1200, 600))
+        img.save('plain.png')
+        img.save('tagged.png', dpi=(600, 600))
+
+        missing = F.check_file('plain.png', 'ieee', line_art=False)
+        self.assertEqual(missing['status'], 'review')
+        self.assertTrue(F.format_report(missing).startswith('待核对'))
+
+        single = F.check_file('plain.png', 'ieee', line_art=False, columns='single')
+        self.assertEqual(single['status'], 'pass')
+        self.assertEqual(single['measured']['target_width_mm'], 88.9)
+        self.assertAlmostEqual(single['measured']['effective_dpi'], 342.86)
+
+        double = F.check_file('tagged.png', 'ieee', line_art=False, columns='double')
+        self.assertEqual(double['status'], 'fail')
+        self.assertEqual(double['measured']['dpi'], 600)
+        self.assertAlmostEqual(double['measured']['effective_dpi'], 167.47)
+
+        unnamed = F.check_file('plain.png', 'wiley', line_art=False, columns='single')
+        self.assertEqual(unnamed['status'], 'review')
+        self.assertNotIn('effective_dpi', unnamed['measured'])
+        custom = F.check_file('plain.png', 'wiley', line_art=False, target_width_mm=95)
+        self.assertEqual(custom['status'], 'pass')
+        self.assertAlmostEqual(custom['measured']['effective_dpi'], 320.84)
+        self.assertEqual(F.check_file('plain.png')['status'], 'measured')
 
     def test_colorblind_palette(self):
         self.assertEqual(F.colorblind_conflicts(F.WONG[1:]), [])

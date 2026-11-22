@@ -53,7 +53,22 @@ export function indexFiles(db: Db, ref: { root: string; projectId?: string | nul
   return n
 }
 
-export function listLibrary(db: Db, f: { projectId?: string; sessionId?: string; kind?: string; type?: string; q?: string; deliverable?: boolean; limit?: number } = {}) {
+type LibraryFilters = {
+  projectId?: string
+  sessionId?: string
+  kind?: string
+  type?: string
+  q?: string
+  deliverable?: boolean
+  limit?: number
+  offset?: number
+}
+
+export function listLibrary(db: Db, filters: LibraryFilters = {}) {
+  return listLibraryPage(db, filters).files
+}
+
+export function listLibraryPage(db: Db, f: LibraryFilters = {}) {
   const where: string[] = []
   const args: (string | number)[] = []
   if (f.projectId === 'drafts') where.push('l.project_id IS NULL')
@@ -61,14 +76,28 @@ export function listLibrary(db: Db, f: { projectId?: string; sessionId?: string;
   if (f.sessionId) { where.push('l.session_id = ?'); args.push(f.sessionId) }
   if (f.kind) { where.push('l.kind = ?'); args.push(f.kind) }
   if (f.deliverable) where.push('l.deliverable = 1')
-  if (f.q) { where.push('l.path LIKE ?'); args.push(`%${f.q.replace(/[%_]/g, '')}%`) }
+  if (f.type) { where.push('library_file_type(l.path) = ?'); args.push(f.type) }
+  if (f.q) { where.push('instr(lower(l.path), lower(?)) > 0'); args.push(f.q) }
+
+  const { limit: requestedLimit = 500, offset: requestedOffset = 0 } = f
+  const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 2000) : 500
+  const offset = Number.isSafeInteger(requestedOffset) && requestedOffset > 0 ? requestedOffset : 0
   const rows = db.prepare(`SELECT l.*, s.title AS session_title, p.name AS project_name FROM library l
       LEFT JOIN sessions s ON s.id = l.session_id LEFT JOIN projects p ON p.id = l.project_id
-      ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY l.deliverable DESC, l.updated_at DESC LIMIT ?`)
-    .all(...args, Math.min(f.limit ?? 500, 2000)) as (LibraryEntry & { session_title: string | null; project_name: string | null })[]
-  return rows
-    .map((r) => ({ ...r, type: fileType(r.path), exists: existsSync(join(r.root, r.path)) }))
-    .filter((r) => !f.type || r.type === f.type)
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY l.deliverable DESC, l.updated_at DESC, l.id DESC LIMIT ? OFFSET ?`)
+    .all(...args, limit + 1, offset) as (LibraryEntry & { session_title: string | null; project_name: string | null })[]
+  return {
+    files: rows.slice(0, limit).map((r) => ({ ...r, type: fileType(r.path), exists: existsSync(join(r.root, r.path)) })),
+    hasMore: rows.length > limit
+  }
+}
+
+/** Includes older sessions outside the workbench sidebar's recent-session list. */
+export function librarySessions(db: Db) {
+  return db.prepare(`SELECT s.id, s.title, s.project_id FROM sessions s
+    WHERE EXISTS (SELECT 1 FROM library l WHERE l.session_id = s.id)
+    ORDER BY s.created_at DESC, s.id DESC`).all() as { id: string; title: string | null; project_id: string | null }[]
 }
 
 /** Counts for the library sidebar over every indexed file, independent of the listing limit. */

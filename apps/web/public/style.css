@@ -217,6 +217,9 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 .composer:focus-within { box-shadow: var(--glass-shadow), 0 0 0 1px rgba(255, 255, 255, .16); }
 .composer.drag { box-shadow: var(--glass-shadow), 0 0 0 2px var(--accent); }
 .composer textarea { width: 100%; display: block; resize: none; min-height: 24px; max-height: 220px; border: 0; background: transparent; outline: none; font-size: 14.5px; line-height: 1.6; color: #fff; padding: 0 6px 0 0; }
+.send-error { display: flex; align-items: center; gap: 10px; color: var(--danger); margin-top: 8px; }
+.send-error[hidden] { display: none; }
+.send-error .btn { flex-shrink: 0; }
 .composer textarea::placeholder { color: var(--text-3); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips:not(:empty) { margin-bottom: 10px; }
@@ -312,9 +315,11 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 .lib-search { flex: 1; min-width: 120px; display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px; border-radius: 999px; background: var(--fill); box-shadow: 0 0 0 1px var(--hair) inset; color: var(--text-3); }
 .lib-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
 .lib-view button { padding: 4px 8px; display: grid; place-items: center; }
-.lib-chip { display: inline-flex; align-items: center; gap: 6px; border: 0; background: var(--fill-2); color: var(--text); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; margin: 2px 0 6px; }
+.lib-filters { margin: 2px 0 6px; font-size: 12px; color: var(--text-2); }
+.lib-filters label { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
+.lib-filters select { min-width: 0; max-width: 300px; padding: 5px 8px; color: var(--text); background: var(--fill); border: 1px solid var(--hair); border-radius: 8px; font: inherit; color-scheme: dark; }
+.lib-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 20px; color: var(--text-2); font-size: 12px; }
 .lgroup { margin-top: 14px; }
-.lib-note { margin: 2px 0 6px; font-size: 12px; }
 .lgroup-h { display: flex; align-items: baseline; gap: 4px; font-size: 12.5px; color: var(--text-2); margin-bottom: 9px; }
 .lgroup-h a { color: var(--text); cursor: pointer; text-decoration: none; } .lgroup-h a:hover { text-decoration: underline; }
 .lgroup-t { margin-left: auto; font-size: 11.5px; color: var(--text-3); }
@@ -405,6 +410,10 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 .finding-card { border-radius: 12px; padding: 10px 12px; background: rgba(255, 255, 255, .04); box-shadow: 0 0 0 1px var(--hair) inset; }
 .finding-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
 .finding-top .floc { color: var(--text-3); }
+.finding-location { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.source-preview .source-line { display: block; min-height: 1.6em; }
+.source-preview .source-line.on { background: var(--fill-2); }
+.source-preview .line-number { display: inline-block; min-width: 5ch; margin-right: 1ch; text-align: right; color: var(--text-3); user-select: none; }
 .finding-msg { margin: 6px 0; line-height: 1.6; }
 .finding-ev { font: 11.5px/1.5 var(--mono); background: rgba(0, 0, 0, .35); border-radius: 8px; padding: 6px 8px; white-space: pre-wrap; margin: 0 0 6px; color: var(--text-2); }
 .finding-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11.5px; }

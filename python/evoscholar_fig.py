@@ -12,7 +12,7 @@ Usage inside run_python:
 Rule packs live in rulepacks/figures/<venue>.yaml and contain only numbers taken from the
 venue's author guidelines; a missing (null) rule is skipped, never guessed.
 
-CLI (used by the figure_check tool):  python evoscholar_fig.py check <file> [--venue V] [--columns single]
+CLI (used by the figure_check tool):  python evoscholar_fig.py check <file> [--venue V] [--columns single | --target-width-mm 89]
 """
 from __future__ import annotations
 
@@ -243,10 +243,18 @@ def _is_numeric_axis(axis) -> bool:
     return numeric >= len(labels) / 2
 
 
+def _check_status(issues: list[dict], has_rules: bool) -> str:
+    if any(i['level'] == 'error' for i in issues):
+        return 'fail'
+    if issues:
+        return 'review'
+    return 'pass' if has_rules else 'measured'
+
+
 def check_figure(fig, venue: str | dict | None = None, columns: str | None = None, tol: float = 0.02) -> dict:
     """Inspect a matplotlib figure against a venue's rules (size, font sizes, axis labels/units,
     gridlines, colour-blind safety). Draws the canvas so tick labels exist. Returns
-    {ok, issues:[{level: error|warning, rule, message}], measured:{...}}."""
+    {ok, status, issues:[{level: error|warning, rule, message}], measured:{...}}."""
     rules = load_rules(venue)
     fig.canvas.draw()
     issues: list[dict] = []
@@ -343,7 +351,8 @@ def check_figure(fig, venue: str | dict | None = None, columns: str | None = Non
             sig = [(ln.get_linestyle(), ln.get_marker()) for ln in ax.lines if ln.get_visible() and len(ln.get_xdata()) > 1]
             if len(sig) > 1 and len(set(sig)) == 1:
                 issues.append(_issue('warning', 'color.only', f'子图 {k + 1} 的 {len(sig)} 条曲线只靠颜色区分，加上线型或标记'))
-    return {'ok': not any(i['level'] == 'error' for i in issues), 'venue': rules.get('id'), 'issues': issues, 'measured': measured}
+    status = _check_status(issues, bool(rules))
+    return {'ok': status != 'fail', 'status': status, 'venue': rules.get('id'), 'issues': issues, 'measured': measured}
 
 
 # ---------------------------------------------------------------- file checks
@@ -358,14 +367,19 @@ def _len_mm(value: str | None) -> float | None:
     return v * {'pt': MM_PER_IN / PT_PER_IN, 'px': MM_PER_IN / 96, 'in': MM_PER_IN, 'mm': 1, 'cm': 10}[u]
 
 
-def check_file(path: str | os.PathLike, venue: str | dict | None = None, line_art: bool = True) -> dict:
-    """Check a saved figure file: physical size, editable text (SVG/PDF fonts), raster resolution."""
+def check_file(path: str | os.PathLike, venue: str | dict | None = None, line_art: bool = True,
+               *, columns: str | None = None, target_width_mm: float | None = None) -> dict:
+    """Check the saved file. For raster images, use the selected print width to check effective DPI."""
+    if columns and target_width_mm is not None:
+        raise ValueError('columns 和 target_width_mm 只能指定一个')
+    if target_width_mm is not None and (not math.isfinite(target_width_mm) or target_width_mm <= 0):
+        raise ValueError('目标栏宽必须是正数（mm）')
     rules = load_rules(venue)
     p = Path(path)
     issues: list[dict] = []
     measured: dict[str, Any] = {'file': p.name, 'format': p.suffix.lower().lstrip('.')}
     if not p.exists() or p.stat().st_size == 0:
-        return {'ok': False, 'issues': [_issue('error', 'file', f'{p.name} 不存在或为空')], 'measured': measured}
+        return {'ok': False, 'status': 'fail', 'issues': [_issue('error', 'file', f'{p.name} 不存在或为空')], 'measured': measured}
     ext = p.suffix.lower()
     w_mm = h_mm = None
     if ext == '.svg':
@@ -397,16 +411,29 @@ def check_file(path: str | os.PathLike, venue: str | dict | None = None, line_ar
             px_w, px_h = im.size
             dpi = im.info.get('dpi')
         measured['pixels'] = [px_w, px_h]
-        if dpi and dpi[0]:
-            w_mm, h_mm = px_w / dpi[0] * MM_PER_IN, px_h / dpi[1] * MM_PER_IN
-            measured['dpi'] = round(float(dpi[0]))
-        need = _get(rules, 'line_art_min_dpi') if line_art else None
-        need = need or _get(rules, 'raster_min_dpi')
-        if need:
-            if not dpi:
-                issues.append(_issue('warning', 'dpi', f'{p.name} 没有记录 DPI；按要求至少 {need} dpi'))
-            elif dpi[0] + 0.5 < need:
-                issues.append(_issue('error', 'dpi', f'分辨率 {dpi[0]:.0f} dpi 低于要求 {need} dpi'))
+        source_dpi = float(dpi[0]) if dpi and dpi[0] > 0 and math.isfinite(dpi[0]) else None
+        if source_dpi is not None:
+            measured['dpi'] = round(source_dpi)
+            if dpi[1] > 0 and math.isfinite(dpi[1]):
+                w_mm, h_mm = px_w / source_dpi * MM_PER_IN, px_h / dpi[1] * MM_PER_IN
+
+        target = target_width_mm if target_width_mm is not None else widths_mm(rules).get(columns)
+        dpi_to_check = source_dpi
+        if target is not None:
+            w_mm, h_mm = target, target * px_h / px_w
+            dpi_to_check = px_w / target * MM_PER_IN
+            measured['target_width_mm'] = target
+            measured['effective_dpi'] = round(dpi_to_check, 2)
+        elif columns:
+            issues.append(_issue('warning', 'width.target', f'规则包没有 {columns} 栏宽，请提供目标栏宽（mm）'))
+
+        need = (_get(rules, 'line_art_min_dpi') if line_art else None) or _get(rules, 'raster_min_dpi')
+        if need and (not columns or target is not None):
+            if dpi_to_check is None:
+                issues.append(_issue('warning', 'dpi', f'{p.name} 没有记录 DPI，请提供目标栏宽以核对是否达到 {need} dpi'))
+            elif dpi_to_check + 0.5 < need:
+                detail = f'按 {target:g} mm 栏宽计算的有效分辨率 {dpi_to_check:.2f} dpi' if target is not None else f'分辨率 {dpi_to_check:.0f} dpi'
+                issues.append(_issue('error', 'dpi', f'{detail} 低于要求 {need} dpi'))
         if _get(rules, 'formats', 'vector') and line_art:
             issues.append(_issue('warning', 'format', '数据图建议交矢量格式（PDF/EPS/SVG），位图只用于照片'))
     else:
@@ -418,10 +445,17 @@ def check_file(path: str | os.PathLike, venue: str | dict | None = None, line_ar
         biggest = max(allowed.values()) if allowed else _get(rules, 'width_mm', 'max')
         if biggest and w_mm > biggest * 1.02:
             issues.append(_issue('error', 'width', f'{p.name} 宽 {w_mm:.1f} mm，超过 {biggest:g} mm'))
+        if 'target_width_mm' in measured:
+            minimum = _get(rules, 'width_mm', 'min')
+            if minimum and w_mm < minimum * 0.98:
+                issues.append(_issue('error', 'width', f'目标栏宽 {w_mm:.1f} mm 小于最小宽度 {minimum:g} mm'))
+    elif ext == '.svg' and (widths_mm(rules) or _get(rules, 'width_mm', 'max')):
+        issues.append(_issue('warning', 'width', 'SVG 缺少可换算为毫米的宽度，请核对投稿尺寸'))
     max_mb = _get(rules, 'max_file_mb')
     if max_mb and p.stat().st_size > max_mb * 1024 * 1024:
         issues.append(_issue('error', 'file.size', f'{p.name} 超过 {max_mb} MB'))
-    return {'ok': not any(i['level'] == 'error' for i in issues), 'issues': issues, 'measured': measured}
+    status = _check_status(issues, bool(rules))
+    return {'ok': status != 'fail', 'status': status, 'venue': rules.get('id'), 'issues': issues, 'measured': measured}
 
 
 # ---------------------------------------------------------------- previews and saving
@@ -456,24 +490,37 @@ def save(fig, stem: str, venue: str | dict | None = None, formats: Iterable[str]
         path = Path(f'{stem}.{ext}')
         path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(path, dpi=dpi if ext in ('png', 'jpg', 'tif', 'tiff') else None)
-        r = check_file(path, rules)
-        if has_vector:  # a raster copy next to a vector file is just a preview / convenience
+        r = check_file(path, rules, columns=columns)
+        if has_vector and 'pixels' in r['measured']:  # a raster copy next to a vector file is for convenience
             r['issues'] = [i for i in r['issues'] if i['rule'] != 'format']
+            r['status'] = _check_status(r['issues'], bool(rules))
         files.append({'path': str(path), **r})
         report['issues'].extend(r['issues'])
     report['files'] = files
     src = next((f['path'] for f in files if f['path'].endswith(('.pdf', '.svg'))), files[0]['path'] if files else None)
     report['preview'] = preview(src) if src else None
-    report['ok'] = not any(i['level'] == 'error' for i in report['issues'])
+    report['status'] = _check_status(report['issues'], bool(rules))
+    report['ok'] = report['status'] != 'fail'
     return report
 
 
 def format_report(report: dict) -> str:
     m = report.get('measured', {})
-    head = f"{'✓ 通过' if report.get('ok') else '✗ 有错误'}（规则包 {report.get('venue') or '无'}）· 尺寸 {m.get('width_mm')}×{m.get('height_mm')} mm"
+    status = report.get('status') or _check_status(report.get('issues', []), bool(report.get('venue')))
+    label = {'pass': '✓ 通过', 'review': '待核对', 'fail': '✗ 有错误', 'measured': '仅测量'}[status]
+    size = f'{m["width_mm"]}×{m["height_mm"]} mm' if 'width_mm' in m else '未知'
+    head = f'{label}（规则包 {report.get("venue") or "无"}）· 尺寸 {size}'
+    if 'effective_dpi' in m:
+        head += f' · {m["target_width_mm"]:g} mm 栏宽下有效 DPI {m["effective_dpi"]:g}'
+    elif 'dpi' in m:
+        head += f' · 文件 DPI {m["dpi"]}'
     if m.get('font_pt'):
         head += f" · 字号 {m['font_pt']['min']:g}–{m['font_pt']['max']:g} pt"
     lines = [head]
+    for f in report.get('files', []):
+        layout = f['measured']
+        if 'effective_dpi' in layout:
+            lines.append(f'- {Path(f["path"]).name} · {layout["target_width_mm"]:g} mm 栏宽下有效 DPI {layout["effective_dpi"]:g}')
     for i in report.get('issues', []):
         lines.append(f"- [{'错误' if i['level'] == 'error' else '提醒'}] {i['message']}")
     if report.get('preview'):
@@ -547,18 +594,23 @@ def _cli(argv: list[str]) -> int:
     c.add_argument('--venue')
     c.add_argument('--photo', action='store_true', help='位图是照片而不是线稿')
     c.add_argument('--preview', action='store_true')
+    width = c.add_mutually_exclusive_group()
+    width.add_argument('--columns', choices=('half', 'single', 'double'))
+    width.add_argument('--target-width-mm', type=float)
     sub.add_parser('venues')
     a = ap.parse_args(argv)
     if a.cmd == 'venues':
         print(json.dumps([{'id': v, 'name': load_rules(v).get('name'), 'width_mm': load_rules(v).get('width_mm')} for v in list_venues()], ensure_ascii=False))
         return 0
-    r = check_file(a.file, a.venue, line_art=not a.photo)
+    r = check_file(a.file, a.venue, line_art=not a.photo, columns=a.columns, target_width_mm=a.target_width_mm)
     r['venue'] = a.venue
     if a.preview:
         try:
             r['preview'] = preview(a.file)
         except Exception as e:  # pragma: no cover
             r['issues'].append(_issue('warning', 'preview', f'无法生成预览：{e}'))
+            if r['ok']:
+                r['status'] = 'review'
     print(json.dumps(r, ensure_ascii=False))
     return 0
 
