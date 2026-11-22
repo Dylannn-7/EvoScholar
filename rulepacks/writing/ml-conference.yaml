@@ -1,11 +1,14 @@
 id: ml-conference
 name: 机器学习会议（NeurIPS、ICML、ICLR）
+description: 按会议和年份核对正文页数与所需声明。程序根据编译后 PDF 中的章节标题估算正文页数。
 extends: [common]
 variants:
   neurips2026: NeurIPS 2026 主会
   neurips2025: NeurIPS 2025 主会
   icml2026: ICML 2026
   iclr2026: ICLR 2026
+  icml2027: ICML 2027 主会
+  iclr2027: ICLR 2027
 sources:
   - id: neurips2026
     title: NeurIPS 2026 Main Track Handbook
@@ -23,6 +26,22 @@ sources:
     title: ICLR 2026 Author Guide
     url: https://iclr.cc/Conferences/2026/AuthorGuide
     checked: 2026-11-18
+  - id: icml2027
+    title: ICML 2027 Call for Papers
+    url: https://icml.cc/Conferences/2027/CallForPapers
+    checked: 2026-11-22
+  - id: icml2027-ai
+    title: ICML 2027 Policy on Use of Generative AI By Authors
+    url: https://icml.cc/Conferences/2027/UseOfGenerativeAIByAuthors
+    checked: 2026-11-22
+  - id: iclr2027
+    title: ICLR 2027 Author Guidelines
+    url: https://iclr.cc/Conferences/2027/AuthorGuidelines
+    checked: 2026-11-22
+  - id: iclr2027-ai
+    title: ICLR 2027 AI Policy for Authors
+    url: https://iclr.cc/Conferences/2027/AIPolicyForAuthors
+    checked: 2026-11-22
 rules:
   - id: ml.pages.neurips2026
     check: page_limit
@@ -51,6 +70,18 @@ rules:
     params_by_stage: { camera-ready: { max_pages: 10 } }
     source: iclr2026
     note: 投稿时正文 ≤9 页（讨论期和终稿 10 页），参考文献不计入，附录放在参考文献之后
+  - id: ml.pages.icml2027
+    check: page_limit
+    applies: [icml2027]
+    params: { max_pages: 8, excluded: [Impact Statement, Acknowledgements, Acknowledgments, AI Disclosure Statement, AI Use Statement, References, Appendix], severity: warning }
+    params_by_stage: { camera-ready: { max_pages: 9 } }
+    source: icml2027
+  - id: ml.pages.iclr2027
+    check: page_limit
+    applies: [iclr2027]
+    params: { max_pages: 9, excluded: [References, Appendix, Ethics Statement, Reproducibility Statement, Acknowledgements, Acknowledgments, AI Use Statement, AI Disclosure Statement, LLM Usage Statement], severity: warning }
+    params_by_stage: { camera-ready: { max_pages: 10 } }
+    source: iclr2027
   - id: ml.checklist.neurips
     check: required_sections
     applies: [neurips2026, neurips2025]
@@ -63,12 +94,30 @@ rules:
     params: { sections: [['Impact Statement', 'Broader Impact Statement']], severity: error }
     source: icml2026
     note: 必须有 Impact Statement，单独一节，放在文末（与致谢同处、参考文献之前）
+  - id: ml.impact.icml2027
+    check: required_sections
+    applies: [icml2027]
+    params: { sections: [['Impact Statement', 'Broader Impact Statement']], severity: error }
+    source: icml2027
+  - id: ml.disclosure.icml2027
+    check: required_sections
+    applies: [icml2027]
+    params: { sections: [['AI Disclosure Statement', 'AI Use Statement']], severity: info }
+    source: icml2027-ai
+    note: 每份投稿需在文末声明实质性生成式 AI 使用情况。官方范例也允许以段落呈现，未识别到标题时请核对正文。
+  - id: ml.disclosure.iclr2027
+    check: required_sections
+    applies: [iclr2027]
+    params: { sections: [['AI Use Statement', 'AI Disclosure Statement', 'LLM Usage Statement', 'Use of AI']], severity: info }
+    source: iclr2027-ai
+    note: AI 使用声明为必需，标题可按稿件调整。政策规定声明不计入正文页数。
   - id: ml.anonymity
     check: anonymity
     skip_stages: [camera-ready]
     source: neurips2026
     note: 只在投稿阶段检查（终稿可以署名、致谢）。三个会议都是双盲：不能有作者信息、致谢、元数据；NeurIPS 投稿不要用 final 选项；ICLR 自己的 arXiv 文章用第三人称引用
 verify:
-  - ICLR 2026：如果 LLM 在研究构思或写作中起了重要作用，必须单独写一节 LLM usage（可放附录）；Ethics / Reproducibility statement 为推荐项。本工具不判断是否需要。
-  - NeurIPS 2027、ICML 2027、ICLR 2027 的投稿说明发布后需要更新本规则包。
-  - 页数按编译后的 PDF 估算（第一个不计页的标题之前的页数），请以会议的自动检查为准。
+  - applies: [iclr2026]
+    text: ICLR 2026 作者如在研究构思或论文写作中实质性使用了 LLM，须单列一节披露（可放附录）。请根据实际使用情况核对。
+  - applies: [icml2027, iclr2027]
+    text: AI 使用声明应如实反映研究与写作中的实际使用。自动检查识别常见标题，声明内容请对照本届 AI 政策核对。

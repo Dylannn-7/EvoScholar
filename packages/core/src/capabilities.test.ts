@@ -31,8 +31,19 @@ test('getCapabilities collects skills, figure/writing rulepacks, and feedback st
     assert.ok(cap.skills.length >= 12)
     assert.ok(cap.skills.some((s) => s.name === 'literature-review' && s.enabled))
     assert.ok(cap.figureRulepacks.some((f) => f.id === 'nature' && f.widthMm?.single === 89))
-    assert.ok(cap.writingRulepacks.some((w) => w.id === 'hust-thesis' && w.status === 'verified' && w.variants.length >= 3))
-    assert.ok(cap.writingRulepacks.some((w) => w.id === 'aaai' && w.status === 'stub'))
+    const thesis = cap.writingRulepacks.find((w) => w.id === 'hust-thesis')!
+    assert.equal(thesis.status, 'verified')
+    assert.ok(thesis.variants.length >= 3)
+    assert.equal(thesis.verifyCount, thesis.verify.length)
+    assert.ok(thesis.verify.some((item) => item.applies?.includes('doctor') && item.text.includes('100 篇')))
+    assert.ok(thesis.sources.some((s) => s.url?.startsWith('https://gs.hust.edu.cn/')))
+    assert.equal(cap.writingRulepacks.length, 20)
+    assert.ok(cap.writingRulepacks.every((pack) => pack.status === 'verified' && pack.ruleCount > 0))
+    const optics = cap.writingRulepacks.find((pack) => pack.id === 'cn-optics')!
+    assert.deepEqual(optics.extends, ['common'])
+    const irlaNote = optics.verify.find((item) => item.applies?.includes('irla'))!
+    assert.equal(irlaNote.source, 'irla')
+    assert.ok(optics.sources.some((source) => source.id === irlaNote.source && source.url?.includes('spacejournal.cn')))
     const abbr = cap.feedbackStats.find((s) => s.rule === 'common.abbreviations')
     assert.equal(abbr?.false_positive, 1)
     assert.equal(abbr?.fp_rate, 1)

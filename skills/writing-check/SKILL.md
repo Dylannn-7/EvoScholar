@@ -10,8 +10,17 @@ description: 稿件写作规范检查：LaTeX / Word / Markdown / PDF 稿件按�
 - 稿件入口：LaTeX 用**主文件**（含 `\documentclass`），工具会沿 `\input` / `\include` 追踪；没被主文件引入的 .tex（旧稿、草稿）不检查，报告里会列出来。Word 用 .docx；页数和 PDF 元数据要用编译后的 PDF。
 - 规则包：
   - 华科学位论文 `hust-thesis`，类型 `master` / `doctor` / `undergrad`；
-  - 机器学习会议 `ml-conference`，类型 `neurips2026` / `neurips2025` / `icml2026` / `iclr2026`；
-  - 期刊 `optica`、`ieee-journal`；其他期刊包目前只有「请核对」提示。
+  - 机器学习会议 `ml-conference`，类型 `neurips2026` / `neurips2025` / `icml2026` / `iclr2026` / `icml2027` / `iclr2027`；
+  - AAAI 主会 `aaai`（`aaai2027`）、CVF 主会 `cvf`（`cvpr2027` / `cvpr2026` / `iccv2025`）、ACL Rolling Review `acl`（`long` / `short`）；
+  - ECCV 主会 `eccv`（`eccv2026`）、IJCAI 主会 `ijcai`（`ijcai2027`）；
+  - 期刊 `optica`、`ieee-journal`、`advanced-photonics`、`springer-journal`（IJCV）、`cn-physics`（物理学报），参考文献 `gbt7714`；
+  - 须指定类型的期刊包：
+    - `acs`（ACS Photonics）：`article` / `letter` / `perspective` / `review` / `roadmap` / `other`；
+    - `wiley`（Laser & Photonics Reviews）：`article` / `review` / `perspective` / `correspondence`；
+    - `science`（Science Advances）：`article` / `resource` / `review`；
+    - `springer-nature`：`nphoton` / `lsa` / `lsa-review` / `lsa-perspective` / `ncomms` / `nmi` / `nmi-analysis`；
+    - `cn-optics`：`gxxb`（光学学报）/ `zgjg`（中国激光）/ `irla`（红外与激光工程）/ `photon`（光子学报）；
+    - `cn-computing`：`cjc`（计算机学报）/ `jos`（软件学报）/ `aas`（自动化学报）/ `ejournal`（电子学报）。
   - 任务给了自己的规则文件（如 venue_rules.md、checklist.json）时，**以任务给的规则为准**，规则包只作补充。
 - 不确定投哪里、是什么学位类型时，问用户；不要猜。
 
@@ -25,7 +34,7 @@ manuscript_check(path='paper/main.tex', packs=['ml-conference'], variant='neurip
 
 ## 3. 读报告
 - 「错误」基本可以直接采纳；「提醒」「提示」要回到原文看上下文确认，**有疑问就标「待人工确认」，不要硬改**。
-- 「请核对」部分是规则包没能核实的要求（例如期刊篇幅、GB/T 7714—2025 细则），原样告诉用户，不要自己编数值。
+- 「规则包说明与人工核对项」列出默认选用的规范、需要结合稿件情况判断的要求，以及自动检查尚未覆盖的项目。优先提醒与当前稿件有关的条目。
 - 用户说某条有效或是误报，用 `check_feedback(ids=['F003'], verdict='false_positive', note='原因')` 记录（valid / false_positive / unsure）；这些标记会统计成各规则的误报率，用于改进规则。
 
 ## 4. 常见任务做法

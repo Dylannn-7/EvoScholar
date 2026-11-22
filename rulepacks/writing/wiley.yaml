@@ -1,9 +1,41 @@
 id: wiley
 name: Wiley 期刊（Laser & Photonics Reviews）
-extends:
-- common
-status: stub
-sources: []
-rules: []
+description: 检查 Laser & Photonics Reviews 的摘要、关键词和数据可用性声明标题。
+extends: [common]
+require_variant: true
+variants:
+  article: Research Article
+  review: Review
+  perspective: Perspective
+  correspondence: Correspondence
+sources:
+  - id: guide
+    title: Laser & Photonics Reviews Author Guidelines
+    url: https://onlinelibrary.wiley.com/page/journal/18638899/homepage/author-guidelines
+    checked: 2026-11-22
+rules:
+  - id: lpr.abstract.length
+    check: abstract_length
+    applies: [article, review, perspective]
+    params: { lang: en, max: 200 }
+    source: guide
+  - id: lpr.keywords
+    check: keywords
+    applies: [article, review, perspective]
+    params: { lang: en, min: 3, max: 7 }
+    source: guide
+  - id: lpr.data_availability
+    check: required_sections
+    applies: [article, review, perspective]
+    params: { sections: [['Data Availability', 'Data Availability Statement']], severity: info, exact: true }
+    source: guide
+    note: 数据可用性声明可能在段内或单独提交，标题缺失只做提示。
 verify:
-- 本规则包尚未核实作者指南（依据应为：Wiley 作者指南（期刊页有 Cloudflare 验证，未能读取））。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: guide
+    text: 逐项核对利益冲突和实际生成式 AI 使用。AI 如参与稿件内容制作，应在 Methods、披露声明或致谢中说明用途。修订稿按 Data for Production 核对排版与目录图。
+  - source: guide
+    applies: [article, review, perspective]
+    text: 核对数据可用性声明及其链接或获取条件。研究论文约 3,000–8,000 词，综述约 10,000–20,000 词，均为典型篇幅。作者需使篇幅与内容相称。
+  - source: guide
+    applies: [correspondence]
+    text: Correspondence 须披露利益冲突，数据可用性声明可省略。
