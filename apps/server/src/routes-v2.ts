@@ -321,7 +321,7 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
     if ((mm = /^\/api\/library\/(\d+)\/file$/.exec(p)) && method === 'GET') {
       const f = libraryPath(rt.db, Number(mm[1]))
       if (!f || !existsSync(f) || statSync(f).isDirectory()) throw httpError(404, '文件不存在（可能已被移动或删除）')
-      return await serveProjectFile(rt, res, f, url.searchParams.get('preview') === 'first-page'), true
+      return await serveProjectFile(rt, res, f, url.searchParams), true
     }
 
     // ---------- usage ----------

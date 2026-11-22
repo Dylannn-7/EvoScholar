@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import os
 import re
 import shutil
 import sys
@@ -1725,6 +1726,10 @@ def _cli(argv: list[str]) -> int:
                            'rules': len(load_pack(n).get('rules') or []), 'verify': len(load_pack(n).get('verify') or [])} for n in list_packs()], ensure_ascii=False))
         return 0
     rep = run(a.file, a.pack or ['common'], a.variant, stage=a.stage)
+    project = Path(os.environ.get('EVOSCHOLAR_CWD') or Path.cwd()).resolve()
+    source = _contained_path(project, Path(a.file))
+    if source is not None:
+        rep['summary']['source_path'] = source.relative_to(project).as_posix()
     if a.out:
         out = Path(a.out).resolve()
         out.mkdir(parents=True, exist_ok=True)
