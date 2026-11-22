@@ -3,8 +3,8 @@ import { md } from './markdown.js'
 import { esc, openModal, toast } from './modal.js'
 import { apiFetch, post } from './api.js'
 
-export function openReportReviewModal(sessionId, report, onFeedbackSaved) {
-  let sevFilter = 'all'
+export function openReportReviewModal(sessionId, report, onFeedbackSaved, state = {}) {
+  let sevFilter = state.sevFilter || 'all'
   const VERDICT_LABEL = { valid: '已标：有效', false_positive: '已标：误报', unsure: '已标：不确定' }
 
   openModal({
@@ -45,7 +45,8 @@ export function openReportReviewModal(sessionId, report, onFeedbackSaved) {
                       <code class="fid">${esc(f.id)}</code>
                       <span class="sev-pill ${f.severity === 'error' ? 'err' : f.severity === 'warning' ? 'warn' : 'info'}">${esc(f.severity)}</span>
                       <code class="frule">${esc(f.rule)}</code>
-                      <span class="floc">${esc(f.loc)}</span>
+                      ${f.location ? `<button type="button" class="finding-location" data-location title="查看原文">${esc(f.loc)}</button>`
+                        : `<span class="floc">${esc(f.loc)}</span>`}
                       ${f.verdict ? `<span class="verdict-tag v-${esc(f.verdict)}">${VERDICT_LABEL[f.verdict] || esc(f.verdict)}</span>` : ''}
                     </div>
                     <div class="finding-msg">${esc(f.message)}</div>
@@ -74,6 +75,22 @@ export function openReportReviewModal(sessionId, report, onFeedbackSaved) {
           b.onclick = () => { sevFilter = b.dataset.f; draw() }
         })
 
+        wrap.querySelectorAll('[data-location]').forEach((button) => {
+          button.onclick = async () => {
+            if (wrap.dataset.openingSource) return
+            const id = button.closest('[data-fid]').dataset.fid
+            const { path, page, line } = report.findings.find((f) => f.id === id).location
+            const scrollTop = wrap.querySelector('.rep-list').scrollTop
+            wrap.dataset.openingSource = '1'
+            try {
+              await openFilePreviewModal(sessionId, path, undefined, {
+                page, line, isCurrent: () => wrap.isConnected,
+                onBack: () => openReportReviewModal(sessionId, report, onFeedbackSaved, { sevFilter, scrollTop })
+              })
+            } finally { delete wrap.dataset.openingSource }
+          }
+        })
+
         wrap.querySelectorAll('.finding-btns button').forEach((b) => {
           b.onclick = async () => {
             const card = b.closest('.finding-card')
@@ -93,12 +110,13 @@ export function openReportReviewModal(sessionId, report, onFeedbackSaved) {
         })
       }
       draw()
+      wrap.querySelector('.rep-list').scrollTop = state.scrollTop || 0
     }
   })
 }
 
 // ============================================================ In-App File Preview Modal
-export async function openFilePreviewModal(sessionId, filePath, directUrl) {
+export async function openFilePreviewModal(sessionId, filePath, directUrl, { page = 1, line, isCurrent, onBack } = {}) {
   const url = directUrl || `/api/sessions/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(filePath)}`
   const name = filePath.split(/[\\/]/).pop()
   const pdf = /\.pdf$/i.test(filePath)
@@ -119,30 +137,51 @@ export async function openFilePreviewModal(sessionId, filePath, directUrl) {
     const blob = await res.blob()
     // Binary downloads use a non-executable MIME type even if opened in the workbench origin.
     const download = objectURL(blob.slice(0, blob.size, 'application/octet-stream'))
-    const controls = `<a class="btn primary small" href="${esc(download)}" download="${esc(name)}">下载文件</a>`
+    const controls = `${onBack ? '<button class="btn ghost small" type="button" data-report-back>返回检查报告</button>' : ''}<a class="btn primary small" href="${esc(download)}" download="${esc(name)}">下载文件</a>`
     let content = ''
     if (isolated) {
       let preview
       if (pdf) {
-        const response = await apiFetch(`${url}${url.includes('?') ? '&' : '?'}preview=first-page`)
+        const response = await apiFetch(`${url}${url.includes('?') ? '&' : '?'}preview=page&page=${page}`)
         if (response.ok) preview = await response.blob()
-        else content = '<p>无法渲染 PDF 首页，请下载原文件。</p>'
+        else content = `<p>无法渲染 PDF 第 ${page} 页，请打开原文件核对页码。</p>`
       } else if (html) {
         const policy = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'">`
         preview = new Blob([policy, blob], { type: 'text/html' })
       } else preview = blob.slice(0, blob.size, 'image/svg+xml')
-      if (preview) content = `<iframe title="${esc(pdf ? 'PDF 首页' : name)}" sandbox="" referrerpolicy="no-referrer" src="${esc(objectURL(preview))}" style="width:100%;height:60vh;border:0;background:white"></iframe>`
+      if (preview) content = `<iframe title="${esc(pdf ? `PDF 第 ${page} 页` : name)}" sandbox="" referrerpolicy="no-referrer" src="${esc(objectURL(preview))}" style="width:100%;height:60vh;border:0;background:white"></iframe>`
     } else if (raster) {
       content = `<img alt="${esc(name)}" src="${esc(objectURL(blob))}" style="max-width:100%;max-height:65vh">`
     } else if (isText) {
       const raw = await blob.text()
       const preview = raw.length > 120_000 ? raw.slice(0, 120_000) + '\n\n…（预览已截断，请下载查看完整内容）' : raw
-      content = /\.md$/i.test(filePath)
-        ? `<div class="md-preview msg assistant">${md(preview)}</div>`
-        : `<pre class="code-preview">${esc(preview)}</pre>`
+      if (line) {
+        const lines = raw.split(/\r\n|\n|\r/)
+        if (lines.at(-1) === '') lines.pop()
+        if (line > lines.length) content = '<p>原文件已没有这一行，请重新检查稿件。</p>'
+        else {
+          const first = Math.max(1, line - 10)
+          const context = lines.slice(first - 1, line + 10).map((text, i) => {
+            const number = first + i
+            const code = esc(text.length > 4000 ? text.slice(0, 4000) + '…' : text)
+            return `<span class="source-line${number === line ? ' on' : ''}" ${number === line ? 'aria-current="true"' : ''}><span class="line-number">${number}</span>${code}</span>`
+          }).join('')
+          content = `<pre class="code-preview source-preview">${context}</pre>`
+        }
+      } else {
+        content = /\.md$/i.test(filePath)
+          ? `<div class="md-preview msg assistant">${md(preview)}</div>`
+          : `<pre class="code-preview">${esc(preview)}</pre>`
+      }
     }
+    if (isCurrent && !isCurrent()) return dispose()
+    const title = line ? `${filePath} · 第 ${line} 行` : pdf ? `${filePath} · 第 ${page} 页` : filePath
     openModal({
-      title: filePath, wide: true, bodyHtml: `<div class="file-preview-bar">${controls}</div>${content}`, onClose: dispose
+      title, wide: true, bodyHtml: `<div class="file-preview-bar">${controls}</div>${content}`, onClose: dispose,
+      onMount: (modal) => {
+        if (onBack) modal.querySelector('[data-report-back]').onclick = onBack
+        modal.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'center' })
+      }
     })
   } catch (error) {
     dispose()
