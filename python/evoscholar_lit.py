@@ -198,9 +198,10 @@ def pdf_find(path: str, pattern: str, regex: bool = True, context: int = 80, fla
 
 def pdf_render(path: str, page: int, out: str, dpi: int = 150) -> str:
     fitz = _fitz()
-    doc = fitz.open(path)
-    pix = doc[page - 1].get_pixmap(dpi=dpi)
-    pix.save(out)
+    with fitz.open(path) as doc:
+        if not 1 <= page <= doc.page_count:
+            raise ValueError(f'PDF 页码必须在 1–{doc.page_count} 之间')
+        doc[page - 1].get_pixmap(dpi=dpi).save(out)
     return out
 
 

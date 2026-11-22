@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, request } from 'node:http'
+import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -163,6 +164,63 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   assert.equal(existsSync(s2.cwd), false)
   const afterGet = await localFetch(`${base}/api/sessions/${s2.id}`)
   assert.equal(afterGet.status, 404)
+})
+
+test('manuscript reports resolve LaTeX includes and render the matched PDF page', async (t) => {
+  const dir = tempWorkspace()
+  mkdirSync(join(dir, 'python'))
+  cpSync(join(REPO, 'python', 'evoscholar_lit.py'), join(dir, 'python', 'evoscholar_lit.py'))
+  const rt = openRuntime(openWorkspace(dir))
+  const auth = createLocalAuth()
+  const app = createServerApp(rt, { webDir: WEB, auth })
+  const srv = createServer(app.handler)
+  await new Promise<void>((res) => srv.listen(0, '127.0.0.1', res))
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+  const localFetch = await localhostClient(base, auth)
+  t.after(async () => {
+    await app.dispose()
+    await new Promise<void>((res) => srv.close(() => res()))
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const { id, cwd } = await (await localFetch(`${base}/api/sessions`, {
+    method: 'POST', headers: { 'x-evoscholar': '1' }, body: '{}'
+  })).json() as { id: string; cwd: string }
+  mkdirSync(join(cwd, 'paper', '章 节'), { recursive: true })
+  writeFileSync(join(cwd, 'paper', 'main.tex'), '\\input{章 节/results}')
+  writeFileSync(join(cwd, 'paper', '章 节', 'results.tex'), 'first\nsecond')
+  execFileSync(process.platform === 'win32' ? 'python' : 'python3', ['-c',
+    "import pymupdf as pdf; d = pdf.open(); d.new_page(width=144, height=144); d.new_page(width=288, height=144); d.save('paper/manuscript.pdf')"
+  ], { cwd })
+
+  const writeReport = (name: string, summary: object, locs: string[]) => {
+    const path = join(cwd, '.evoscholar', 'checks', name)
+    mkdirSync(path, { recursive: true })
+    const findings = locs.map((loc, i) => ({ id: `F00${i + 1}`, rule: 'fixture', severity: 'warning', loc }))
+    writeFileSync(join(path, 'report.json'), JSON.stringify({ summary, findings }))
+  }
+  writeReport('tex', { file: 'main.tex', source_path: 'paper/main.tex' }, ['章 节/results.tex:2', '../../outside.tex:3'])
+  writeFileSync(join(cwd, '..', 'outside.tex'), 'outside')
+  writeReport('pdf', { file: 'manuscript.pdf' }, ['p.2'])
+  const api = `${base}/api/sessions/${id}`
+  const summary = await (await localFetch(`${api}/summary`)).json() as { reports: { dir: string; findings: { location?: object }[] }[] }
+  const tex = summary.reports.find((r) => r.dir === 'tex')!
+  assert.deepEqual(tex.findings[0].location, { path: 'paper/章 节/results.tex', line: 2 })
+  assert.equal(tex.findings[1].location, undefined)
+  assert.deepEqual(summary.reports.find((r) => r.dir === 'pdf')!.findings[0].location, { path: 'paper/manuscript.pdf', page: 2 })
+
+  const pdf = `${api}/file?path=paper/manuscript.pdf`
+  const first = await localFetch(`${pdf}&preview=first-page`)
+  const second = await localFetch(`${pdf}&preview=page&page=2`)
+  assert.equal(first.status, 200)
+  assert.equal(second.status, 200)
+  assert.equal(second.headers.get('content-type'), 'image/png')
+  const pngWidth = (buf: ArrayBuffer) => Buffer.from(buf).readUInt32BE(16)
+  assert.equal(pngWidth(await first.arrayBuffer()), 220)
+  assert.equal(pngWidth(await second.arrayBuffer()), 440)
+  assert.equal((await localFetch(`${pdf}&preview=page&page=0`)).status, 400)
+  assert.equal((await localFetch(`${pdf}&preview=page&page=3`)).status, 422)
 })
 
 test('v2 endpoints: model settings, projects, uploads into the library, usage, host guard', async (t) => {

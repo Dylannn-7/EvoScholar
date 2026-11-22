@@ -410,6 +410,10 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 .finding-card { border-radius: 12px; padding: 10px 12px; background: rgba(255, 255, 255, .04); box-shadow: 0 0 0 1px var(--hair) inset; }
 .finding-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
 .finding-top .floc { color: var(--text-3); }
+.finding-location { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.source-preview .source-line { display: block; min-height: 1.6em; }
+.source-preview .source-line.on { background: var(--fill-2); }
+.source-preview .line-number { display: inline-block; min-width: 5ch; margin-right: 1ch; text-align: right; color: var(--text-3); user-select: none; }
 .finding-msg { margin: 6px 0; line-height: 1.6; }
 .finding-ev { font: 11.5px/1.5 var(--mono); background: rgba(0, 0, 0, .35); border-radius: 8px; padding: 6px 8px; white-space: pre-wrap; margin: 0 0 6px; color: var(--text-2); }
 .finding-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11.5px; }
