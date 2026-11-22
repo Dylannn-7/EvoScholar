@@ -1,9 +1,28 @@
 id: acl
 name: ACL / EMNLP（ARR）（ACL、EMNLP）
-extends:
-- common
-status: stub
-sources: []
-rules: []
+description: 检查 ARR 评审稿的 Limitations 章节及长文、短文篇幅。
+extends: [common]
+variants:
+  long: ARR 长文
+  short: ARR 短文
+sources:
+  - id: arr
+    title: ACL Rolling Review Call for Papers
+    url: https://aclrollingreview.org/cfp
+    checked: 2026-11-22
+rules:
+  - id: arr.pages
+    check: page_limit
+    params: { excluded: [Limitations, Ethical Considerations, References, Appendix], severity: warning }
+    params_by_variant:
+      long: { max_pages: 8 }
+      short: { max_pages: 4 }
+    skip_stages: [camera-ready]
+    source: arr
+  - id: arr.limitations
+    check: required_sections
+    params: { sections: [Limitations], severity: error, exact: true }
+    skip_stages: [camera-ready]
+    source: arr
 verify:
-- 本规则包尚未核实作者指南（依据应为：ACL Rolling Review 模板与投稿说明）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - 请核对评审稿匿名，并确认 Limitations 位于结论之后、参考文献之前。录用后请按目标会议的终稿指南核对篇幅和排版。

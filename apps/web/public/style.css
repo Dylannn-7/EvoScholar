@@ -312,6 +312,15 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 .pcard .ds { color: var(--text-2); font-size: 12px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .pcard .ft { margin-top: auto; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; color: var(--text-3); font-size: 11.5px; }
 .pcard.off { opacity: .55; }
+.writing-pack { border: 0; cursor: pointer; text-align: left; }
+.writing-pack:hover { background: var(--fill-2); }
+.writing-pack:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.writing-pack-detail { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; color: var(--text-2); white-space: nowrap; }
+.writing-pack-modal .modal-head h3 { white-space: normal; }
+.writing-pack-list { margin: 0; padding-left: 20px; color: var(--text-2); line-height: 1.6; }
+.writing-pack-list li + li { margin-top: 6px; }
+.writing-pack-list a { color: var(--accent); }
+.writing-pack-scope { display: block; color: var(--text-3); font-size: 12px; overflow-wrap: anywhere; }
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .toolbar .search { position: relative; flex: 1; min-width: 200px; max-width: 360px; }
 .toolbar .search .ico { position: absolute; left: 10px; top: 8px; color: var(--text-3); }

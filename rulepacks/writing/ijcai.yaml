@@ -1,9 +1,38 @@
 id: ijcai
-name: IJCAI（IJCAI）
-extends:
-- common
-status: stub
-sources: []
-rules: []
+name: IJCAI 主会
+description: 检查 IJCAI 2027 主会评审稿的正文页数、PDF 总页数及匿名线索。
+extends: [common]
+variants:
+  ijcai2027: IJCAI 2027 主会
+sources:
+  - id: cfp
+    title: IJCAI 2027 Call for Papers（Main Track）
+    url: https://2027.ijcai.org/ijcai-2027-call-for-papers-main-track/
+    checked: 2026-11-22
+rules:
+  - id: ijcai.pages.body
+    check: page_limit
+    params: { max_pages: 7, excluded: [References, Bibliography, Ethics Statement], severity: warning }
+    skip_stages: [camera-ready]
+    source: cfp
+    note: 可选伦理声明可放正文或参考文献页。页数以正文实际结束位置为准。
+  - id: ijcai.pages.total
+    check: page_limit
+    params: { max_pages: 9, excluded: [] }
+    skip_stages: [camera-ready]
+    source: cfp
+  - id: ijcai.anonymity
+    check: anonymity
+    formats: [pdf]
+    skip_stages: [camera-ready]
+    source: cfp
 verify:
-- 本规则包尚未核实作者指南（依据应为：IJCAI 作者工具包）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: cfp
+    stages: [submission]
+    text: 核对初稿 PDF 第 8–9 页只含参考文献与可选伦理声明。正文中若先出现伦理声明再继续呈现研究内容，须以实际的正文结束页为准。致谢和作者贡献声明在评审稿中省略。
+  - source: cfp
+    stages: [submission]
+    text: 核对 PDF 署名、单位和附加材料的匿名情况，并在投稿系统完成复现性清单。LLM 可用于润色作者已有文字。若 LLM 生成内容属于研究方法或实验分析，须在稿件中注明。
+  - source: cfp
+    stages: [camera-ready]
+    text: 可在录用终稿恢复署名、致谢等身份信息。终稿篇幅和文件按本届录用通知核对。

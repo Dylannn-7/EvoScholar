@@ -67,7 +67,7 @@ export function openReportReviewModal(sessionId, report, onFeedbackSaved, state 
           </div>
           ${
             report.verify?.length
-              ? `<details class="yaml-details"><summary>需人工核对提示 (${report.verify.length})</summary><ul class="verify-list">${report.verify.map((v) => `<li>${esc(v)}</li>`).join('')}</ul></details>`
+              ? `<details class="yaml-details"><summary>规则包说明与人工核对项 (${report.verify.length})</summary><ul class="verify-list">${report.verify.map((v) => `<li>${esc(v)}</li>`).join('')}</ul></details>`
               : ''
           }`
 

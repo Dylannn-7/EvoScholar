@@ -1,9 +1,54 @@
 id: acs
-name: ACS 期刊（ACS Photonics）
-extends:
-- common
-status: stub
-sources: []
-rules: []
+name: ACS Photonics
+description: 按稿型检查英文摘要、关键词和图表数量。
+extends: [common]
+require_variant: true
+variants:
+  article: Article
+  letter: Letter
+  perspective: Perspective
+  review: Review
+  roadmap: Roadmap
+  other: Comment、Viewpoint 等其他稿型
+sources:
+  - id: guide
+    title: ACS Photonics Author Guidelines
+    url: https://researcher-resources.acs.org/publish/author_guidelines?coden=apchd5
+    checked: 2026-11-22
+rules:
+  - id: acs.abstract.length
+    check: abstract_length
+    params: { lang: en }
+    params_by_variant:
+      article: { max: 249 }
+      letter: { max: 149 }
+      perspective: { max: 149 }
+      review: { max: 250 }
+    source: guide
+    note: Article 少于 250 词，Letter 和 Perspective 少于 150 词，Review 至多 250 词。
+  - id: acs.abstract.citations
+    check: abstract_content
+    applies: [article, letter, perspective, review]
+    params: { no_citations: true }
+    source: guide
+  - id: acs.keywords
+    check: keywords
+    applies: [article, letter, perspective, review, roadmap]
+    params: { lang: en, max: 6 }
+    source: guide
+  - id: acs.display_items
+    check: display_item_limit
+    params_by_variant:
+      article: { max: 10 }
+      letter: { max: 4 }
+    source: guide
+    note: 展示项合计包括图、表和 scheme。程序按识别出的图表初筛。
 verify:
-- 本规则包尚未核实作者指南（依据应为：ACS 作者指南与 ACS 参考文献格式）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: guide
+    applies: [article, letter, perspective, review, roadmap]
+    text: 对照 Manuscript Types 核对目录图。Article 的图、表和 scheme 合计至多 10 项，Letter 至多 4 项。独立上传的图件和 scheme 也要计入。
+  - source: guide
+    applies: [letter, perspective, review]
+    text: 核对稿型篇幅。Letter 约 3,000 词以内，Perspective 约 3,000–5,000 词，Review 约 8,000–12,000 词。Letter 和 Perspective 通常为邀稿。
+  - source: guide
+    text: 投稿时一并提交投稿信。Fast Format 初投稿可使用任意参考文献样式，但条目信息须齐全。修订时按编辑部要求核对参考文献和图件。

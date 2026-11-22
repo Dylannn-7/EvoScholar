@@ -1,10 +1,99 @@
 id: cn-computing
 name: 中文计算机 / 自动化期刊（计算机学报、软件学报、自动化学报、电子学报）
-extends:
-- common
-- gbt7714
-status: stub
-sources: []
-rules: []
+description: 指定期刊后，检查该刊要求的摘要、关键词、引用顺序或评审稿匿名线索。
+extends: [common]
+require_variant: true
+variants:
+  cjc: 计算机学报
+  jos: 软件学报
+  aas: 自动化学报
+  ejournal: 电子学报
+sources:
+  - id: cjc
+    title: 《计算机学报》稿件要求和投稿须知
+    url: http://cjc.ict.ac.cn/wltg/zgjz.htm
+    checked: 2026-11-22
+  - id: jos
+    title: 《软件学报》投稿指南
+    url: https://www.jos.org.cn/jos/site/menu/20210909102616001?id=20210909102616001
+    checked: 2026-11-22
+  - id: aas
+    title: 《自动化学报》投稿须知
+    url: https://www.aas.net.cn/news/tgxz.htm
+    checked: 2026-11-22
+  - id: ejournal
+    title: 《电子学报》投稿指南
+    url: https://www.ejournal.org.cn/cn/aboutus/21564
+    checked: 2026-11-22
+rules:
+  - id: cjc.abstract.zh
+    check: abstract_length
+    applies: [cjc]
+    params: { lang: zh }
+    source: cjc
+  - id: cjc.abstract.en
+    check: abstract_length
+    applies: [cjc]
+    params: { lang: en }
+    source: cjc
+  - id: cjc.keywords.zh
+    check: keywords
+    applies: [cjc]
+    params: { lang: zh, min: 5, max: 7 }
+    source: cjc
+  - id: cjc.keywords.en
+    check: keywords
+    applies: [cjc]
+    params: { lang: en, min: 5, max: 7 }
+    source: cjc
+  - id: cjc.references.order
+    check: citation_order
+    applies: [cjc]
+    formats: [docx, markdown, text]
+    source: cjc
+  - id: jos.references.chinese
+    check: reference_stats
+    applies: [jos]
+    params: { require_cjk: true }
+    source: jos
+    note: 检查可识别的中文条目。纯英文著录的中文文献需人工确认。
+  - id: aas.anonymity
+    check: anonymity
+    applies: [aas]
+    formats: [pdf, docx]
+    skip_stages: [camera-ready]
+    source: aas
+  - id: ejournal.abstract
+    check: abstract_length
+    applies: [ejournal]
+    params: { lang: zh }
+    source: ejournal
+  - id: ejournal.keywords
+    check: keywords
+    applies: [ejournal]
+    params: { lang: zh }
+    source: ejournal
+  - id: ejournal.anonymity
+    check: anonymity
+    applies: [ejournal]
+    formats: [pdf, docx]
+    skip_stages: [camera-ready]
+    source: ejournal
 verify:
-- 本规则包尚未核实作者指南（依据应为：各刊投稿须知）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: cjc
+    applies: [cjc]
+    text: 核对约 500 词的英文摘要及 5–7 个一一对应的中英文关键词。研究论文的相关工作应与引言分开，A4 双栏正文通常为 13 页或以上，其他稿型按各自要求核对。
+  - source: jos
+    applies: [jos]
+    text: 核对国内外同类工作的比较及文献标引。初稿没有统一的字数或页数限制，修改稿按编辑通知核对。图序、图题和图注对照官方 Word 样例。
+  - source: aas
+    applies: [aas]
+    text: 初投稿上传匿名 PDF，模板可自选。逐项检查题名页、页眉页脚、尾注、文件名里的姓名、单位和基金号，并按投稿须知核对作者承诺及生成式 AI 使用情况。
+  - source: ejournal
+    applies: [ejournal]
+    stages: [submission]
+    text: 双盲评审稿须提交 Word 源文件和由 Word 转出的 PDF，作者、单位及资助信息填在投稿系统。初投稿参考文献格式不限。
+  - source: ejournal
+    applies: [ejournal]
+    stages: [camera-ready]
+    text: 稿件原则录用后按 GB/T 7714—2015 整理参考文献，并按编辑部通知提交排版文件。

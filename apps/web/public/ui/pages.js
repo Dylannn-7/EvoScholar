@@ -40,8 +40,8 @@ export async function renderPlugins (root, arg) {
       pl.innerHTML = `<div class="section-t">我的规则 · 使用中沉淀</div>${ur.rules.length ? `<div class="cards">${ur.rules.map((r) => `<div class="pcard ${r.status === 'disabled' ? 'off' : ''}" data-rule="${esc(r.id)}"><div class="top">${icon('edit', 16)}<span class="nm"><code>${esc(r.id)}</code></span><span class="badge ${r.status === 'active' ? 'ok' : r.status === 'trial' ? 'warn' : ''}">${{ active: '生效', trial: '试用（以提示出现）', disabled: '已停用' }[r.status]}</span></div>
           <div class="ds" style="-webkit-line-clamp:6"><b style="color:var(--strong);font-weight:500">${esc(r.description)}</b><br>${esc(r.params?.message || '')}${r.params?.phrases ? `<br><span class="faint">短语：${esc(r.params.phrases.join('、'))}</span>` : ''}${r.params?.regex ? `<br><span class="faint">正则：<code>${esc(r.params.regex)}</code></span>` : ''}${r.note ? `<br><span class="faint">依据：${esc(r.note)}</span>` : ''}</div>
           <div class="ft">${r.source ? `<a class="muted" data-sess="${esc(r.source)}" style="cursor:pointer">来源会话</a>` : ''}<span class="page-actions">${r.status !== 'active' ? '<button class="btn primary small" data-rs="active" type="button">采纳</button>' : ''}${r.status !== 'disabled' ? '<button class="btn ghost small" data-rs="disabled" type="button">停用</button>' : ''}<button class="icon-btn" data-rdel="1" title="删除" type="button">${icon('trash', 14)}</button></span></div></div>`).join('')}</div>` : '<p class="muted">还没有。智能体发现稿件检查漏掉的问题或你反复纠正的写法时，会用 propose_rule 提出规则，先以提示出现，你采纳后生效。</p>'}
-        <div class="section-t">写作规范</div><div class="cards">${c.writingRulepacks.map((r) => `<div class="pcard"><div class="top">${icon('file', 16)}<span class="nm">${esc(r.name)}</span>${r.status === 'verified' ? '<span class="badge ok">已核实</span>' : '<span class="badge warn">待完善</span>'}</div>
-          <div class="ds">${esc(r.description || '')}</div><div class="ft"><code>${esc(r.id)}</code><span>${r.ruleCount} 条规则</span>${r.verifyCount ? `<span>${r.verifyCount} 条待人工核对</span>` : ''}${r.variants.length ? `<span>${r.variants.map((v) => esc(v.label)).join(' / ')}</span>` : ''}</div></div>`).join('')}</div>
+        <div class="section-t">写作规范</div><div class="cards">${c.writingRulepacks.map((r) => `<button class="pcard writing-pack" data-writing-pack="${esc(r.id)}" type="button" aria-haspopup="dialog"><span class="top">${icon('file', 16)}<span class="nm">${esc(r.name)}</span>${writingPackBadge(r)}</span>
+          ${r.description ? `<span class="ds">${esc(r.description)}</span>` : ''}<span class="ft"><code>${esc(r.id)}</code><span>${r.ruleCount} 条本包规则</span><span class="writing-pack-detail">${r.status !== 'stub' && r.verifyCount ? `人工核对 · ${r.verifyCount} 项` : '查看详情'} ${icon('chevron', 12)}</span></span></button>`).join('')}</div>
         <div class="section-t">期刊出图</div><div class="cards">${c.figureRulepacks.map((r) => `<div class="pcard"><div class="top">${icon('image', 16)}<span class="nm">${esc(r.name)}</span></div>
           <div class="ds">${[r.widthMm?.single ? `单栏 ${r.widthMm.single} mm` : '', r.widthMm?.double ? `双栏 ${r.widthMm.double} mm` : '', r.fontPt?.min ? `字号 ${r.fontPt.min}–${r.fontPt.max ?? ''} pt` : '', r.rasterMinDpi ? `位图 ≥ ${r.rasterMinDpi} dpi` : '', r.formats?.length ? r.formats.join(' / ') : ''].filter(Boolean).join(' · ')}</div><div class="ft"><code>${esc(r.id)}</code></div></div>`).join('')}</div>
         ${fb.size ? `<div class="section-t">规则反馈（误报 / 有效）</div><div class="bars">${[...fb.values()].slice(0, 20).map((x) => `<div class="bar-row"><span class="l"><code>${esc(x.rule)}</code></span><span class="tr"><i class="c-out" style="width:${(100 * (x.valid || 0)) / Math.max(1, x.total || 1)}%"></i><i style="background:var(--danger);width:${(100 * (x.false_positive || 0)) / Math.max(1, x.total || 1)}%"></i></span><span class="n">${x.false_positive || 0} / ${x.valid || 0}</span></div>`).join('')}</div>` : ''}`
@@ -72,6 +72,8 @@ export async function renderPlugins (root, arg) {
       if (rs) { await patch(`/api/plugins/rules/${rs.closest('[data-rule]').dataset.rule}`, { status: rs.dataset.rs }); return renderPlugins(root) }
       const rd = e.target.closest('[data-rdel]')
       if (rd) { await del(`/api/plugins/rules/${rd.closest('[data-rule]').dataset.rule}`); return renderPlugins(root) }
+      const writingPack = e.target.closest('[data-writing-pack]')
+      if (writingPack) return openWritingPack(c.writingRulepacks.find((r) => r.id === writingPack.dataset.writingPack), writingPack)
       const card = e.target.closest('.pcard[data-skill]')
       if (card && !e.target.closest('button, a, input')) return openSkillDetail(root, card.dataset.skill)
       const df = e.target.closest('[data-def]')
@@ -80,6 +82,45 @@ export async function renderPlugins (root, arg) {
       if (cp) { await navigator.clipboard.writeText(`import evoscholar_styles as S\nS.use('${cp.dataset.copy}', venue='nature')`); toast('已复制', 'ok') }
     } catch (err) { toast(err.message, 'err') }
   }
+}
+
+function writingPackBadge (pack) {
+  if (pack.status === 'stub') return '<span class="badge warn">待完善</span>'
+  if (pack.id === 'common') return '<span class="badge">通用规则</span>'
+  return '<span class="badge ok">含专用规则</span>'
+}
+
+function openWritingPack (pack, trigger) {
+  const labels = new Map(pack.variants.map((v) => [v.id, v.label]))
+  const sourceById = new Map(pack.sources.map((source) => [source.id, source]))
+  const sourceLink = ({ title, url }) => url && /^https?:\/\//i.test(url)
+    ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(title)}</a>` : esc(title)
+  const stageLabels = { submission: '投稿稿', 'camera-ready': '录用终稿' }
+  const notes = pack.verify.map(({ text, applies, stages, source }) => {
+    const evidence = sourceById.get(source)
+    const scope = [
+      applies?.map((id) => labels.get(id) || id).join(' / '),
+      stages?.map((stage) => stageLabels[stage] || stage).join(' / ')
+    ].filter(Boolean).join(' · ')
+    return `<li>${scope ? `<span class="writing-pack-scope">${esc(scope)}</span>` : ''}${esc(text)}${evidence ? ` <span class="writing-pack-scope">${sourceLink(evidence)}</span>` : ''}</li>`
+  }).join('')
+  const sources = pack.sources.map(({ title, url, file, checked }) => {
+    const label = sourceLink({ title, url })
+    return `<li>${label}${checked ? ` <span class="faint">核对于 ${esc(checked)}</span>` : ''}${file ? `<code class="writing-pack-scope">${esc(file)}</code>` : ''}</li>`
+  }).join('')
+  openModal({
+    title: pack.name,
+    wide: true,
+    fullClass: 'writing-pack-modal',
+    bodyHtml: `
+      <div class="skd-meta">${writingPackBadge(pack)}<span>${pack.ruleCount} 条本包规则</span>${pack.extends.length ? `<span>继承 ${pack.extends.map((id) => `<code>${esc(id)}</code>`).join('、')}</span>` : ''}</div>
+      ${pack.description ? `<p class="skd-desc">${esc(pack.description)}</p>` : ''}
+      ${pack.variants.length ? `<h4 class="skd-h">适用类型</h4><ul class="writing-pack-list">${pack.variants.map((v) => `<li>${esc(v.label)} <code class="faint">${esc(v.id)}</code></li>`).join('')}</ul>` : ''}
+      ${notes ? `<h4 class="skd-h">${pack.status === 'stub' ? '覆盖说明' : '人工核对项'}</h4>${pack.status === 'stub' ? '' : '<p class="skd-desc">按投稿目标和稿件情况核对；具体稿件的检查结果见检查报告。</p>'}<ul class="writing-pack-list">${notes}</ul>` : ''}
+      ${sources ? `<h4 class="skd-h">规则依据</h4><ul class="writing-pack-list">${sources}</ul>` : ''}`,
+    onMount: (el) => el.querySelector('.modal-close').focus(),
+    onClose: () => trigger.focus()
+  })
 }
 
 /** Palette swatches and the hard parameters that separate look-alike styles. */

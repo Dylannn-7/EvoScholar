@@ -1,9 +1,29 @@
 id: aaai
-name: AAAI（AAAI）
-extends:
-- common
-status: stub
-sources: []
-rules: []
+name: AAAI 主会
+description: 检查 AAAI-27 主会评审稿的正文页数和 PDF 总页数。
+extends: [common]
+variants:
+  aaai2027: AAAI-27 主会
+sources:
+  - id: submission
+    title: AAAI-27 Submission Instructions
+    url: https://aaai.org/conference/aaai/aaai-27/submission-instructions/
+    checked: 2026-11-22
+  - id: final
+    title: AAAI-27 Paper Publication and Conference Attendance
+    url: https://aaai.org/conference/aaai/aaai-27/paper-publication-and-conference-attendance/
+    checked: 2026-11-22
+rules:
+  - id: aaai.pages.body
+    check: page_limit
+    params: { max_pages: 7, excluded: [References], severity: warning }
+    skip_stages: [camera-ready]
+    source: submission
+  - id: aaai.pages.total
+    check: page_limit
+    params: { max_pages: 9, excluded: [] }
+    skip_stages: [camera-ready]
+    source: submission
 verify:
-- 本规则包尚未核实作者指南（依据应为：AAAI 作者工具包）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - 评审稿第 8–9 页仅可放参考文献。请在编译后的 PDF 中核对这两页的内容、匿名和模板格式。
+  - 终稿通常为 7 页正文加最多 2 页致谢和参考文献，可付费增加最多 2 页正文。请按录用通知核对终稿篇幅。
