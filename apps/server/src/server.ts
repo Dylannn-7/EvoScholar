@@ -147,6 +147,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
   const live = new Map<string, Live>()
   const opening = new Map<string, Promise<Live>>()
   const starting = new Set<string>()
+  const lastAcceptedAsk = new Map<string, string>()
   const evo = { running: false, log: [] as string[], runId: '' as string, ctrl: undefined as AbortController | undefined }
 
   const broadcast = (l: Live, e: Record<string, unknown>) => {
@@ -582,6 +583,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         rt.db.exec('ROLLBACK')
         throw err
       }
+      lastAcceptedAsk.delete(id)
       rt.db.prepare('DELETE FROM library WHERE session_id = ? AND project_id IS NULL').run(id)
       rt.db.prepare('UPDATE library SET session_id = NULL WHERE session_id = ?').run(id)
       // Only the private drafts folder is removed; a project folder belongs to the user.
@@ -678,6 +680,8 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     if (mm && req.method === 'POST') {
       const id = mm[1]
       const b = await body(req)
+      const requestId = typeof b.requestId === 'string' && /^[0-9a-f-]{36}$/.test(b.requestId) ? b.requestId : undefined
+      if (requestId && lastAcceptedAsk.get(id) === requestId) return send(res, 202, { ok: true, alreadyAccepted: true })
       if (starting.has(id)) return send(res, 409, { error: '上一轮还在运行' })
       starting.add(id)
       try {
@@ -751,7 +755,8 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         blocks.unshift({ type: 'text', text })
         const live0 = l
         live0.busy = true
-        broadcast(live0, { type: 'status', status: 'running', model: live0.rs.model, effort: live0.rs.effort ?? null, permission: live0.meta.permission })
+        if (requestId) lastAcceptedAsk.set(id, requestId)
+        broadcast(live0, { type: 'status', status: 'running', requestId, model: live0.rs.model, effort: live0.rs.effort ?? null, permission: live0.meta.permission })
         send(res, 202, { ok: true })
         live0.rs
           .ask(blocks)

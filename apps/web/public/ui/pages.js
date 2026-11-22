@@ -191,8 +191,6 @@ const lib = { scope: 'all', session: '', type: '', q: '', selected: 0, view: (()
 const IMG_FILE = /\.(png|jpe?g|gif|webp|svg)$/i
 const typeIcon = (t) => (t === 'data' ? 'data' : t === 'code' ? 'code' : t === 'figure' ? 'image' : 'file')
 const baseName = (p) => p.split('/').pop()
-const inScope = (f, scope) => scope === 'all' || (scope === 'deliverable' ? !!f.deliverable
-  : scope === 'upload' ? f.kind === 'upload' : scope === 'drafts' ? !f.project_id : f.project_id === scope.slice(2))
 async function downloadLibraryFile (f) {
   const res = await apiFetch(`/api/library/${f.id}/file`)
   if (!res.ok) throw new Error('下载失败')
@@ -202,30 +200,67 @@ async function downloadLibraryFile (f) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 export async function renderLibrary (root, arg) {
-  if (arg) Object.assign(lib, { scope: arg.project ? (arg.project === 'drafts' ? 'drafts' : `p:${arg.project}`) : 'all', session: arg.session || '', selected: 0 })
+  if (arg) Object.assign(lib, { scope: arg.project ? (arg.project === 'drafts' ? 'drafts' : `p:${arg.project}`) : 'all', session: arg.session || '', type: '', q: '', selected: 0 })
   const body = shell(root, '资料空间', '')
   body.classList.add('lib-body')
-  const LIMIT = 2000
+  const limit = 60
+  let offset = 0
+  let hasMore = false
   let files = []
+  let sessions = []
   let counts = { total: 0, deliverable: 0, upload: 0, drafts: 0, projects: {} }
-  // The newest files load at once; a search goes to the server so older files are found too.
-  const load = async () => {
-    const r = await api(`/api/library?limit=${LIMIT}${lib.q ? `&q=${encodeURIComponent(lib.q)}` : ''}`)
-    files = r.files
-    counts = r.counts || counts
+  let generation = 0
+  let loading = false
+  let searchTimer
+  let searchText = lib.q
+  const project = () => lib.scope.startsWith('p:') ? lib.scope.slice(2) : lib.scope === 'drafts' ? 'drafts' : ''
+  const load = async (nextOffset = 0) => {
+    clearTimeout(searchTimer)
+    searchTimer = undefined
+    const request = ++generation
+    loading = true
+    const q = new URLSearchParams({ limit, offset: nextOffset, includeSessions: '1' })
+    if (project()) q.set('project', project())
+    if (lib.session) q.set('session', lib.session)
+    if (lib.type) q.set('type', lib.type)
+    if (lib.q) q.set('q', lib.q)
+    if (lib.scope === 'deliverable') q.set('deliverable', '1')
+    if (lib.scope === 'upload') q.set('kind', 'upload')
+    try {
+      const result = await api(`/api/library?${q}`)
+      if (request !== generation || !body.isConnected) return
+      if (nextOffset && !result.files.length) return load(Math.max(0, nextOffset - limit))
+      files = result.files
+      counts = result.counts
+      sessions = result.sessions
+      hasMore = result.hasMore
+      offset = nextOffset
+      if (!files.some((f) => f.id === lib.selected)) lib.selected = 0
+      draw({ resetScroll: true })
+    } catch (err) {
+      if (request === generation && body.isConnected) toast(err.message, 'err')
+    } finally {
+      if (request === generation) loading = false
+    }
   }
-  const draw = () => {
+  const draw = ({ resetScroll = false } = {}) => {
+    const oldSearch = body.querySelector('#lq')
+    const searchFocused = oldSearch && document.activeElement === oldSearch
+    const cursor = searchFocused ? [oldSearch.selectionStart, oldSearch.selectionEnd] : null
+    const scrollTop = resetScroll ? 0 : body.querySelector('.lib-main')?.scrollTop || 0
     const S = store.state
     const count = (scope) => scope === 'all' ? counts.total : scope === 'deliverable' ? counts.deliverable
       : scope === 'upload' ? counts.upload : scope === 'drafts' ? counts.drafts : counts.projects[scope.slice(2)] ?? 0
     const scopes = [['all', '全部', 'library'], ['deliverable', '交付物', 'star'], ['upload', '上传', 'upload']]
     const projects = [...S.projects.map((p) => [`p:${p.id}`, p.name]), ['drafts', '草稿']].filter(([id]) => count(id))
-    const q = lib.q.toLowerCase()
-    const shown = files.filter((f) => inScope(f, lib.scope) && (!lib.session || f.session_id === lib.session) &&
-      (!lib.type || f.type === lib.type) && (!q || f.path.toLowerCase().includes(q)))
+    const projectId = project()
+    const sessionOptions = sessions.filter((s) => !projectId || (s.project_id || 'drafts') === projectId)
+    if (lib.session && !sessionOptions.some((s) => s.id === lib.session)) {
+      sessionOptions.unshift({ id: lib.session, title: S.sessions.find((s) => s.id === lib.session)?.title })
+    }
     const groups = new Map()
-    for (const f of shown) {
-      const key = f.session_id || ''
+    for (const f of files) {
+      const key = f.session_id || `project:${f.project_id || ''}`
       if (!groups.has(key)) groups.set(key, { title: f.session_title || (f.kind === 'upload' ? '上传' : '未归属会话'), project: f.project_name || '草稿', session: f.session_id, latest: f.updated_at, files: [] })
       const g = groups.get(key); g.files.push(f); if (f.updated_at > g.latest) g.latest = f.updated_at
     }
@@ -239,7 +274,6 @@ export async function renderLibrary (root, arg) {
     const row = (f) => `<button type="button" class="lrow ${f.id === lib.selected ? 'on' : ''} ${f.exists ? '' : 'missing'}" data-id="${f.id}" title="${esc(f.path)}">
         <span class="lfi">${thumb(f, 16)}</span><span class="lname">${esc(baseName(f.path))}</span>
         <span class="lsub">${f.deliverable ? icon('star', 12) : ''}</span><span class="lsub">${fmtSize(f.size)}</span><span class="lsub">${esc(ago(f.updated_at))}</span></button>`
-    const sessTitle = lib.session && (S.sessions.find((s) => s.id === lib.session)?.title || lib.session)
     body.innerHTML = `<div class="lib">
       <nav class="lib-nav">
         ${scopes.map(([id, label, ic]) => `<button type="button" class="lnav ${lib.scope === id ? 'on' : ''}" data-scope="${id}">${icon(ic, 15)}<span>${label}</span><i>${count(id)}</i></button>`).join('')}
@@ -247,16 +281,22 @@ export async function renderLibrary (root, arg) {
       </nav>
       <section class="lib-main">
         <div class="lib-bar">
-          <label class="lib-search">${icon('search', 14)}<input id="lq" placeholder="搜索" value="${esc(lib.q)}"></label>
+          <label class="lib-search">${icon('search', 14)}<input id="lq" placeholder="搜索文件" value="${esc(searchText)}"></label>
           <div class="seg">${[['', '全部'], ['figure', '图'], ['document', '文档'], ['data', '数据'], ['code', '代码']].map(([id, l]) => `<button type="button" class="${lib.type === id ? 'on' : ''}" data-type="${id}">${l}</button>`).join('')}</div>
           <div class="seg lib-view">${[['grid', '网格'], ['list', '列表']].map(([id, l]) => `<button type="button" class="${lib.view === id ? 'on' : ''}" data-view="${id}" aria-label="${l}" title="${l}">${icon(id, 14)}</button>`).join('')}</div>
         </div>
-        ${!lib.q && counts.total > files.length ? `<p class="faint lib-note">显示最近 ${files.length} 个文件，搜索可查找更早的文件</p>` : ''}
-        ${lib.session ? `<button type="button" class="lib-chip" id="lsx">${esc(sessTitle)} ${icon('close', 11)}</button>` : ''}
+        <div class="lib-filters">
+          <label>会话<select id="libSession"><option value="">全部会话</option>${sessionOptions.map((s) => `<option value="${esc(s.id)}" ${s.id === lib.session ? 'selected' : ''}>${esc(s.title || s.id)}</option>`).join('')}</select></label>
+        </div>
         ${ordered.length ? ordered.map((g) => `<div class="lgroup">
             <div class="lgroup-h">${g.session ? `<a data-sess="${esc(g.session)}">${esc(g.title)}</a>` : `<span>${esc(g.title)}</span>`}<span class="faint"> · ${esc(g.project)}</span><span class="lgroup-t">${esc(ago(g.latest))}</span></div>
             <div class="${lib.view === 'grid' ? 'lgrid' : 'llist'}">${g.files.map(lib.view === 'grid' ? card : row).join('')}</div>
-          </div>`).join('') : `<div class="empty-state"><b>${files.length ? '没有匹配的文件' : '还没有文件'}</b></div>`}
+          </div>`).join('') : `<div class="empty-state"><b>${lib.q || lib.type || lib.session ? '没有匹配的文件' : '还没有文件'}</b></div>`}
+        ${offset || hasMore ? `<div class="lib-pagination">
+          <button type="button" class="btn ghost small" data-page="prev" ${offset ? '' : 'disabled'}>上一页</button>
+          <span>第 ${offset / limit + 1} 页</span>
+          <button type="button" class="btn ghost small" data-page="next" ${hasMore ? '' : 'disabled'}>下一页</button>
+        </div>` : ''}
       </section>
       <aside class="lib-prev">${sel ? `
         <button type="button" class="lprev-media" data-open="${sel.id}" ${sel.exists ? '' : 'disabled'}>${thumb(sel, 40)}</button>
@@ -275,25 +315,25 @@ export async function renderLibrary (root, arg) {
     </div>`
     loadApiImages(body)
     const qi = body.querySelector('#lq')
-    let t
-    qi.oninput = (e) => {
-      clearTimeout(t)
-      t = setTimeout(async () => {
-        lib.q = e.target.value.trim()
-        try { await load() } catch (err) { toast(err.message, 'err') }
-        draw()
-        const n = body.querySelector('#lq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length)
-      }, 250)
+    if (cursor) { qi.focus({ preventScroll: true }); qi.setSelectionRange(...cursor) }
+    body.querySelector('.lib-main').scrollTop = scrollTop
+    qi.oninput = () => {
+      searchText = qi.value
+      lib.q = searchText.trim()
+      generation++
+      clearTimeout(searchTimer)
+      searchTimer = setTimeout(() => load(), 250)
     }
+    body.querySelector('#libSession').onchange = (e) => { lib.session = e.target.value; void load() }
   }
   body.addEventListener('click', async (e) => {
-    const el = e.target.closest('[data-scope],[data-type],[data-view],[data-id],[data-sess],[data-open],[data-star],[data-reveal],[data-download],#lsx')
+    const el = e.target.closest('[data-scope],[data-type],[data-view],[data-id],[data-sess],[data-open],[data-star],[data-reveal],[data-download],[data-page]')
     if (!el) return
     const byId = (v) => files.find((f) => f.id === Number(v))
     try {
-      if (el.id === 'lsx') { lib.session = ''; return draw() }
-      if (el.dataset.scope !== undefined) { lib.scope = el.dataset.scope; lib.session = ''; return draw() }
-      if (el.dataset.type !== undefined) { lib.type = el.dataset.type; return draw() }
+      if (el.dataset.scope !== undefined) { lib.scope = el.dataset.scope; lib.session = ''; return load() }
+      if (el.dataset.type !== undefined) { lib.type = el.dataset.type; return load() }
+      if (el.dataset.page && !loading && !searchTimer) return load(offset + (el.dataset.page === 'next' ? limit : -limit))
       if (el.dataset.view) { lib.view = el.dataset.view; try { localStorage.setItem('evo.libView', lib.view) } catch {} return draw() }
       if (el.dataset.sess) { go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: el.dataset.sess })) }
       const f = byId(el.dataset.id ?? el.dataset.open ?? el.dataset.star ?? el.dataset.reveal ?? el.dataset.download)
@@ -302,13 +342,17 @@ export async function renderLibrary (root, arg) {
       const paneHidden = !body.querySelector('.lib-prev')?.offsetParent
       if (el.dataset.id) { lib.selected = f.id; if (paneHidden && f.exists) return openFilePreviewModal(null, f.path, `/api/library/${f.id}/file`); return draw() }
       if (el.dataset.open) return openFilePreviewModal(null, f.path, `/api/library/${f.id}/file`)
-      if (el.dataset.star) { await patch(`/api/library/${f.id}`, { deliverable: !f.deliverable }); f.deliverable = f.deliverable ? 0 : 1; counts.deliverable += f.deliverable ? 1 : -1; return draw() }
+      if (el.dataset.star) {
+        const request = generation
+        await patch(`/api/library/${f.id}`, { deliverable: !f.deliverable })
+        if (request === generation && body.isConnected) return load(offset)
+      }
       if (el.dataset.reveal) return await post(`/api/library/${f.id}/reveal`)
       if (el.dataset.download) return await downloadLibraryFile(f)
     } catch (err) { toast(err.message, 'err') }
   })
-  await load()
   draw()
+  await load()
 }
 
 // ---------------------------------------------------------------- usage

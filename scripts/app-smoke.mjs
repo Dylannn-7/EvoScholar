@@ -24,8 +24,8 @@ child.stderr.on('data', (b) => { out += b })
 const timer = setTimeout(() => { child.kill(); console.error('桌面应用冒烟测试超时'); process.exitCode = 1 }, 90_000)
 child.on('close', (code) => {
   clearTimeout(timer)
-  rmSync(userData, { recursive: true, force: true })
   const line = out.split(/\r?\n/).find((l) => l.startsWith('EVOSCHOLAR_SMOKE '))
   console.log(line ?? out.slice(-2000))
   if (code !== 0 || !line || !JSON.parse(line.slice('EVOSCHOLAR_SMOKE '.length)).ok) process.exitCode = 1
+  rmSync(userData, { recursive: true, force: true })
 })
