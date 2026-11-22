@@ -80,6 +80,8 @@ function openWindow ({ origin, token, theme }) {
   ses.setPermissionCheckHandler((_contents, permission) => allowed.has(permission))
   window = new BrowserWindow({
     width: 1440, height: 900, minWidth: 960, minHeight: 640, title: 'EvoScholar', backgroundColor: light ? '#f5f5f7' : '#000000', show: false,
+    // macOS: no title bar strip; the traffic lights sit at the top of the icon rail (the page reserves room for them).
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 24 } } : {}),
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false }
   })
   window.once('ready-to-show', () => window.show())
@@ -94,7 +96,7 @@ function openWindow ({ origin, token, theme }) {
     if (/^https?:\/\//.test(url)) shell.openExternal(url)
   })
   window.on('closed', () => { window = undefined })
-  window.loadURL(`${origin}/?theme=${pref}`)
+  window.loadURL(`${origin}/?theme=${pref}${process.platform === 'darwin' ? '&shell=mac' : ''}`)
   if (process.env.EVOSCHOLAR_SMOKE === '1') window.webContents.once('did-finish-load', () => smokeCheck(origin))
 }
 

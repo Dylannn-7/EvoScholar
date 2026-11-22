@@ -931,7 +931,10 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     }
     mm = m(/^\/api\/evolution\/(g-[\w-]+)$/)
     if (mm && req.method === 'GET') {
-      const d = candidateDetail(rt, mm[1])
+      const base = url.searchParams.get('base') ?? undefined
+      const known = rt.genomes.list()
+      if (!known.includes(mm[1]) || (base !== undefined && !known.includes(base))) throw httpError(404, '版本不存在')
+      const d = candidateDetail(rt, mm[1], base)
       const brief = (g?: { id: string; status: string; parent?: string | null; note?: string; createdBy: string }) =>
         g && { id: g.id, status: g.status, parent: g.parent ?? null, note: g.note ?? '', createdBy: g.createdBy }
       return send(res, 200, { ...d, genome: brief(d.genome), parent: brief(d.parent) })

@@ -16,6 +16,34 @@ const srcBadge = (s) => { const [l, c] = SOURCE[s || 'builtin']; return `<span c
 
 // ---------------------------------------------------------------- plugins
 let pluginTab = 'skills'
+// Skill domains: a line icon and a filter tag per field. Imported skills ship English descriptions,
+// so the bundled ones get a Chinese summary here (the original stays in the tooltip and in SKILL.md).
+const DOMAINS = { literature: ['文献核查', 'search'], figure: ['统计绘图', 'image'], optics: ['光电分析', 'bolt'], ml: ['机器学习', 'brain'], data: ['数据处理', 'data'], writing: ['论文合规', 'shield'], diagram: ['示意图', 'palette'], learned: ['沉淀技能', 'code'], other: ['其他', 'plugins'] }
+const SKILL_META = {
+  'literature-review': ['literature'], 'research-integrity': ['literature'], 'writing-check': ['writing'],
+  'figure-style': ['figure'], 'figure-composer': ['figure'], 'tikz-diagram': ['diagram'],
+  'optics-spectra': ['optics'], 'optics-fields': ['optics'], 'device-curves': ['optics'],
+  'ml-curves': ['ml'], 'ml-results': ['ml'], 'data-tables': ['data'],
+  matplotlib: ['figure', 'Matplotlib 科研绘图：精细控制图元，画少见图型，导出 PNG / PDF / SVG。快速统计图用 seaborn，期刊多面板组图用 scientific-visualization。'],
+  seaborn: ['figure', 'Seaborn 统计图：结合 pandas 画分布、关系、分类对比、回归、配对图和热图，显式处理聚合、不确定度与缺失值，适合静态探索图。'],
+  'scientific-visualization': ['figure', '可直接投稿的科研图：Matplotlib / Seaborn / Plotly 的图形设计、多面板布局、不确定度与缺失数据表达、配色对比度检查和期刊导出规划。']
+}
+function skillMeta (s) {
+  const [domain, zh] = SKILL_META[s.name] || [s.kernel ? 'learned' : 'other']
+  return { domain, text: zh || s.description || '' }
+}
+const skillFilter = { domain: 'all', q: '' }
+function applySkillFilter (root) {
+  const q = skillFilter.q.trim().toLowerCase()
+  let shown = 0
+  root.querySelectorAll('#skcards .pcard').forEach((el) => {
+    const ok = (skillFilter.domain === 'all' || el.dataset.domain === skillFilter.domain) && (!q || el.dataset.text.includes(q))
+    el.hidden = !ok
+    if (ok) shown++
+  })
+  const none = root.querySelector('#sknone'); if (none) none.hidden = shown > 0
+}
+
 export async function renderPlugins (root, arg) {
   if (typeof arg === 'string' && ['skills', 'tools', 'rules', 'styles'].includes(arg)) pluginTab = arg
   const body = shell(root, '插件', '',
@@ -28,10 +56,15 @@ export async function renderPlugins (root, arg) {
     body.innerHTML = `<div class="toolbar"><div class="seg">${[['skills', '技能'], ['tools', '工具'], ['rules', '规则包'], ['styles', '出图风格']].map(([id, l]) => `<button type="button" class="${pluginTab === id ? 'on' : ''}" data-t="${id}">${l} ${counts[id]}</button>`).join('')}</div></div><div id="pl"></div>`
     const pl = body.querySelector('#pl')
     if (pluginTab === 'skills') {
-      pl.innerHTML = `<div class="cards">${c.skills.map((s) => `<div class="pcard ${(s.kernel ? !s.disabled : s.enabled) ? '' : 'off'}" data-skill="${esc(s.name)}"><div class="top">${icon(s.kernel ? 'code' : 'plugins', 16)}<span class="nm">${esc(s.name)}</span>${srcBadge(s.source)}${s.source === 'imported' && s.trusted ? '<span class="badge ok">已信任</span>' : ''}${s.kernel ? `<span class="badge ${s.status === 'active' ? 'ok' : 'warn'}">${s.status === 'active' ? '已转正' : '试用'}</span>` : ''}</div>
-        <div class="ds">${esc(s.description || '')}</div>
-        <div class="ft"><span>v${s.activeVersion ?? s.version}</span>${s.kernel ? `<span>复用 ${s.reuses || 0} 次</span>` : ''}${s.license ? (/^https?:/.test(s.license) ? `<a class="muted" href="${esc(s.license)}" target="_blank" rel="noopener">许可证</a>` : `<span>${esc(s.license.replace(/ license$/i, ''))}</span>`) : ''}${s.origin && s.origin.startsWith('http') ? `<a class="muted" href="${esc(s.origin)}" target="_blank" rel="noopener">来源</a>` : ''}
-          <span class="page-actions">${s.source !== 'builtin' ? `<button class="icon-btn" data-del="${esc(s.name)}" title="删除" type="button">${icon('trash', 14)}</button>` : ''}${s.kernel ? sw(!s.disabled, `data-ken="${esc(s.name)}"`) : sw(s.enabled, `data-en="${esc(s.name)}"`)}</span></div></div>`).join('')}</div>`
+      const present = Object.keys(DOMAINS).filter((d) => c.skills.some((s) => skillMeta(s).domain === d))
+      pl.innerHTML = `<div class="toolbar skill-filter"><div class="seg-tabs" id="skd">${[['all', '全部'], ...present.map((d) => [d, DOMAINS[d][0]])].map(([id, l]) => `<button type="button" class="${skillFilter.domain === id ? 'on' : ''}" data-skd="${id}">${l}</button>`).join('')}</div>
+        <label class="lib-search skill-search">${icon('search', 14)}<input id="skq" placeholder="搜索技能" value="${esc(skillFilter.q)}"></label></div>
+        <div class="cards" id="skcards">${c.skills.map((s) => { const m = skillMeta(s); return `<div class="pcard ${(s.kernel ? !s.disabled : s.enabled) ? '' : 'off'}" data-skill="${esc(s.name)}" data-domain="${m.domain}" data-text="${esc(`${s.name} ${m.text} ${s.description || ''}`.toLowerCase())}"><div class="top"><span class="dom-ic">${icon(DOMAINS[m.domain][1], 15)}</span><span class="nm">${esc(s.name)}</span>${srcBadge(s.source)}${s.source === 'imported' && s.trusted ? '<span class="badge ok">已信任</span>' : ''}${s.kernel ? `<span class="badge ${s.status === 'active' ? 'ok' : 'warn'}">${s.status === 'active' ? '已转正' : '试用'}</span>` : ''}</div>
+        <div class="ds" ${m.text !== (s.description || '') ? `title="${esc(s.description || '')}"` : ''}>${esc(m.text)}</div>
+        <div class="ft"><span class="dom-tag">${DOMAINS[m.domain][0]}</span><span>v${s.activeVersion ?? s.version}</span>${s.kernel ? `<span>复用 ${s.reuses || 0} 次</span>` : ''}${s.license ? (/^https?:/.test(s.license) ? `<a class="muted" href="${esc(s.license)}" target="_blank" rel="noopener">许可证</a>` : `<span>${esc(s.license.replace(/ license$/i, ''))}</span>`) : ''}${s.origin && s.origin.startsWith('http') ? `<a class="muted" href="${esc(s.origin)}" target="_blank" rel="noopener">来源</a>` : ''}
+          <span class="page-actions">${s.source !== 'builtin' ? `<button class="icon-btn" data-del="${esc(s.name)}" title="删除" type="button">${icon('trash', 14)}</button>` : ''}${s.kernel ? sw(!s.disabled, `data-ken="${esc(s.name)}"`) : sw(s.enabled, `data-en="${esc(s.name)}"`)}</span></div></div>` }).join('')}</div><p class="muted" id="sknone" hidden>没有匹配的技能</p>`
+      applySkillFilter(pl)
+      pl.querySelector('#skq').addEventListener('input', (e) => { skillFilter.q = e.target.value; applySkillFilter(pl) })
     } else if (pluginTab === 'tools') {
       pl.innerHTML = `<div class="cards">${c.tools.map((t) => `<div class="pcard ${t.enabled ? '' : 'off'}"><div class="top">${icon('code', 16)}<span class="nm"><code>${esc(t.name)}</code></span>${srcBadge(t.source)}</div>
         <div class="ds">${esc(t.description)}</div><div class="ft">${t.enabled ? '<span class="badge ok">已启用</span>' : '<span class="badge">未启用</span>'}</div></div>`).join('')}</div>`
@@ -60,6 +93,7 @@ export async function renderPlugins (root, arg) {
   draw()
   body.onclick = async (e) => {
     const t = e.target.closest('[data-t]'); if (t) { pluginTab = t.dataset.t; return draw() }
+    const kd = e.target.closest('[data-skd]'); if (kd) { skillFilter.domain = kd.dataset.skd; body.querySelectorAll('[data-skd]').forEach((x) => x.classList.toggle('on', x === kd)); return applySkillFilter(body) }
     const sl = e.target.closest('[data-sess]'); if (sl) { go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: sl.dataset.sess })) }
     try {
       const ken = e.target.closest('[data-ken]')
@@ -411,7 +445,7 @@ export async function renderUsage (root) {
       ${[['新增输入', fmtTokens(fresh)], ['缓存命中', `${fmtTokens(t.cacheReadTokens)} <span class="faint" style="font-size:12px">${(t.cacheHitRate * 100).toFixed(0)}%</span>`], ['输出', fmtTokens(t.outputTokens)], ['模型请求', fmtTokens(t.requests)], ['对话回合', fmtTokens(t.turns)], ['工具调用', `${fmtTokens(t.toolCalls)}${t.toolErrors ? ` <span class="faint" style="font-size:12px">失败 ${t.toolErrors}</span>` : ''}`]]
         .map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}
     </div>
-    <div class="panel"><h3>每日用量</h3>${chart(daily.rows)}<div class="legend"><span><i class="c-in"></i>输入（未命中缓存）</span><span><i class="c-cache"></i>输入（缓存命中）</span><span><i class="c-out"></i>输出</span></div></div>
+    <div class="panel"><h3>每日用量</h3>${chart(fillDays(daily.rows, use.days))}<div class="legend"><span><i class="c-in"></i>输入（未命中缓存）</span><span><i class="c-cache"></i>输入（缓存命中）</span><span><i class="c-out"></i>输出</span></div></div>
     <div class="panel"><div class="inline" style="margin-bottom:14px"><h3 style="flex:1">分布</h3><div class="seg" id="ug">${[['model', '按模型'], ['project', '按项目'], ['session', '按会话']].map(([g, l]) => `<button type="button" class="${use.group === g ? 'on' : ''}" data-g="${g}">${l}</button>`).join('')}</div></div>
       ${grouped.rows.length ? `<div class="bars">${grouped.rows.slice(0, 30).map((r) => {
         const sum = r.inputTokens + r.outputTokens
@@ -419,6 +453,23 @@ export async function renderUsage (root) {
         return `<div class="bar-row"><span class="l" title="${esc(r.label)}">${esc(r.label)}</span><span class="tr" style="width:${Math.max(2, (100 * sum) / max)}%"><i class="c-cache" style="width:${(100 * r.cacheReadTokens) / Math.max(1, sum)}%"></i><i class="c-in" style="width:${(100 * (r.inputTokens - r.cacheReadTokens)) / Math.max(1, sum)}%"></i><i class="c-out" style="width:${(100 * r.outputTokens) / Math.max(1, sum)}%"></i></span><span class="n">${fmtTokens(sum)} · ${r.requests} 次</span></div>`
       }).join('')}</div>` : '<p class="muted">这段时间没有用量。</p>'}</div>`
   body.querySelector('#ug').onclick = (e) => { const b = e.target.closest('[data-g]'); if (b) { use.group = b.dataset.g; renderUsage(root) } }
+}
+
+/** Continuous local-date axis: every day of the chosen range (at least a week), empty days as zero. */
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+export function fillDays (rows, days, now = new Date()) {
+  if (!rows.length) return rows
+  const by = new Map(rows.map((r) => [r.key, r]))
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  let start = new Date(end)
+  start.setDate(start.getDate() - (days ? days - 1 : 6))
+  if (!days) { const [y, m, d] = rows[0].key.split('-').map(Number); const first = new Date(y, m - 1, d); if (first < start) start = first }
+  const out = []
+  for (const d = new Date(start); d <= end && out.length < 400; d.setDate(d.getDate() + 1)) {
+    const key = dayKey(d)
+    out.push(by.get(key) || { key, label: key, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, requests: 0 })
+  }
+  return out
 }
 
 function chart (rows) {
@@ -446,6 +497,122 @@ const STATUS = { trial: ['试用', 'warn'], active: ['生效', 'ok'], retired: [
 let trajTab = 'timeline'
 let memFilter = 'live'
 const pick = new Set()
+// Timeline as cause -> diagnosis -> product cards. Colour = what the event produced:
+// lesson (L-), preference (P-), session overlay / genome candidate, or nothing durable.
+const FLOW_CATS = [['lesson', '经验'], ['pref', '偏好'], ['harness', '会话调整 / 版本'], ['plain', '过程记录']]
+const refCat = (r) => /^L-/.test(r) ? 'lesson' : /^P-/.test(r) ? 'pref' : /^g-/.test(r) ? 'harness' : 'harness'
+function flowSegments (e) {
+  const d = e.data || {}
+  const refs = e.refs || []
+  if (e.kind === 'reflect' && (d.situation || d.cause)) {
+    return { cat: 'plain', segs: [['触发', d.situation || ''], ['归因', d.cause || ''], ['对策', d.next || '']] }
+  }
+  if (e.kind === 'adjust' && d.memory) {
+    const body = e.text.slice(e.text.indexOf('：') + 1)
+    const at = body.indexOf(' → ')
+    const status = (/（([^）]*)）/.exec(e.text) || [])[1] || ''
+    return { cat: refCat(d.memory), segs: [['触发', at >= 0 ? body.slice(0, at) : ''], ['对策', at >= 0 ? body.slice(at + 3) : body], ['沉淀', status, [d.memory]]] }
+  }
+  if (e.kind === 'adjust' && d.overlay) {
+    return { cat: 'harness', segs: [['本会话调整', e.text.replace(/^本会话：/, '')], ['沉淀', d.op || '', [d.overlay]]] }
+  }
+  if (e.kind === 'learned' && typeof d.score === 'number') {
+    const credited = (d.credited || []).map((c) => `${c.id} ${Number(c.before).toFixed(2)} → ${Number(c.after).toFixed(2)}`).join('；')
+    return { cat: refs.some((r) => /^L-/.test(r)) ? 'lesson' : 'plain', segs: [['回合得分', d.score.toFixed(2)], ['归因', credited || '本回合没有用到已有条目'], ['沉淀', e.text, refs]] }
+  }
+  if (e.kind === 'learned' && refs[0] && /^g-/.test(refs[0])) {
+    return { cat: 'harness', segs: [['会话调整与记忆', `${refs.length - 1} 项`], ['沉淀', e.text.replace(/^生成 genome 候选 \S+，/, ''), [refs[0]]]] }
+  }
+  if (e.kind === 'preference') {
+    return { cat: 'pref', segs: [['你的要求', e.text.replace(/，记为偏好 \S+$/, '').replace(/^记住了：/, '')], ['沉淀', '偏好', refs]] }
+  }
+  return null
+}
+function flowCard (e, sessLink) {
+  const f = flowSegments(e)
+  const tail = `<span class="faint">${esc(ago(e.ts))}</span><span class="page-actions">${sessLink(e.session_id, e.session_title)}</span>`
+  const badge = `<span class="badge">${KIND[e.kind] || esc(e.kind)}</span>`
+  if (!f) {
+    const refs = (e.refs || []).slice(0, 4).map((r) => `<code class="ref fc-${refCat(r)}">${esc(r)}</code>`).join('')
+    return `<div class="flow compact fc-plain"><div class="flow-h">${badge}<span class="flow-text">${esc(e.text)}</span>${refs}${tail}</div></div>`
+  }
+  const head = `<div class="flow-h">${badge}${tail}</div>`
+  const seg = ([label, text, refs]) => `<div class="fs"><span class="fl">${label}</span>${refs?.length ? `<span class="frefs">${refs.slice(0, 4).map((r) => `<code class="ref fc-${refCat(r)}">${esc(r)}</code>`).join('')}</span>` : ''}${text ? `<p>${esc(text)}</p>` : ''}</div>`
+  return `<div class="flow fc-${f.cat}">${head}<div class="flow-row" style="--n:${f.segs.length}">${f.segs.map(seg).join(`<i class="fa">${icon('chevron', 14)}</i>`)}</div></div>`
+}
+
+// Versions: lineage as lanes (a child stays on its parent's lane unless a sibling took it) and a two-genome diff.
+const cmp = { a: null, b: null }
+function lineageSvg (lineage) {
+  if (!lineage.length) return '<p class="muted">还没有版本</p>'
+  // Lane 0 is the active genome's ancestry; every other node takes the first lower lane that is free at its column.
+  const byId = new Map(lineage.map((g) => [g.id, g]))
+  const main = new Set()
+  for (let g = lineage.find((x) => x.status === 'active'); g && !main.has(g.id); g = byId.get(g.parent)) main.add(g.id)
+  const lane = new Map(); const laneEnd = [-1]
+  lineage.forEach((g, i) => {
+    if (main.has(g.id) || !main.size) { lane.set(g.id, 0); laneEnd[0] = i; return }
+    let l = 1
+    while (laneEnd[l] !== undefined && laneEnd[l] >= i) l++
+    lane.set(g.id, l); laneEnd[l] = i
+  })
+  const lanes = laneEnd.length
+  const step = 72; const lh = 40; const px = 26; const py = 22
+  const pos = new Map(lineage.map((g, i) => [g.id, [px + i * step, py + lane.get(g.id) * lh]]))
+  const W = px * 2 + (lineage.length - 1) * step; const H = py * 2 + (lanes - 1) * lh + 16
+  const edges = lineage.filter((g) => g.parent && pos.has(g.parent)).map((g) => {
+    const [x1, y1] = pos.get(g.parent); const [x2, y2] = pos.get(g.id)
+    return `<path d="M${x1} ${y1} C${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}"/>`
+  }).join('')
+  const nodes = lineage.map((g) => {
+    const [x, y] = pos.get(g.id)
+    const st = { active: 'active', archived: 'archived', rejected: 'rejected', candidate: 'candidate' }[g.status] || 'archived'
+    return `<g class="gnode ${st} ${g.id === cmp.a || g.id === cmp.b ? 'sel' : ''}" data-gnode="${esc(g.id)}" tabindex="0"><title>${esc(g.id)}${g.note ? `：${esc(g.note.slice(0, 120))}` : ''}</title><circle class="ring" cx="${x}" cy="${y}" r="11"/><circle class="dot" cx="${x}" cy="${y}" r="6"/><text x="${x}" y="${y + 24}" text-anchor="middle">${esc(g.id.replace(/^g-0*/, '') || '0')}</text></g>`
+  }).join('')
+  const legend = [['active', '当前'], ['archived', '历史'], ['candidate', '候选'], ['rejected', '已拒绝']].map(([k, l]) => `<span><i class="gl ${k}"></i>${l}</span>`).join('')
+  return `<div class="lineage"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><g class="edges">${edges}</g>${nodes}</svg></div><div class="flow-legend">${legend}</div>`
+}
+function diffBlock (title, lines, sub = '') {
+  if (!lines?.some((l) => l.op !== ' ')) return ''
+  const add = lines.filter((l) => l.op === '+').length; const rem = lines.filter((l) => l.op === '-').length
+  return `<details class="diff-box" open><summary><b>${esc(title)}</b>${sub ? `<span class="faint">${esc(sub)}</span>` : ''}<span class="dstat"><span class="a">+${add}</span><span class="r">-${rem}</span></span></summary><pre class="diff">${lines.map((l) => `<span class="${l.op === '+' ? 'add' : l.op === '-' ? 'del' : 'ctx'}">${l.op === ' ' ? ' ' : l.op} ${esc(l.text)}</span>`).join('')}</pre></details>`
+}
+function compareHtml (d) {
+  const PROMPT = { system: '系统提示词', compaction: '上下文压缩提示词' }
+  const parts = [
+    ...(d.promptDiffs || []).map((x) => diffBlock(PROMPT[x.key] || (x.key.startsWith('tool:') ? `工具说明 ${x.key.slice(5)}` : x.key.startsWith('stage:') ? `阶段提示词 ${x.key.slice(6)}` : x.key), x.diff, `${x.from || '无'} → ${x.to}`)),
+    ...(d.skillDiffs || []).map((x) => diffBlock(`技能 ${x.key}`, x.diff, `${x.from || '无'} → ${x.to || '移除'}`)),
+    diffBlock('工作流', d.workflowDiff),
+    diffBlock('genome 配置', d.genomeDiff)
+  ].filter(Boolean)
+  const head = `<div class="cmp-head">${[d.parent, d.genome].map((g, i) => g ? `<div class="cmp-g"><span class="fl">${i ? '目标' : '基准'}</span><code>${esc(g.id)}</code><p>${esc(g.note || '（无说明）')}</p></div>` : '').join(icon('chevron', 14))}</div>`
+  return head + (parts.length ? parts.join('') : '<p class="muted">两个版本的配置、提示词和技能完全相同。</p>')
+}
+
+// Memory health: uses (x, square-root scale) against utility score (y). Zones follow the
+// thresholds the curator works with: high score and reused = core, low score = up for retirement.
+function memoryScatter (memory, score) {
+  const W = 900; const H = 240; const pad = { l: 40, r: 16, t: 26, b: 30 }
+  const maxU = Math.max(4, ...memory.map((m) => m.uses || 0))
+  const sx = (u) => pad.l + 12 + (W - pad.l - pad.r - 24) * Math.sqrt(u / maxU)
+  const sy = (v) => pad.t + (H - pad.t - pad.b) * (1 - v)
+  const zone = (x0, x1, y0, y1, cls, label, anchor) => `<rect class="mz ${cls}" x="${x0}" y="${y1}" width="${x1 - x0}" height="${y0 - y1}"/><text class="mzl" x="${anchor === 'end' ? x1 - 8 : x0 + 8}" y="${y1 + 15}" text-anchor="${anchor}">${label}</text>`
+  const xR = W - pad.r; const xU = sx(2)
+  const zones = zone(xU, xR, sy(0.6), sy(1), 'core', '核心高分池', 'end') + zone(pad.l, xR, sy(0.4), sy(0.6), 'watch', '试用观察区', 'end') + zone(pad.l, xU, sy(0.6), sy(1), 'watch', '', 'start') + zone(pad.l, xR, sy(0), sy(0.4), 'drop', '待淘汰区', 'end')
+  const yt = [0, 0.4, 0.6, 1].map((v) => `<text class="mt" x="${pad.l - 6}" y="${sy(v) + 3}" text-anchor="end">${v.toFixed(1)}</text>`).join('')
+  const xt = [...new Set([0, 1, 2, Math.round(maxU / 2), maxU])].map((u) => `<text class="mt" x="${sx(u)}" y="${H - 12}" text-anchor="middle">${u}</text>`).join('')
+  // Spread overlapping points a little so every entry stays clickable.
+  const seen = new Map()
+  const pts = memory.map((m) => {
+    const u = m.uses || 0; const v = score(m)
+    const key = `${u}:${v.toFixed(2)}`; const k = seen.get(key) || 0; seen.set(key, k + 1)
+    const x = sx(u) + (k ? ((k % 2 ? 1 : -1) * Math.ceil(k / 2) * 9) : 0)
+    return `<g class="mpt ${m.kind === 'lesson' ? 'lesson' : 'pref'} ${m.status}" data-mpt="${esc(m.id)}"><title>${esc(m.id)} · ${m.kind === 'lesson' ? '经验' : '偏好'} · 得分 ${v.toFixed(2)} · 用过 ${u} 次${m.status === 'retired' ? ' · 已淘汰' : m.status === 'trial' ? ' · 试用' : ''}\n${esc(m.trigger)}</title><circle cx="${x}" cy="${sy(v)}" r="5.5"/></g>`
+  }).join('')
+  return `<div class="panel mem-health"><div class="inline"><h3 style="flex:1">记忆健康度</h3><div class="flow-legend" style="margin:0"><span><i class="fc-lesson"></i>经验</span><span><i class="fc-pref"></i>偏好</span><span><i class="mh-retired"></i>已淘汰</span></div></div>
+    <svg class="mscatter" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${zones}${yt}${xt}<text class="mt" x="${W - pad.r}" y="${H - 1}" text-anchor="end">调用次数</text><text class="mt" x="${pad.l - 6}" y="11" text-anchor="end">得分</text>${pts}</svg></div>`
+}
+
 export async function renderTrajectory (root, arg) {
   if (typeof arg === 'string' && ['timeline', 'memory', 'overlays', 'versions'].includes(arg)) trajTab = arg
   const body = shell(root, '轨迹', '')
@@ -462,11 +629,10 @@ export async function renderTrajectory (root, arg) {
       ${pick.size ? `<button class="btn primary small" id="consol" type="button">沉淀为 genome 候选（${pick.size}）</button>` : ''}
       ${trajTab === 'memory' ? `<div class="seg">${[['live', '在用'], ['trial', '试用'], ['active', '生效'], ['retired', '已淘汰']].map(([id, l]) => `<button type="button" class="${memFilter === id ? 'on' : ''}" data-mf="${id}">${l}</button>`).join('')}</div><button class="btn ghost small" id="addPref" type="button">${icon('plus', 14)}添加偏好</button>` : ''}</div>`
     if (trajTab === 'timeline') {
-      html += ev.log.length ? `<div class="timeline">${ev.log.map((e) => `<div class="tl-item"><i class="rail-dot ${['adjust', 'learned', 'preference'].includes(e.kind) ? '' : 'dim'}"></i><div class="c">
-          <div class="h"><span class="badge ${['adjust', 'learned', 'preference'].includes(e.kind) ? 'accent' : e.kind === 'selfcheck' ? 'warn' : ''}">${KIND[e.kind] || esc(e.kind)}</span>${(e.refs || []).slice(0, 5).map((r) => `<code>${esc(r)}</code>`).join(' ')}<span class="faint">${esc(ago(e.ts))}</span><span class="page-actions">${sessLink(e.session_id, e.session_title)}</span></div>
-          <p>${esc(e.text)}</p></div></div>`).join('')}</div>` : '<div class="empty-state"><b>还没有自进化记录</b></div>'
+      html += ev.log.length ? `<div class="flow-legend">${FLOW_CATS.map(([id, l]) => `<span><i class="fc-${id}"></i>${l}</span>`).join('')}</div><div class="flows">${ev.log.map((e) => flowCard(e, sessLink)).join('')}</div>` : '<div class="empty-state"><b>还没有自进化记录</b></div>'
     } else if (trajTab === 'memory') {
       const list = ev.memory.filter((m) => memFilter === 'live' ? m.status !== 'retired' : m.status === memFilter)
+      if (ev.memory.length) html += memoryScatter(ev.memory, score)
       html += list.length ? `<div class="cards">${list.map((m) => { const [sl, sc] = STATUS[m.status]; return `<div class="pcard" data-mem="${esc(m.id)}">
           <div class="top">${m.status === 'active' && m.trust === 'trusted' ? `<input type="checkbox" data-pick="${esc(m.id)}" ${pick.has(m.id) ? 'checked' : ''} title="选入 genome 候选">` : ''}<code>${esc(m.id)}</code><span class="badge">${m.kind === 'lesson' ? '经验' : '偏好'}</span><span class="badge ${sc}">${sl}</span>${m.pinned ? '<span class="badge accent">置顶</span>' : ''}${m.trust === 'untrusted' ? '<span class="badge warn">来源含外部内容</span>' : ''}</div>
           <div class="ds" style="-webkit-line-clamp:5"><b style="color:var(--strong);font-weight:500">${esc(m.trigger)}</b> → ${esc(m.content)}</div>
@@ -496,14 +662,56 @@ export async function renderTrajectory (root, arg) {
           <p>${esc(change)}</p>
           <p class="faint">${evidenceLine ? `${evidenceLine} · ` : ''}${scopeLine}</p></div></div>`
         }).join('')}</div>` : '<p class="muted">没有待批准的候选</p>'}
+        <div class="section-t">谱系</div>${lineageSvg(evo.lineage)}
+        <div class="section-t">两代对比</div><div class="cmp-bar"><select class="field-input" id="cmpA" aria-label="对比基准">${evo.lineage.map((g) => `<option value="${esc(g.id)}" ${g.id === cmp.a ? 'selected' : ''}>${esc(g.id)}</option>`).join('')}</select>${icon('chevron', 14)}<select class="field-input" id="cmpB" aria-label="对比目标">${evo.lineage.map((g) => `<option value="${esc(g.id)}" ${g.id === cmp.b ? 'selected' : ''}>${esc(g.id)}</option>`).join('')}</select><span class="faint">点谱系中的节点可直接与它的上一代对比</span></div><div id="cmpOut"></div>
         <div class="section-t">harness 版本</div><div class="timeline">${evo.lineage.slice().reverse().slice(0, 40).map((g) => `<div class="tl-item"><i class="rail-dot ${g.status === 'active' ? '' : 'dim'}"></i><div class="c">
           <div class="h"><code>${esc(g.id)}</code>${g.status === 'active' ? '<span class="badge ok">当前</span>' : `<span class="badge">${esc({ archived: '历史', rejected: '已拒绝', candidate: '候选' }[g.status] || g.status)}</span>`}<span class="faint">${esc(g.createdBy?.startsWith('evolution') ? '进化生成' : '手动')}</span>
-          ${g.status === 'archived' ? `<span class="page-actions"><button class="btn ghost small" data-rb="${esc(g.id)}" type="button">回滚到此版本</button></span>` : ''}</div><p>${esc(g.note || '')}</p></div></div>`).join('')}</div>`
+          <span class="page-actions">${g.parent ? `<button class="btn ghost small" data-cmp="${esc(g.id)}" type="button">与上一代对比</button>` : ''}${g.status === 'archived' ? `<button class="btn ghost small" data-rb="${esc(g.id)}" type="button">回滚到此版本</button>` : ''}</span></div><p>${esc(g.note || '')}</p></div></div>`).join('')}</div>`
     }
     body.innerHTML = html
+    if (trajTab === 'versions') {
+      body.querySelector('#cmpA').onchange = (e) => { cmp.a = e.target.value; loadCompare() }
+      body.querySelector('#cmpB').onchange = (e) => { cmp.b = e.target.value; loadCompare() }
+      loadCompare()
+    }
+  }
+  // Default comparison: the active genome against its parent.
+  const ids = evo.lineage.map((g) => g.id)
+  if (!ids.includes(cmp.b)) cmp.b = evo.active.id
+  if (!ids.includes(cmp.a)) cmp.a = evo.active.parent && ids.includes(evo.active.parent) ? evo.active.parent : cmp.b
+  const compareTo = (id) => {
+    const g = evo.lineage.find((x) => x.id === id)
+    if (!g) return
+    cmp.b = id; cmp.a = g.parent && ids.includes(g.parent) ? g.parent : id
+    body.querySelector('#cmpA').value = cmp.a; body.querySelector('#cmpB').value = cmp.b
+    body.querySelectorAll('[data-gnode]').forEach((n) => n.classList.toggle('sel', n.dataset.gnode === cmp.a || n.dataset.gnode === cmp.b))
+    loadCompare()
+    body.querySelector('#cmpOut').scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }
+  let cmpSeq = 0
+  async function loadCompare () {
+    const out = body.querySelector('#cmpOut'); if (!out) return
+    body.querySelectorAll('[data-gnode]').forEach((n) => n.classList.toggle('sel', n.dataset.gnode === cmp.a || n.dataset.gnode === cmp.b))
+    if (cmp.a === cmp.b) { out.innerHTML = '<p class="muted">选两个不同的版本查看差异。</p>'; return }
+    const seq = ++cmpSeq
+    out.innerHTML = '<p class="muted">正在比较…</p>'
+    try {
+      const d = await api(`/api/evolution/${encodeURIComponent(cmp.b)}?base=${encodeURIComponent(cmp.a)}`)
+      if (seq === cmpSeq) out.innerHTML = compareHtml(d)
+    } catch (err) { if (seq === cmpSeq) out.innerHTML = `<p class="muted">${esc(err.message)}</p>` }
   }
   draw()
   body.onclick = async (e) => {
+    const gn = e.target.closest('[data-gnode]'); if (gn) return compareTo(gn.dataset.gnode)
+    const mp = e.target.closest('[data-mpt]')
+    if (mp) {
+      const card = body.querySelector(`[data-mem="${CSS.escape(mp.dataset.mpt)}"]`)
+      if (!card) { memFilter = ev.memory.find((m) => m.id === mp.dataset.mpt)?.status === 'retired' ? 'retired' : 'live'; draw() }
+      const el = body.querySelector(`[data-mem="${CSS.escape(mp.dataset.mpt)}"]`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); el?.classList.add('flash'); setTimeout(() => el?.classList.remove('flash'), 1400)
+      return
+    }
+    const cb = e.target.closest('[data-cmp]'); if (cb) return compareTo(cb.dataset.cmp)
     const pk = e.target.closest('[data-pick]')
     if (pk) { pk.checked ? pick.add(pk.dataset.pick) : pick.delete(pk.dataset.pick); return draw() }
     if (e.target.closest('#consol')) {
