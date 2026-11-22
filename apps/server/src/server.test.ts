@@ -236,6 +236,23 @@ test('v2 endpoints: model settings, projects, uploads into the library, usage, h
   assert.equal((await localFetch(`${base}/api/library/999999/reveal`, { method: 'POST', headers: H })).status, 404)
   assert.equal((await localFetch(`${base}/api/library/${lib.body.files[0].id}/reveal`, { method: 'POST' })).status, 403)
 
+  // Newer rows of other file types must not hide an older matching file.
+  rt.db.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2001)
+    INSERT INTO library (root, project_id, session_id, path, kind, size, created_at, updated_at)
+    SELECT ?, ?, ?, 'fixture-' || i || '.md', 'output', 1, '2026-01-01', '9999-01-01' FROM n`)
+    .run(proj, pid, sess.body.id)
+  const filters = `project=${pid}&session=${sess.body.id}&type=data&limit=1&includeSessions=1`
+  const firstPage = (await json(await localFetch(`${base}/api/library?${filters}`))).body
+  assert.deepEqual(firstPage.files.map((f: { id: number }) => f.id), [lib.body.files[0].id])
+  assert.equal(firstPage.hasMore, true)
+  assert.deepEqual(firstPage.sessions, [{ id: sess.body.id, title: '项目会话', project_id: pid }])
+  const secondPage = (await json(await localFetch(`${base}/api/library?${filters}&offset=1`))).body
+  assert.deepEqual(secondPage.files.map((f: { id: number }) => f.id), [lib.body.files[1].id])
+  assert.equal(secondPage.hasMore, false)
+  const oldUpload = (await json(await localFetch(`${base}/api/library?kind=upload&limit=1&offset=1&q=SPEC`))).body
+  assert.equal(oldUpload.files[0].id, lib.body.files[1].id)
+  assert.equal((await json(await localFetch(`${base}/api/library?project=drafts&session=${sess.body.id}`))).body.files.length, 0)
+
   // Session settings switch without reopening; usage and folder picker answer.
   const sw = await json(await localFetch(`${base}/api/sessions/${sess.body.id}/settings`, { method: 'PATCH', headers: H, body: JSON.stringify({ permission: 'bypass' }) }))
   assert.equal(sw.body.permission, 'bypass')
@@ -327,10 +344,16 @@ test('a session rejects a second turn, releases pending approval on cancel and s
   assert.equal(modelRequests, 1)
   assert.equal(existsSync(join(cwd, 'output.txt')), false)
   // The stopped turn left its tool call without a result; the next prompt must still run.
-  assert.equal((await post(path + '/ask', { text: 'again' })).status, 202)
+  const retryable = { text: 'again', requestId: '4628b667-0ae5-416a-b636-dcf25ba726f2' }
+  assert.equal((await post(path + '/ask', retryable)).status, 202)
+  const duplicate = await post(path + '/ask', retryable)
+  assert.equal(duplicate.status, 202)
+  assert.deepEqual(await duplicate.json(), { ok: true, alreadyAccepted: true })
   assert.ok(await until(async () => modelRequests === 2 && (await snapshot()).pendingApprovals.length === 1), 'a stopped session accepts the next prompt')
   assert.equal((await post(path + '/cancel')).status, 200)
   assert.ok(await until(async () => !(await snapshot()).busy))
+  assert.deepEqual(await (await post(path + '/ask', retryable)).json(), { ok: true, alreadyAccepted: true })
+  assert.equal(modelRequests, 2)
   assert.equal((await post(path + '/fork')).status, 200, 'a stopped session can be forked')
 })
 

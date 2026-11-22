@@ -33,6 +33,9 @@ export function initWorkbench () {
     session: null, // session detail
     es: null,
     busy: false,
+    sending: null,
+    retry: null,
+    sendError: '',
     project: LS('evo.project') || null, // project for new chats (null = drafts)
     model: null,
     effort: null,
@@ -150,6 +153,13 @@ export function initWorkbench () {
     const effCap = m?.m.reasoningEffort
     const proj = (S().projects || []).find((p) => p.id === (W.session ? W.session.projectId : W.project))
     const perm = PERMS[W.permission] || PERMS.ask
+    const sending = !!W.sending
+    input.readOnly = sending
+    $('#chips').inert = sending
+    $('#cbar').inert = sending
+    const sendError = $('#sendError')
+    sendError.hidden = !W.sendError
+    sendError.innerHTML = W.sendError ? `<span role="status">${esc(W.sendError)}</span><button type="submit" class="btn ghost small" ${sending || W.busy || !m ? 'disabled' : ''}>重试发送</button>` : ''
     $('#cbar').innerHTML = `
       <button type="button" class="tb" data-b="attach" data-tip-top title="添加文件或图片">${icon('paperclip', 17)}</button>
       <button type="button" class="tb" data-b="at" title="引用项目文件">${icon('at', 17)}</button>
@@ -158,7 +168,7 @@ export function initWorkbench () {
       <button type="button" class="tb ${W.permission === 'bypass' ? 'warn' : ''}" data-b="perm" title="权限模式">${icon(perm.icon, 15, 'dim')}<span>${perm.label}</span></button>
       ${effCap?.supported ? `<button type="button" class="tb" data-b="effort" title="思考程度（${esc(m.m.reasoningParam || '')}）">${icon('brain', 15, 'dim')}<span>${esc(W.effort || '默认')}</span></button>` : ''}
       <button type="button" class="tb" data-b="model" title="模型">${m ? esc(m.m.id) : '<span style="color:var(--warn)">先接入模型</span>'}${icon('chevronDown', 12, 'dim')}</button>
-      ${W.busy ? `<button type="button" class="stopb" data-b="stop" title="停止">${icon('stop', 14)}</button>` : `<button type="submit" class="send" id="sendBtn" title="发送（Enter）" ${m ? '' : 'disabled'}>${icon('arrowUp', 15)}</button>`}`
+      ${W.busy ? `<button type="button" class="stopb" data-b="stop" title="停止">${icon('stop', 14)}</button>` : `<button type="submit" class="send" id="sendBtn" title="发送（Enter）" ${m && !sending ? '' : 'disabled'}>${icon('arrowUp', 15)}</button>`}`
   }
   $('#cbar').addEventListener('click', (e) => {
     const b = e.target.closest('[data-b]')
@@ -212,10 +222,15 @@ export function initWorkbench () {
   }
   $('#chips').addEventListener('click', (e) => {
     const f = e.target.closest('[data-rmf]'); const r = e.target.closest('[data-rmr]')
-    if (f) { W.files.splice(Number(f.dataset.rmf), 1); renderChips() }
+    if (f) {
+      const [removed] = W.files.splice(Number(f.dataset.rmf), 1)
+      if (removed?.url) URL.revokeObjectURL(removed.url)
+      renderChips()
+    }
     if (r) { W.refs.splice(Number(r.dataset.rmr), 1); renderChips() }
   })
   const addFiles = (list) => {
+    if (W.sending) return
     for (const file of list) {
       if (file.size > 25 * 1024 * 1024) { toast(`${file.name} 超过 25 MB`, 'err'); continue }
       const image = /^image\/(png|jpeg|gif|webp)$/.test(file.type)
@@ -242,6 +257,7 @@ export function initWorkbench () {
     } catch {}
     if (!files.length) return toast(pid || W.current ? '没有可引用的文件' : '没有可引用的文件', 'info')
     openPop(anchor, files.slice(0, 200).map((f) => ({ label: f.path, right: fmtSize(f.size), icon: /\.(png|jpe?g|svg|gif|webp)$/i.test(f.path) ? 'image' : 'file', onPick: () => {
+      if (W.sending) return
       if (!W.refs.includes(f.path)) W.refs.push(f.path)
       input.value = input.value.replace(/@[^\s@]*$/, '')
       renderChips(); input.focus()
@@ -263,37 +279,82 @@ export function initWorkbench () {
   comp.addEventListener('submit', (e) => { e.preventDefault(); send() })
 
   async function upload (sid, f) {
-    const data = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.readAsDataURL(f.file) })
-    return (await post(`/api/sessions/${sid}/upload`, { name: f.name, data })).path
+    if (f.uploaded?.sessionId === sid) return f.uploaded.path
+    const data = await new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result).split(',')[1])
+      reader.onerror = reader.onabort = () => reject(new Error(`无法读取附件「${f.name}」`))
+      reader.readAsDataURL(f.file)
+    })
+    const { path } = await post(`/api/sessions/${sid}/upload`, { name: f.name, data })
+    f.uploaded = { sessionId: sid, path }
+    return path
   }
 
   async function send () {
     const text = input.value.trim()
-    if ((!text && !W.files.length) || W.busy) return
+    if ((!text && !W.files.length && !W.refs.length) || W.busy || W.sending) return
+    if (W.current && W.session?.id !== W.current) return
     if (!W.model) return toast('请先在设置里接入模型', 'err')
+
+    const options = { model: W.model, effort: W.effort || '', permission: W.permission }
+    const sending = { sessionId: W.current, requestId: null, accepted: false }
+    let opening = W.opening
+    let pendingMessage
+    W.sending = sending
+    W.sendError = ''
+    renderBar()
     try {
-      if (!W.current) {
-        const r = await post('/api/sessions', { title: text.slice(0, 40) || '新会话', projectId: W.project, model: W.model, effort: W.effort, permission: W.permission })
-        await refresh()
-        await W.open(r.id, { keepComposer: true })
+      if (!sending.sessionId) {
+        const { id } = await post('/api/sessions', { title: text.slice(0, 40) || '新会话', projectId: W.project, ...options })
+        if (W.opening !== opening) return
+        sending.sessionId = id
+        const opened = W.open(id, { keepComposer: true })
+        opening = W.opening
+        void refresh().catch((err) => toast(err.message, 'err'))
+        await opened
+        if (!W.current) throw new Error('无法打开新会话，请重试')
       }
-      const sid = W.current
+      const sid = sending.sessionId
       const attachments = []
-      for (const f of W.files) attachments.push(await upload(sid, f))
+      for (const f of W.files) {
+        if (W.opening !== opening) return
+        attachments.push(await upload(sid, f))
+      }
+      if (W.opening !== opening) return
+
+      const payload = { text, ...options, attachments, refs: W.refs }
+      const key = JSON.stringify([sid, payload])
+      if (W.retry?.key !== key) W.retry = { key, id: crypto.randomUUID() }
+      sending.requestId = W.retry.id
       const shown = [...W.files.map((f) => f.name), ...W.refs.map((r) => `@${r}`)]
       $('.greet', inner)?.remove()
       setFresh(false)
       inner.insertAdjacentHTML('beforeend', `<div class="msg user">${esc(text)}${shown.length ? `<div class="att">${shown.map((n) => `<span class="file-chip">${icon('file', 13)}<span>${esc(n)}</span></span>`).join('')}</div>` : ''}</div>`)
-      const refs = W.refs
-      W.files = []; W.refs = []
-      input.value = ''; autosize(); renderChips()
+      pendingMessage = inner.lastElementChild
       W.turnStart = Date.now()
-      setBusy(true)
-      await post(`/api/sessions/${sid}/ask`, { text, model: W.model, effort: W.effort || '', permission: W.permission, attachments, refs })
-      scroll()
+      let alreadyAccepted = false
+      try {
+        const result = await post(`/api/sessions/${sid}/ask`, { ...payload, requestId: sending.requestId })
+        alreadyAccepted = !!result.alreadyAccepted
+      } catch (err) {
+        // The running event can arrive even if the HTTP acknowledgment was lost.
+        if (!sending.accepted) throw err
+      }
+      for (const f of W.files) if (f.url) URL.revokeObjectURL(f.url)
+      W.files = []; W.refs = []; W.retry = null
+      input.value = ''; autosize(); renderChips()
+      if (W.opening === opening) {
+        if (alreadyAccepted) await W.open(sid)
+        else if (!sending.accepted) setBusy(true)
+        scroll()
+      }
     } catch (err) {
-      setBusy(false)
-      inner.insertAdjacentHTML('beforeend', `<div class="error-line">${esc(err.message)}</div>`)
+      pendingMessage?.remove()
+      W.sendError = err.message
+    } finally {
+      W.sending = null
+      renderBar()
     }
   }
 
@@ -561,7 +622,10 @@ export function initWorkbench () {
       case 'warning': banner(e.message); break
       case 'error': inner.insertAdjacentHTML('beforeend', `<div class="error-line">${esc(readableError(e.message))}</div>`); break
       case 'status':
-        if (e.status === 'running') setBusy(true)
+        if (e.status === 'running') {
+          if (e.requestId && e.requestId === W.sending?.requestId) W.sending.accepted = true
+          setBusy(true)
+        }
         else if (e.status === 'cancelled' || e.status === 'blocked') inner.insertAdjacentHTML('beforeend', '<div class="stop-line">已停止</div>')
         break
       case 'done': {
@@ -607,6 +671,8 @@ export function initWorkbench () {
 
   // ------------------------------------------------------------ public
   W.home = () => {
+    W.opening = null
+    W.busy = false
     W.es?.close(); W.es = null
     W.current = null; W.session = null; W.live = null; W.think = null; W.calls.clear()
     document.body.classList.remove('in-session')
