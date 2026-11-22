@@ -2,7 +2,7 @@
 // The HTTP API keeps its bearer-token protection (other local programs still cannot call it);
 // this shell attaches the token to every request from its own window, so there is no pairing step.
 'use strict'
-const { app, BrowserWindow, dialog, session, shell } = require('electron')
+const { app, BrowserWindow, dialog, nativeTheme, session, shell } = require('electron')
 const { execFileSync } = require('node:child_process')
 const { createServer } = require('node:http')
 const { join } = require('node:path')
@@ -57,10 +57,12 @@ async function startServer () {
     server.close()
     try { rt.db.close() } catch {}
   }
-  return { origin: `http://127.0.0.1:${server.address().port}`, token }
+  return { origin: `http://127.0.0.1:${server.address().port}`, token, theme: ws.settings.ui?.theme }
 }
 
-function openWindow ({ origin, token }) {
+function openWindow ({ origin, token, theme }) {
+  const pref = ['dark', 'light', 'system'].includes(theme) ? theme : 'dark'
+  const light = pref === 'light' || (pref === 'system' && !nativeTheme.shouldUseDarkColors)
   const ses = session.defaultSession
   ses.webRequest.onBeforeSendHeaders({ urls: [`${origin}/*`] }, (details, callback) => {
     // Only the workbench's own fetch calls carry the token: not page loads, not sub-resources,
@@ -77,7 +79,7 @@ function openWindow ({ origin, token }) {
   ses.setPermissionRequestHandler((_contents, permission, callback) => callback(allowed.has(permission)))
   ses.setPermissionCheckHandler((_contents, permission) => allowed.has(permission))
   window = new BrowserWindow({
-    width: 1440, height: 900, minWidth: 960, minHeight: 640, title: 'EvoScholar', backgroundColor: '#000000', show: false,
+    width: 1440, height: 900, minWidth: 960, minHeight: 640, title: 'EvoScholar', backgroundColor: light ? '#f5f5f7' : '#000000', show: false,
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false }
   })
   window.once('ready-to-show', () => window.show())
@@ -92,7 +94,7 @@ function openWindow ({ origin, token }) {
     if (/^https?:\/\//.test(url)) shell.openExternal(url)
   })
   window.on('closed', () => { window = undefined })
-  window.loadURL(`${origin}/`)
+  window.loadURL(`${origin}/?theme=${pref}`)
   if (process.env.EVOSCHOLAR_SMOKE === '1') window.webContents.once('did-finish-load', () => smokeCheck(origin))
 }
 

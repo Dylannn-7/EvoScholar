@@ -13,7 +13,7 @@ export function chooseFolder ({ title = '选择文件夹', confirmText = '选择
       bodyHtml: `
         <div class="inline" style="margin:12px 0"><input class="input" id="fpPath" placeholder="文件夹路径" spellcheck="false"><button class="btn ghost small" id="fpGo" type="button">前往</button></div>
         <div id="fpRoots" class="seg-tabs"></div>
-        <div id="fpList" style="max-height:46vh;overflow:auto;border-radius:12px;background:rgba(0,0,0,.25);padding:4px"></div>
+        <div id="fpList" style="max-height:46vh;overflow:auto;border-radius:12px;background:rgb(var(--well) / .25);padding:4px"></div>
         <div class="modal-actions"><span class="muted" id="fpSel" style="margin-right:auto;font-size:12px"></span><button class="btn ghost" data-x type="button">取消</button><button class="btn primary" id="fpOk" type="button">${esc(confirmText)}</button></div>`,
       onClose: () => resolve(picked),
       onMount: (el, close) => {
