@@ -106,7 +106,7 @@ const TOOL_META = {
   stop_process: { label: '停止进程', arg: (a) => a.id },
   http_get: { label: '本地请求', arg: (a) => a.url },
   read_skill: { label: '加载技能', arg: (a) => a.name },
-  figure_check: { label: '图表检查', arg: (a) => `${a.path || ''}${a.venue ? ` · ${a.venue}` : ''}` },
+  figure_check: { label: '图表检查', arg: (a) => [a.path, a.venue, a.columns || (a.target_width_mm ? `${a.target_width_mm} mm` : '')].filter(Boolean).join(' · ') },
   manuscript_check: { label: '稿件检查', arg: (a) => `${a.path || ''}${Array.isArray(a.packs) ? ` · ${a.packs.join(', ')}` : ''}` },
   check_feedback: { label: '记录反馈', arg: (a) => `${(a.ids || []).join(', ')} → ${a.verdict || ''}` }
 }
