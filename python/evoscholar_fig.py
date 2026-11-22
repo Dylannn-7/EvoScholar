@@ -310,6 +310,14 @@ def check_figure(fig, venue: str | dict | None = None, columns: str | None = Non
     if too_big:
         issues.append(_issue('warning', 'font.max', f'字号高于 {hi:g} pt：' + '；'.join(too_big[:6])))
 
+    # --- text running off the canvas (cut off in the exported file unless saved with bbox_inches='tight')
+    clipped = _clipped_texts(fig)
+    if clipped:
+        listed = '；'.join(f'「{s[:24]}」（{side}）' for s, side in clipped[:6])
+        issues.append(_issue('warning', 'text.clipped', f'这些文字超出画布，导出后会被裁切：{listed}。'
+                             '用 constrained_layout / tight_layout 留出边距，或保存时加 bbox_inches=\'tight\'（之后复核图宽）'))
+        measured['clipped_text'] = len(clipped)
+
     # --- axes: labels, units, ticks, gridlines
     units_required = _get(rules, 'axes', 'units_required')
     for k, ax in enumerate(fig.axes):
@@ -353,6 +361,59 @@ def check_figure(fig, venue: str | dict | None = None, columns: str | None = Non
                 issues.append(_issue('warning', 'color.only', f'子图 {k + 1} 的 {len(sig)} 条曲线只靠颜色区分，加上线型或标记'))
     status = _check_status(issues, bool(rules))
     return {'ok': status != 'fail', 'status': status, 'venue': rules.get('id'), 'issues': issues, 'measured': measured}
+
+
+def _drawn_texts(fig):
+    """Visible, non-empty text artists that are actually drawn (tick labels outside the view are skipped)."""
+    out = list(fig.texts)
+    for ax in fig.axes:
+        if not ax.get_visible():
+            continue
+        out += [ax.title, ax._left_title, ax._right_title] if hasattr(ax, '_left_title') else [ax.title]
+        out += list(ax.texts)
+        if ax.axison:
+            for axis in (ax.xaxis, ax.yaxis):
+                if not axis.get_visible():
+                    continue
+                out.append(axis.label)
+                lo, hi = sorted(axis.get_view_interval())
+                span = (hi - lo) or 1.0
+                for tick in axis.get_major_ticks() + axis.get_minor_ticks():
+                    loc = tick.get_loc()
+                    if loc is None or not (lo - 1e-9 * span <= loc <= hi + 1e-9 * span):
+                        continue
+                    out += [t for t in (tick.label1, tick.label2) if t.get_visible()]
+        legend = ax.get_legend()
+        if legend is not None and legend.get_visible():
+            out += list(legend.get_texts())
+            if legend.get_title().get_text():
+                out.append(legend.get_title())
+    if getattr(fig, '_suptitle', None) is not None:
+        out.append(fig._suptitle)
+    seen, result = set(), []
+    for t in out:
+        if t is None or id(t) in seen or not t.get_visible() or not t.get_text().strip():
+            continue
+        seen.add(id(t))
+        result.append(t)
+    return result
+
+
+def _clipped_texts(fig, tol_px: float = 0.5) -> list[tuple[str, str]]:
+    """Texts whose bounding box crosses the figure edge: [(text, side)], side in 左/右/上/下."""
+    renderer = fig.canvas.get_renderer()
+    fb = fig.bbox
+    found = []
+    for t in _drawn_texts(fig):
+        try:
+            bb = t.get_window_extent(renderer)
+        except Exception:
+            continue
+        sides = [name for name, over in (('左', fb.x0 - bb.x0), ('右', bb.x1 - fb.x1),
+                                          ('下', fb.y0 - bb.y0), ('上', bb.y1 - fb.y1)) if over > tol_px]
+        if sides:
+            found.append((t.get_text().strip(), '、'.join(sides)))
+    return found
 
 
 # ---------------------------------------------------------------- file checks
