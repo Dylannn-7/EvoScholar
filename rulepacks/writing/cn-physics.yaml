@@ -1,10 +1,47 @@
 id: cn-physics
-name: 物理学报（物理学报）
-extends:
-- common
-- gbt7714
-status: stub
-sources: []
-rules: []
+name: 物理学报
+description: 检查中英文摘要及关键词、引用顺序和参考文献数量。
+extends: [common]
+sources:
+  - id: guide
+    title: 《物理学报》投稿须知（第 8 节来稿要求）
+    url: https://wulixb.iphy.ac.cn/fileWLXB/cms/news/info/upload/4fd2b34a-0822-43ce-837a-aa200f6e26dc.pdf
+    checked: 2026-11-22
+rules:
+  - id: aps.abstract.zh
+    check: abstract_length
+    params: { lang: zh }
+    source: guide
+  - id: aps.abstract.en
+    check: abstract_length
+    params: { lang: en }
+    source: guide
+  - id: aps.abstract.citations
+    check: abstract_content
+    params: { lang: zh, no_citations: true, no_math: true }
+    severity: info
+    source: guide
+  - id: aps.keywords.zh
+    check: keywords
+    params: { lang: zh, max: 4 }
+    severity: info
+    source: guide
+  - id: aps.keywords.en
+    check: keywords
+    params: { lang: en, max: 4 }
+    severity: info
+    source: guide
+  - id: aps.references.order
+    check: citation_order
+    formats: [docx, markdown, text]
+    source: guide
+  - id: aps.references.count
+    check: reference_stats
+    params: { min_total: 20 }
+    severity: info
+    source: guide
 verify:
-- 本规则包尚未核实作者指南（依据应为：中国物理学会投稿须知）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: guide
+    text: 按第 8.2–8.3 节核对英文摘要的一个版面及内容完整性，英文摘要可配 1–2 幅核心成果图。核对中英文关键词与 PACS 代码，二者各不宜超过 4 项。
+  - source: guide
+    text: 按第 8.10 和 8.12 节核对中英文图表题、三线表、上标引文及著录。期刊条目按作者、年份、刊名、卷号、起始页或文章号排列，中文文献示例附中英文两种写法。

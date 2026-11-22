@@ -1,9 +1,50 @@
 id: cvf
 name: CVF 会议（CVPR、ICCV）
-extends:
-- common
-status: stub
-sources: []
-rules: []
+description: 按会议和年份检查主会评审稿页数，以及 CVPR 2027 的 LLM 使用声明。
+extends: [common]
+variants:
+  cvpr2027: CVPR 2027 主会
+  cvpr2026: CVPR 2026 主会
+  iccv2025: ICCV 2025 主会
+sources:
+  - id: cvpr2027
+    title: CVPR 2027 Author Guidelines
+    url: https://cvpr.thecvf.com/Conferences/2027/AuthorGuidelines
+    checked: 2026-11-22
+  - id: cvpr2026
+    title: CVPR 2026 Author Guidelines
+    url: https://cvpr.thecvf.com/Conferences/2026/AuthorGuidelines
+    checked: 2026-11-22
+  - id: iccv2025
+    title: ICCV 2025 Author Guidelines
+    url: https://iccv.thecvf.com/Conferences/2025/AuthorGuidelines
+    checked: 2026-11-22
+rules:
+  - id: cvf.pages.cvpr2027
+    check: page_limit
+    applies: [cvpr2027]
+    params: { max_pages: 8, excluded: [LLM Usage Statement, References], severity: warning }
+    skip_stages: [camera-ready]
+    source: cvpr2027
+  - id: cvf.pages.cvpr2026
+    check: page_limit
+    applies: [cvpr2026]
+    params: { max_pages: 8, excluded: [References], severity: warning }
+    skip_stages: [camera-ready]
+    source: cvpr2026
+  - id: cvf.pages.iccv2025
+    check: page_limit
+    applies: [iccv2025]
+    params: { max_pages: 8, excluded: [References], severity: warning }
+    skip_stages: [camera-ready]
+    source: iccv2025
+  - id: cvf.disclosure.cvpr2027
+    check: required_sections
+    applies: [cvpr2027]
+    params: { sections: [LLM Usage Statement], severity: error, exact: true }
+    skip_stages: [camera-ready]
+    source: cvpr2027
 verify:
-- 本规则包尚未核实作者指南（依据应为：CVF 投稿说明与 author kit）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - 请用本届官方模板核对评审稿匿名和排版，并按录用通知核对终稿要求。
+  - applies: [cvpr2027]
+    text: 请核对 LLM Usage Statement 位于正文之后、参考文献之前，并如实披露生成式 AI 工具的用途，包括语言润色。有无使用均需声明。

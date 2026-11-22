@@ -1,9 +1,38 @@
 id: eccv
-name: ECCV（ECCV）
-extends:
-- common
-status: stub
-sources: []
-rules: []
+name: ECCV 主会
+description: 检查 ECCV 2026 主会的 PDF 篇幅及评审稿的匿名线索。
+extends: [common]
+variants:
+  eccv2026: ECCV 2026 主会
+sources:
+  - id: submission
+    title: ECCV 2026 Submission Policies
+    url: https://eccv.ecva.net/Conferences/2026/SubmissionPolicies
+    checked: 2026-11-22
+  - id: final
+    title: ECCV 2026 Camera-ready Instructions（官网 6 月 23 日更新）
+    url: https://eccv.ecva.net/Conferences/2026
+    checked: 2026-11-22
+rules:
+  - id: eccv.pages.submission
+    check: page_limit
+    params: { max_pages: 14, excluded: [References, Bibliography], severity: warning }
+    skip_stages: [camera-ready]
+    source: submission
+  - id: eccv.pages.final
+    check: page_limit
+    params: { max_pages: 15, excluded: [References, Bibliography], severity: warning }
+    skip_stages: [submission]
+    source: final
+  - id: eccv.anonymity
+    check: anonymity
+    formats: [pdf]
+    skip_stages: [camera-ready]
+    source: submission
 verify:
-- 本规则包尚未核实作者指南（依据应为：Springer LNCS 模板与 ECCV 投稿说明）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: submission
+    stages: [submission]
+    text: 评审稿使用 ECCV 2026 Author Kit 的 LNCS 样式。正文含图表共 14 页，额外页面仅放所引参考文献。请在编译 PDF 和补充材料中核对字号、页边距、致谢、基金号及会暴露身份的链接。
+  - source: final
+    stages: [camera-ready]
+    text: 录用终稿正文最多 15 页，所引参考文献另计。官网要求在第 15 页放置致谢，请在终稿 PDF 上核对位置。

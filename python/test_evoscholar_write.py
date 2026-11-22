@@ -241,6 +241,8 @@ class WordThesis(unittest.TestCase):
         self.assertTrue(any('10.5' in f['message'] for f in fonts))
         self.assertNotIn('common.floats', ' '.join(got))          # replaced by hust.floats.numbering
         self.assertTrue(any('作者数' in v for v in rep['verify']))
+        self.assertTrue(any('65 页' in v for v in rep['verify']))
+        self.assertFalse(any('100 篇' in v or '90 页' in v or '本科参考文献' in v for v in rep['verify']))
         self.assertTrue(all(f['source'] for f in rep['findings'] if f['pack'] == 'hust-thesis'))
 
     def test_undergrad_captions_and_annotate(self):
@@ -320,7 +322,8 @@ class TextAndPdf(unittest.TestCase):
         self.assertIn('[J/OL]', fmt['g.md:7'])
         self.assertIn('7.1.1', fmt['g.md:8'])
         self.assertEqual(len(by_rule(rep, 'gbt7714.citation.grouping')), 2)
-        self.assertTrue(any('PP' in v for v in rep['verify']))
+        self.assertTrue(any('必备著录项目' in v for v in rep['verify']))
+        self.assertFalse(any('PP' in v for v in rep['verify']))  # preprints are already checked
 
     def test_pdf_page_limit_and_metadata(self):
         try:
@@ -359,6 +362,125 @@ class TextAndPdf(unittest.TestCase):
         self.assertIn('common.punctuation.half_in_zh', rules(r))
         self.assertTrue((self.d / 'rep' / 'report.md').exists())
 
+    def test_conference_submission_checks_follow_variant_and_stage(self):
+        import pymupdf as fitz
+
+        path = self.d / 'submission.pdf'
+        with fitz.open() as pdf:
+            for i in range(1, 11):
+                page = pdf.new_page()
+                title = {
+                    7: 'Limitations',
+                    9: 'LLM  Usage Statement',
+                    10: 'References',
+                }.get(i, f'{i} Section text')
+                page.insert_text((72, 72), title)
+            pdf.save(path)
+
+        cvpr = Wr.run(path, ['cvf'], 'cvpr2027')
+        self.assertFalse(by_rule(cvpr, 'cvf.disclosure'))
+        self.assertFalse(by_rule(cvpr, 'cvf.pages'))
+        iccv = Wr.run(path, ['cvf'], 'iccv2025')
+        self.assertTrue(by_rule(iccv, 'cvf.pages.iccv2025'))
+
+        short = Wr.run(path, ['acl'], 'short')
+        self.assertTrue(by_rule(short, 'arr.pages'))
+        self.assertFalse(by_rule(short, 'arr.limitations'))
+        self.assertFalse(by_rule(Wr.run(path, ['acl'], 'long'), 'arr.pages'))
+        self.assertFalse(by_rule(Wr.run(path, ['acl'], 'short', stage='camera-ready'), 'arr.'))
+
+        aaai = Wr.run(path, ['aaai'], 'aaai2027')
+        self.assertTrue(by_rule(aaai, 'aaai.pages.body'))
+        self.assertEqual(by_rule(aaai, 'aaai.pages.total')[0]['severity'], 'error')
+
+    def test_eccv_and_ijcai_use_their_own_page_limits_and_stage_notes(self):
+        import pymupdf as fitz
+
+        path = self.d / 'conference.pdf'
+        with fitz.open() as pdf:
+            for i in range(1, 17):
+                page = pdf.new_page()
+                page.insert_text((72, 72), 'References' if i == 16 else f'{i} Section text')
+            pdf.set_metadata({'author': 'Anonymous Authors'})
+            pdf.save(path)
+        review = Wr.run(path, ['eccv'], 'eccv2026')
+        self.assertTrue(by_rule(review, 'eccv.pages.submission'))
+        self.assertFalse(by_rule(review, 'eccv.anonymity'))
+        self.assertTrue(any('SubmissionPolicies' in note for note in review['verify']))
+        self.assertFalse(any('15 页' in note for note in review['verify']))
+        final = Wr.run(path, ['eccv'], 'eccv2026', stage='camera-ready')
+        self.assertFalse(by_rule(final, 'eccv.pages'))
+        self.assertTrue(any('15 页' in note for note in final['verify']))
+        ijcai = Wr.run(path, ['ijcai'], 'ijcai2027')
+        self.assertTrue(by_rule(ijcai, 'ijcai.pages.body'))
+        self.assertEqual(by_rule(ijcai, 'ijcai.pages.total')[0]['severity'], 'error')
+        self.assertFalse(by_rule(Wr.run(path, ['ijcai'], 'ijcai2027', stage='camera-ready'), 'ijcai.pages'))
+
+    def test_article_type_limits_and_latex_template_commands(self):
+        path = self.d / 'venuetest.tex'
+        path.write_text(
+            r'\documentclass{article}' + '\n' + r'\abstract{' + ' '.join(['optics'] * 250)
+            + r' \cite{x}}' + '\n' + r'\keywords{laser \and waveguide \and imaging \and physics}'
+            + '\n' + r'\begin{document}\end{document}', encoding='utf-8')
+        article = Wr.run(path, ['acs'], 'article')
+        self.assertTrue(by_rule(article, 'acs.abstract.length'))
+        self.assertTrue(by_rule(article, 'acs.abstract.citations'))
+        self.assertFalse(by_rule(Wr.run(path, ['acs'], 'review'), 'acs.abstract.length'))
+        self.assertFalse(by_rule(Wr.run(path, ['acs'], 'other'), 'acs.abstract'))
+        unspecified = Wr.run(path, ['acs'])
+        self.assertIsNone(unspecified['summary']['variant'])
+        self.assertFalse(by_rule(unspecified, 'acs.abstract'))
+        self.assertTrue(any('请指定类型' in note for note in unspecified['verify']))
+        self.assertFalse(by_rule(Wr.run(path, ['springer-journal']), 'ijcv.keywords'))
+        self.assertFalse(by_rule(Wr.run(path, ['science']), 'sciadv.abstract.length'))
+        nc = Wr.run(path, ['springer-nature'], 'ncomms')
+        self.assertTrue(by_rule(nc, 'ncomms.abstract'))
+        self.assertFalse(by_rule(nc, 'nmi.'))
+
+    def test_chinese_journal_rules_use_inline_metadata_and_the_correct_reference_scope(self):
+        from docx import Document
+
+        path = self.d / 'cn.docx'
+        doc = Document()
+        doc.add_paragraph('一项光学研究', style='Title')
+        doc.add_paragraph('摘  要：本文提出了一种方法。')
+        doc.add_paragraph('关键词 光学；成像；光谱；激光')
+        doc.add_paragraph('Abstract: We study optical imaging.')
+        doc.add_paragraph('Keywords: optics; imaging; spectra; lasers')
+        doc.add_heading('参考文献', 1)
+        doc.add_paragraph('[1] Li K, Wu Y. Example[J]. Journal, 2026, 1: 1. https://doi.org/10.1000/abcd')
+        doc.save(path)
+
+        irla = Wr.run(path, ['cn-optics'], 'irla')
+        self.assertTrue(by_rule(irla, 'irla.abstract.zh'))  # below the journal's recommended range
+        self.assertFalse(by_rule(irla, 'irla.keywords'))
+        self.assertFalse(by_rule(irla, 'irla.references.format'))  # a DOI alone is not an online carrier
+        aps = Wr.run(path, ['cn-physics'])
+        self.assertFalse(by_rule(aps, 'aps.abstract'))
+        self.assertFalse(by_rule(aps, 'aps.keywords'))
+        self.assertFalse(by_rule(aps, 'gbt7714.'))
+        ejournal = Wr.run(path, ['cn-computing'], 'ejournal', stage='camera-ready')
+        self.assertNotIn('gbt7714', ejournal['summary']['packs'])
+        self.assertFalse(by_rule(ejournal, 'ejournal.anonymity'))
+        self.assertTrue(any('GB/T 7714—2015' in note and 'ejournal.org.cn' in note for note in ejournal['verify']))
+
+    def test_ml_2027_disclosure_checks_accept_the_template_heading(self):
+        path = self.d / 'p.tex'
+        path.write_text(r'''\documentclass{article}
+\begin{document}
+\section*{Impact Statement}
+\end{document}
+''', encoding='utf-8')
+        for variant in ('icml2027', 'iclr2027'):
+            without = Wr.run(path, ['ml-conference'], variant)
+            self.assertEqual(by_rule(without, 'ml.disclosure')[0]['severity'], 'info')
+            self.assertFalse(any('ICLR 2026' in v for v in without['verify']))
+        path.write_text(path.read_text(encoding='utf-8').replace(r'\end{document}',
+                        '\\subsection*{AI Use Statement}\nDeclared.\n\\end{document}'), encoding='utf-8')
+        for variant in ('icml2027', 'iclr2027'):
+            with_statement = Wr.run(path, ['ml-conference'], variant)
+            self.assertFalse(by_rule(with_statement, 'ml.disclosure'))
+
     def test_every_rule_has_a_known_check_and_source(self):
         for name in Wr.list_packs():
             pack = Wr.load_pack(name)
@@ -369,6 +491,10 @@ class TextAndPdf(unittest.TestCase):
             for r in pack.get('rules') or []:
                 self.assertIn(r['check'], Wr.CHECKS, (name, r['id']))
                 self.assertIn(r.get('source'), ids, (name, r['id']))
+                self.assertLessEqual(set(r.get('applies', [])) | set(r.get('params_by_variant', {})), set(pack.get('variants', {})))
+            for item in pack.get('verify') or []:
+                if isinstance(item, dict) and item.get('source'):
+                    self.assertIn(item['source'], ids, (name, item))
             if not pack.get('rules'):
                 self.assertTrue(pack.get('verify'), name)            # unverified packs must say so
 

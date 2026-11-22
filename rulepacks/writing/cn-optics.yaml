@@ -1,10 +1,150 @@
 id: cn-optics
 name: 中文光学期刊（光学学报、中国激光、红外与激光工程、光子学报）
-extends:
-- common
-- gbt7714
-status: stub
-sources: []
-rules: []
+description: 按期刊核对中英文摘要、关键词和参考文献。光学学报与中国激光依据出版社刊样做双语内容初筛。
+extends: [common]
+require_variant: true
+variants:
+  gxxb: 光学学报
+  zgjg: 中国激光
+  irla: 红外与激光工程
+  photon: 光子学报
+sources:
+  - id: gxxb-guide
+    title: 《光学学报》投稿指南（作者中心）
+    url: https://www.opticsjournal.net/J/gxxb/News/PT1606120003261w4z7.html
+    checked: 2026-11-22
+  - id: gxxb-example
+    title: 《光学学报》研究论文刊样（2024 年第 8 期）
+    url: https://www.opticsjournal.net/Articles/GetArticlePDF/OJdf83cbdc5f087f6f
+    checked: 2026-11-22
+  - id: zgjg-guide
+    title: 《中国激光》投稿指南（作者中心）
+    url: https://www.opticsjournal.net/J/zgjg/News/PT1901230001332y5A8.html
+    checked: 2026-11-22
+  - id: zgjg-example
+    title: 《中国激光》研究论文刊样（2025 年第 3 期）
+    url: https://www.opticsjournal.net/Articles/GetArticlePDF/OJdb892fe696dfb747
+    checked: 2026-11-22
+  - id: irla
+    title: 《红外与激光工程》投稿须知
+    url: https://www.spacejournal.cn/hwyjggc/submission-guidelines
+    checked: 2026-11-22
+  - id: photon
+    title: 《光子学报》征稿简则
+    url: https://www.photon.ac.cn/info/2453?lang=zh
+    checked: 2026-11-22
+  - id: photon-abstract
+    title: 《光子学报》中英文摘要写作要求
+    url: https://www.photon.ac.cn/info/2454?lang=zh
+    checked: 2026-11-22
+  - id: photon-references
+    title: 《光子学报》参考文献写作要求
+    url: https://www.photon.ac.cn/info/2455?lang=zh
+    checked: 2026-11-22
+rules:
+  - id: gxxb.abstract.zh
+    check: abstract_length
+    applies: [gxxb]
+    params: { lang: zh }
+    source: gxxb-example
+  - id: gxxb.abstract.en
+    check: abstract_length
+    applies: [gxxb]
+    params: { lang: en }
+    source: gxxb-example
+  - id: zgjg.abstract.zh
+    check: abstract_length
+    applies: [zgjg]
+    params: { lang: zh }
+    source: zgjg-example
+  - id: zgjg.abstract.en
+    check: abstract_length
+    applies: [zgjg]
+    params: { lang: en }
+    source: zgjg-example
+  - id: irla.title
+    check: title_length
+    applies: [irla]
+    params: { max: 24 }
+    source: irla
+  - id: irla.abstract.zh
+    check: abstract_length
+    applies: [irla]
+    params: { lang: zh, min: 300, max: 400 }
+    severity: info
+    source: irla
+  - id: irla.abstract.citations
+    check: abstract_content
+    applies: [irla]
+    params: { lang: zh, no_citations: true }
+    source: irla
+  - id: irla.keywords.zh
+    check: keywords
+    applies: [irla]
+    params: { lang: zh, min: 4, max: 6 }
+    source: irla
+  - id: irla.keywords.en
+    check: keywords
+    applies: [irla]
+    params: { lang: en, min: 4, max: 6 }
+    source: irla
+  - id: irla.references.order
+    check: citation_order
+    applies: [irla]
+    formats: [docx, markdown, text]
+    source: irla
+  - id: irla.citation.grouping
+    check: citation_grouping
+    applies: [irla]
+    params: { style: gbt7714 }
+    source: irla
+  - id: irla.references.format
+    check: reference_format
+    applies: [irla]
+    params: { style: gbt7714, max_authors: 3, bst: 确认样式按 GB/T 7714—2025 实现 }
+    source: irla
+  - id: photon.abstract.zh
+    check: abstract_length
+    applies: [photon]
+    params: { lang: zh }
+    source: photon
+  - id: photon.abstract.en
+    check: abstract_length
+    applies: [photon]
+    params: { lang: en }
+    source: photon-abstract
+  - id: photon.keywords.zh
+    check: keywords
+    applies: [photon]
+    params: { lang: zh }
+    source: photon
+  - id: photon.references.order
+    check: citation_order
+    applies: [photon]
+    formats: [docx, markdown, text]
+    source: photon-references
+  - id: photon.references.count
+    check: reference_stats
+    applies: [photon]
+    params: { min_total: 15 }
+    severity: info
+    source: photon
 verify:
-- 本规则包尚未核实作者指南（依据应为：各刊投稿须知）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: gxxb-guide
+    applies: [gxxb]
+    text: 投稿指南入口需通过站点验证。自动检查按官方研究论文刊样提醒双语摘要。请在作者中心按稿型核对摘要与关键词数量、篇幅、参考文献和模板。
+  - source: zgjg-guide
+    applies: [zgjg]
+    text: 投稿指南入口需通过站点验证。自动检查按官方研究论文刊样提醒双语摘要。请按所选栏目核对稿件模板、英文摘要体例、关键词、篇幅和参考文献。
+  - source: irla
+    applies: [irla]
+    text: 在排版稿中按稿型计页。研究论文为 8–15 页，综述 12–20 页，Mini 综述 4–8 页，简讯 2–5 页。中英文关键词需对应，英文长摘要按下载区对应稿型模板核对。
+  - source: irla
+    applies: [irla]
+    text: 参考文献采用 GB/T 7714—2025。中文条目须在同一序号下附英文对照，核对 DOI 和著录字段。图表文字用英文，图题、表题中英文对照，表格用三线表。
+  - source: photon-abstract
+    applies: [photon]
+    text: 按中英文摘要写作要求核对研究问题、过程与方法及结果。英文摘要约 400 个实词，需结合原文判断，普通单词计数无法得到实词数。
+  - source: photon-references
+    applies: [photon]
+    text: 按本刊示例核对顺序编码、上标引用、前三位作者加等或 et al，以及非英文文献英文在前、原文在后并共用一个序号。征稿简则引用 GB/T 7714—2015 或本刊要求。

@@ -1,11 +1,12 @@
 id: ieee-journal
 name: IEEE 期刊（JSTQE、JLT、TPAMI、TNNLS、TIP）
+description: 检查摘要、关键词、标题和引用格式。图件规格见「期刊出图」中的 IEEE 规则包。
 extends: [common]
 sources:
   - id: structure
     title: IEEE Author Center — Structure Your Article
     url: https://journals.ieeeauthorcenter.ieee.org/create-your-ieee-journal-article/create-the-text-of-your-article/structure-your-article/
-    checked: 2026-11-18
+    checked: 2026-11-22
   - id: refguide
     title: IEEE Reference Style Guide for Authors（V 3.28.2025）
     url: https://docs.google.com/document/d/e/2PACX-1vSBoV_hTIURPZKtQkxI6bAONJtjyDLxQIUvCHi-XPzD8NKLcxRfZrpvQLFrjWZ3M6FFR_Obau3R-t63/pub
@@ -42,5 +43,4 @@ rules:
     note: 列出全部作者（最多 6 个），超过 6 个写第一作者加 et al.；文章题名放在引号里
 verify:
   - 各刊页数上限与超页费（TPAMI、TNNLS、TIP、JSTQE、JLT）不同，请查目标期刊的 Information for Authors。
-  - 首页脚注（收稿日期、基金、作者单位）的格式见 Structure Your Article 的 First Footnote 部分，本工具未检查。
-  - 图的版面要求见出图规则包 rulepacks/figures/ieee.yaml。
+  - 对照 Structure Your Article 的 First Footnote 核对首页脚注的通讯作者、资助和作者单位。收稿、修订、录用等日期由 IEEE 提供。
