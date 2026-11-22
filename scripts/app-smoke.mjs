@@ -27,6 +27,5 @@ child.on('close', (code) => {
   const line = out.split(/\r?\n/).find((l) => l.startsWith('EVOSCHOLAR_SMOKE '))
   console.log(line ?? out.slice(-2000))
   if (code !== 0 || !line || !JSON.parse(line.slice('EVOSCHOLAR_SMOKE '.length)).ok) process.exitCode = 1
-  // Windows can still hold the workspace open briefly after Electron exits.
-  rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 })
+  rmSync(userData, { recursive: true, force: true })
 })
