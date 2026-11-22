@@ -10,6 +10,8 @@ export type ExecutionJob = {
   code?: string
   skillDir?: string
   emptyWorkspace?: boolean
+  /** Final files whose container-relative paths are also their destinations in the project. */
+  deliverables?: string[]
 }
 
 export type ServiceState = { running: boolean; text: string; output: string }

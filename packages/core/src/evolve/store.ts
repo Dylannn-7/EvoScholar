@@ -4,7 +4,7 @@
 import { inside } from '../tools/sandbox'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Db } from '../db'
+import { withTransaction, type Db } from '../db'
 
 export type MemoryKind = 'lesson' | 'preference'
 export type MemoryScope = 'global' | 'project' | 'stage'
@@ -77,7 +77,7 @@ export function similarity(a: string, b: string): number {
 }
 
 /** Relevance for recall: shared bigrams over the shorter text (Jaccard is too strict for short Chinese). */
-export function relevance(query: string, item: string): number {
+export function relevance(query: string, item: string, minimumShared = 1): number {
   const grams = (s: string) => {
     const t = s.toLowerCase().replace(/[\s\p{P}]+/gu, '')
     const g = new Set<string>()
@@ -88,7 +88,20 @@ export function relevance(query: string, item: string): number {
   if (!A.size || !B.size) return 0
   let inter = 0
   for (const x of B) if (A.has(x)) inter++
-  return inter / Math.min(A.size, B.size)
+  return inter >= minimumShared ? inter / Math.min(A.size, B.size) : 0
+}
+
+export function isProjectRule(m: MemoryItem): boolean {
+  return m.scope === 'project' && m.kind === 'preference' && m.status === 'active' &&
+    m.trust === 'trusted' && (m.source === 'user' || m.source === 'choice')
+}
+
+/** Compare the rule body against the note's trigger as well as its paraphrased advice. */
+function coversNote(rule: MemoryItem, note: Pick<MemoryItem, 'trigger' | 'content'>): boolean {
+  const description = `${note.trigger} ${note.content}`
+  return description.includes(`[${rule.id}]`) ||
+    similarity(rule.content, note.content) >= 0.75 ||
+    relevance(rule.content, description, 8) >= 0.55
 }
 
 export class EvolveStore {
@@ -115,6 +128,28 @@ export class EvolveStore {
     return this.db.prepare(`SELECT * FROM memory ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY pinned DESC, updated_at DESC`).all(...args) as MemoryItem[]
   }
 
+  /** User rules take precedence over related model notes for this project's context. */
+  recallable(projectId: string | null): MemoryItem[] {
+    const items = this.list({ status: 'live', projectId })
+    const rules = items.filter(isProjectRule)
+    return items.filter(item => item.source !== 'model' || !rules.some(rule => coversNote(rule, item)))
+  }
+
+  projectRuleForNote(projectId: string | null, note: Pick<MemoryItem, 'trigger' | 'content'>): MemoryItem | undefined {
+    if (projectId === null) return undefined
+    return this.list({ status: 'active', kind: 'preference', projectId })
+      .find(rule => isProjectRule(rule) && coversNote(rule, note))
+  }
+
+  private retireProjectNotes(previous: MemoryItem, current: MemoryItem, at: string): void {
+    if (!isProjectRule(current)) return
+    const retire = this.db.prepare("UPDATE memory SET status = 'retired', updated_at = ? WHERE id = ?")
+    for (const note of this.list({ status: 'live', projectId: current.project_id })) {
+      if (note.scope === 'project' && note.project_id === current.project_id && note.source === 'model' &&
+          (coversNote(previous, note) || coversNote(current, note))) retire.run(at, note.id)
+    }
+  }
+
   /**
    * Add or merge a memory item. A near-duplicate (same kind, overlapping scope, similar trigger+content)
    * is updated instead of duplicated. User-given items start active; external-derived ones are untrusted.
@@ -135,10 +170,18 @@ export class EvolveStore {
       (userGiven || !['user', 'choice'].includes(m.source)) && similarity(`${m.trigger} ${m.content}`, key) >= 0.55)
     const t = now()
     if (dup) {
-      this.db.prepare(`UPDATE memory SET content = ?, trigger = ?, evidence = ?, updated_at = ?, status = CASE WHEN ? THEN 'active' ELSE status END, pinned = MAX(pinned, ?) WHERE id = ?`)
-        .run(input.content, input.trigger, [dup.evidence, input.evidence].filter(Boolean).join(',').slice(-400) || null, t, userGiven && !input.untrusted ? 1 : 0, userGiven && !input.untrusted && input.pinned ? 1 : 0, dup.id)
+      const authoritative = userGiven && !input.untrusted
+      const item = withTransaction(this.db, () => {
+        this.db.prepare(`UPDATE memory SET content = ?, trigger = ?, evidence = ?, updated_at = ?,
+          status = CASE WHEN ? THEN 'active' ELSE status END, pinned = MAX(pinned, ?), source = ? WHERE id = ?`)
+          .run(input.content, input.trigger, [dup.evidence, input.evidence].filter(Boolean).join(',').slice(-400) || null,
+            t, authoritative ? 1 : 0, authoritative && input.pinned ? 1 : 0, authoritative ? input.source : dup.source, dup.id)
+        const item = this.get(dup.id)!
+        if (authoritative && (dup.content !== item.content || dup.trigger !== item.trigger)) this.retireProjectNotes(dup, item, t)
+        return item
+      })
       this.mirror(input.projectId)
-      return { item: this.get(dup.id)!, merged: true }
+      return { item, merged: true }
     }
     const id = this.nextId(input.kind)
     this.db.prepare(`INSERT INTO memory (id, kind, scope, project_id, stage, trigger, content, source, evidence, status, trust, pinned, uses, wins, losses, created_at, updated_at)
@@ -157,11 +200,21 @@ export class EvolveStore {
     this.db.prepare('UPDATE memory SET pinned = ?, status = CASE WHEN ? THEN \'active\' ELSE status END, updated_at = ? WHERE id = ?').run(on ? 1 : 0, on ? 1 : 0, now(), id)
   }
   edit(id: string, patch: { trigger?: string; content?: string }): void {
-    const m = this.get(id)
-    if (!m) throw new Error('条目不存在')
-    validateMemoryText(`${patch.trigger ?? m.trigger} ${patch.content ?? m.content}`)
-    this.db.prepare('UPDATE memory SET trigger = ?, content = ?, source = \'user\', trust = \'trusted\', updated_at = ? WHERE id = ?').run(patch.trigger ?? m.trigger, patch.content ?? m.content, now(), id)
-    this.mirror(m.project_id)
+    const projectId = withTransaction(this.db, () => {
+      const previous = this.get(id)
+      if (!previous) throw new Error('条目不存在')
+      const trigger = patch.trigger ?? previous.trigger
+      const content = patch.content ?? previous.content
+      validateMemoryText(`${trigger} ${content}`)
+      const at = now()
+      this.db.prepare("UPDATE memory SET trigger = ?, content = ?, source = 'user', trust = 'trusted', updated_at = ? WHERE id = ?")
+        .run(trigger, content, at, id)
+      if (trigger !== previous.trigger || content !== previous.content) {
+        this.retireProjectNotes(previous, this.get(id)!, at)
+      }
+      return previous.project_id
+    })
+    this.mirror(projectId)
   }
   remove(id: string): void {
     const m = this.get(id)
@@ -252,7 +305,7 @@ export class EvolveStore {
         const p = this.db.prepare('SELECT path FROM projects WHERE id = ?').get(projectId) as { path: string } | undefined
         if (p && existsSync(p.path)) {
           mkdirSync(inside(p.path, '.evoscholar'), { recursive: true })
-          writeFileSync(inside(p.path, join('.evoscholar', 'memory.md')), render(this.list({ status: 'live' }).filter((m) => m.project_id === projectId), '项目记忆'))
+          writeFileSync(inside(p.path, join('.evoscholar', 'memory.md')), render(this.recallable(projectId).filter((m) => m.project_id === projectId), '项目记忆'))
         }
       }
     } catch {}

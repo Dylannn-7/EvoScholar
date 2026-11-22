@@ -276,7 +276,8 @@ export function removeImportedSkill(rt: Runtime, name: string) {
 // ---------------------------------------------------------------- figure styles
 let styleCache: unknown[] | undefined
 /** Bump when evoscholar_styles.preview() changes so cached gallery images are regenerated. */
-const PREVIEW_VERSION = 'v2'
+/** Bump when preview rendering changes; then regenerate assets/style-previews/<version>/. */
+export const PREVIEW_VERSION = 'v2'
 export async function listStyles(rt: Runtime): Promise<unknown[]> {
   if (styleCache) return styleCache
   const env = { ws: rt.ws, cwd: rt.ws.dataDir, ledger: rt.ledger, category: () => 'usage' as const }
@@ -287,6 +288,9 @@ export async function listStyles(rt: Runtime): Promise<unknown[]> {
 }
 export async function stylePreview(rt: Runtime, id: string): Promise<string> {
   if (!/^[a-z0-9-]+$/.test(id)) throw new Error('风格名无效')
+  // Previews ship with the app, so the gallery works before the Python environment is installed.
+  const bundled = join(rt.ws.root, 'assets', 'style-previews', PREVIEW_VERSION, `${id}.png`)
+  if (existsSync(bundled)) return bundled
   const dir = join(rt.ws.dataDir, 'style-previews', PREVIEW_VERSION)
   mkdirSync(dir, { recursive: true })
   const out = join(dir, `${id}.png`)
