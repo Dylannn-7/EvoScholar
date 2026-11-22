@@ -34,7 +34,8 @@ import {
   libraryPath,
   listDirs,
   libraryCounts,
-  listLibrary,
+  librarySessions,
+  listLibraryPage,
   listProjects,
   listProviders,
   modelInfo,
@@ -280,16 +281,18 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
     if (p === '/api/library' && method === 'GET') {
       const q = url.searchParams
       return send(res, 200, {
-        files: listLibrary(rt.db, {
+        ...listLibraryPage(rt.db, {
           projectId: q.get('project') ?? undefined,
           sessionId: q.get('session') ?? undefined,
           kind: q.get('kind') ?? undefined,
           type: q.get('type') ?? undefined,
           q: q.get('q') ?? undefined,
           deliverable: q.get('deliverable') === '1',
-          limit: Number(q.get('limit')) || undefined
+          limit: Number(q.get('limit')) || undefined,
+          offset: Number(q.get('offset')) || undefined
         }),
-        counts: libraryCounts(rt.db)
+        counts: libraryCounts(rt.db),
+        ...(q.get('includeSessions') === '1' ? { sessions: librarySessions(rt.db) } : {})
       }), true
     }
     if ((mm = /^\/api\/library\/(\d+)$/.exec(p))) {
@@ -318,7 +321,7 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
     if ((mm = /^\/api\/library\/(\d+)\/file$/.exec(p)) && method === 'GET') {
       const f = libraryPath(rt.db, Number(mm[1]))
       if (!f || !existsSync(f) || statSync(f).isDirectory()) throw httpError(404, '文件不存在（可能已被移动或删除）')
-      return await serveProjectFile(rt, res, f, url.searchParams.get('preview') === 'first-page'), true
+      return await serveProjectFile(rt, res, f, url.searchParams), true
     }
 
     // ---------- usage ----------

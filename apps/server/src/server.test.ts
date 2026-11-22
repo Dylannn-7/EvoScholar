@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, request } from 'node:http'
+import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -165,6 +166,63 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   assert.equal(afterGet.status, 404)
 })
 
+test('manuscript reports resolve LaTeX includes and render the matched PDF page', async (t) => {
+  const dir = tempWorkspace()
+  mkdirSync(join(dir, 'python'))
+  cpSync(join(REPO, 'python', 'evoscholar_lit.py'), join(dir, 'python', 'evoscholar_lit.py'))
+  const rt = openRuntime(openWorkspace(dir))
+  const auth = createLocalAuth()
+  const app = createServerApp(rt, { webDir: WEB, auth })
+  const srv = createServer(app.handler)
+  await new Promise<void>((res) => srv.listen(0, '127.0.0.1', res))
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+  const localFetch = await localhostClient(base, auth)
+  t.after(async () => {
+    await app.dispose()
+    await new Promise<void>((res) => srv.close(() => res()))
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const { id, cwd } = await (await localFetch(`${base}/api/sessions`, {
+    method: 'POST', headers: { 'x-evoscholar': '1' }, body: '{}'
+  })).json() as { id: string; cwd: string }
+  mkdirSync(join(cwd, 'paper', '章 节'), { recursive: true })
+  writeFileSync(join(cwd, 'paper', 'main.tex'), '\\input{章 节/results}')
+  writeFileSync(join(cwd, 'paper', '章 节', 'results.tex'), 'first\nsecond')
+  execFileSync(process.platform === 'win32' ? 'python' : 'python3', ['-c',
+    "import pymupdf as pdf; d = pdf.open(); d.new_page(width=144, height=144); d.new_page(width=288, height=144); d.save('paper/manuscript.pdf')"
+  ], { cwd })
+
+  const writeReport = (name: string, summary: object, locs: string[]) => {
+    const path = join(cwd, '.evoscholar', 'checks', name)
+    mkdirSync(path, { recursive: true })
+    const findings = locs.map((loc, i) => ({ id: `F00${i + 1}`, rule: 'fixture', severity: 'warning', loc }))
+    writeFileSync(join(path, 'report.json'), JSON.stringify({ summary, findings }))
+  }
+  writeReport('tex', { file: 'main.tex', source_path: 'paper/main.tex' }, ['章 节/results.tex:2', '../../outside.tex:3'])
+  writeFileSync(join(cwd, '..', 'outside.tex'), 'outside')
+  writeReport('pdf', { file: 'manuscript.pdf' }, ['p.2'])
+  const api = `${base}/api/sessions/${id}`
+  const summary = await (await localFetch(`${api}/summary`)).json() as { reports: { dir: string; findings: { location?: object }[] }[] }
+  const tex = summary.reports.find((r) => r.dir === 'tex')!
+  assert.deepEqual(tex.findings[0].location, { path: 'paper/章 节/results.tex', line: 2 })
+  assert.equal(tex.findings[1].location, undefined)
+  assert.deepEqual(summary.reports.find((r) => r.dir === 'pdf')!.findings[0].location, { path: 'paper/manuscript.pdf', page: 2 })
+
+  const pdf = `${api}/file?path=paper/manuscript.pdf`
+  const first = await localFetch(`${pdf}&preview=first-page`)
+  const second = await localFetch(`${pdf}&preview=page&page=2`)
+  assert.equal(first.status, 200)
+  assert.equal(second.status, 200)
+  assert.equal(second.headers.get('content-type'), 'image/png')
+  const pngWidth = (buf: ArrayBuffer) => Buffer.from(buf).readUInt32BE(16)
+  assert.equal(pngWidth(await first.arrayBuffer()), 220)
+  assert.equal(pngWidth(await second.arrayBuffer()), 440)
+  assert.equal((await localFetch(`${pdf}&preview=page&page=0`)).status, 400)
+  assert.equal((await localFetch(`${pdf}&preview=page&page=3`)).status, 422)
+})
+
 test('v2 endpoints: model settings, projects, uploads into the library, usage, host guard', async (t) => {
   const dir = tempWorkspace()
   const proj = mkdtempSync(join(tmpdir(), 'evo-srv-proj-'))
@@ -235,6 +293,23 @@ test('v2 endpoints: model settings, projects, uploads into the library, usage, h
   assert.equal(limited.counts.projects[pid], 2)
   assert.equal((await localFetch(`${base}/api/library/999999/reveal`, { method: 'POST', headers: H })).status, 404)
   assert.equal((await localFetch(`${base}/api/library/${lib.body.files[0].id}/reveal`, { method: 'POST' })).status, 403)
+
+  // Newer rows of other file types must not hide an older matching file.
+  rt.db.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2001)
+    INSERT INTO library (root, project_id, session_id, path, kind, size, created_at, updated_at)
+    SELECT ?, ?, ?, 'fixture-' || i || '.md', 'output', 1, '2026-01-01', '9999-01-01' FROM n`)
+    .run(proj, pid, sess.body.id)
+  const filters = `project=${pid}&session=${sess.body.id}&type=data&limit=1&includeSessions=1`
+  const firstPage = (await json(await localFetch(`${base}/api/library?${filters}`))).body
+  assert.deepEqual(firstPage.files.map((f: { id: number }) => f.id), [lib.body.files[0].id])
+  assert.equal(firstPage.hasMore, true)
+  assert.deepEqual(firstPage.sessions, [{ id: sess.body.id, title: '项目会话', project_id: pid }])
+  const secondPage = (await json(await localFetch(`${base}/api/library?${filters}&offset=1`))).body
+  assert.deepEqual(secondPage.files.map((f: { id: number }) => f.id), [lib.body.files[1].id])
+  assert.equal(secondPage.hasMore, false)
+  const oldUpload = (await json(await localFetch(`${base}/api/library?kind=upload&limit=1&offset=1&q=SPEC`))).body
+  assert.equal(oldUpload.files[0].id, lib.body.files[1].id)
+  assert.equal((await json(await localFetch(`${base}/api/library?project=drafts&session=${sess.body.id}`))).body.files.length, 0)
 
   // Session settings switch without reopening; usage and folder picker answer.
   const sw = await json(await localFetch(`${base}/api/sessions/${sess.body.id}/settings`, { method: 'PATCH', headers: H, body: JSON.stringify({ permission: 'bypass' }) }))
@@ -327,10 +402,16 @@ test('a session rejects a second turn, releases pending approval on cancel and s
   assert.equal(modelRequests, 1)
   assert.equal(existsSync(join(cwd, 'output.txt')), false)
   // The stopped turn left its tool call without a result; the next prompt must still run.
-  assert.equal((await post(path + '/ask', { text: 'again' })).status, 202)
+  const retryable = { text: 'again', requestId: '4628b667-0ae5-416a-b636-dcf25ba726f2' }
+  assert.equal((await post(path + '/ask', retryable)).status, 202)
+  const duplicate = await post(path + '/ask', retryable)
+  assert.equal(duplicate.status, 202)
+  assert.deepEqual(await duplicate.json(), { ok: true, alreadyAccepted: true })
   assert.ok(await until(async () => modelRequests === 2 && (await snapshot()).pendingApprovals.length === 1), 'a stopped session accepts the next prompt')
   assert.equal((await post(path + '/cancel')).status, 200)
   assert.ok(await until(async () => !(await snapshot()).busy))
+  assert.deepEqual(await (await post(path + '/ask', retryable)).json(), { ok: true, alreadyAccepted: true })
+  assert.equal(modelRequests, 2)
   assert.equal((await post(path + '/fork')).status, 200, 'a stopped session can be forked')
 })
 

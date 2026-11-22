@@ -19,18 +19,26 @@ test('figure_check measures a saved figure, applies the rule pack and returns a 
   execFileSync(pythonBin(env), ['-c', `
 import matplotlib; matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from PIL import Image
+plt.rcParams['pdf.fonttype'] = 42
+Image.new('RGB', (1200, 600)).save('no-dpi.png')
 fig, ax = plt.subplots(figsize=(8, 3)); ax.plot([0, 1], [0, 1]); fig.savefig('wide.pdf'); fig.savefig('low.png', dpi=150)
 `], { cwd })
   const tool = TOOL_FACTORIES.figure_check(env)
   const signal = new AbortController().signal
   const r = (await tool.execute(tool.validate!({ path: 'wide.pdf', venue: 'nature' }) as never, { signal } as never)) as { content: { type: string; text?: string; mimeType?: string }[] }
-  assert.match(r.content[0].text!, /✗ wide\.pdf（规则包 nature）· 203\.2×76\.2 mm/)
+  assert.match(r.content[0].text!, /✗ 1 个错误 · wide\.pdf（规则包 nature）· 203\.2×76\.2 mm/)
   assert.match(r.content[0].text!, /超过 183 mm/)
   assert.equal(r.content.at(-1)!.type, 'image')
   assert.equal(r.content.at(-1)!.mimeType, 'image/png')
   const low = (await tool.execute({ path: 'low.png', venue: 'ieee' } as never, { signal } as never)) as { content: { text?: string }[] }
   assert.match(low.content[0].text!, /低于要求 600 dpi/)
-  assert.deepEqual(events.map((e) => e.kind), ['figure.check', 'figure.check'])
+  const missing = (await tool.execute({ path: 'no-dpi.png', venue: 'ieee', photo: true } as never, { signal } as never)) as typeof low
+  assert.match(missing.content[0].text!, /^待核对/)
+  const single = (await tool.execute({ path: 'no-dpi.png', venue: 'ieee', photo: true, columns: 'single' } as never, { signal } as never)) as typeof low
+  assert.match(single.content[0].text!, /^✓ 通过[\s\S]*88.9 mm 栏宽下有效 DPI 342.86/)
+  assert.deepEqual(events.map((e) => e.status), ['fail', 'fail', 'review', 'pass'])
+  assert.throws(() => tool.validate!({ path: 'x', venue: 'ieee', columns: 'single', target_width_mm: 89 }))
   assert.throws(() => tool.validate!({ path: 'x', venue: '../etc' }))
   await assert.rejects(tool.execute({ path: '../outside.pdf' } as never, { signal } as never))
 })
@@ -47,7 +55,8 @@ test('manuscript_check runs rule packs on a LaTeX project and writes reports', a
   const text = r.content[0].text
   assert.match(text, /稿件检查报告：main\.tex/)
   assert.match(text, /main\.tex:3 · \\ref\{nope\} 引用了不存在的标签/)
-  assert.ok(existsSync(join(cwd, '.evoscholar', 'checks', 'main', 'report.json')))
+  const report = readCheckReport(join(cwd, '.evoscholar', 'checks', 'main', 'report.json'))
+  assert.equal(report.summary.source_path, 'paper/main.tex')
   assert.ok(existsSync(join(cwd, '.evoscholar', 'checks', 'main', 'annotated', 'main.tex')))
   assert.equal(events[0].kind, 'manuscript.check')
   assert.throws(() => tool.validate!({ path: 'x', packs: ['../etc'] }))

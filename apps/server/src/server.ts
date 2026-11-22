@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, extname, join, relative, resolve } from 'node:path'
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { IMG, body, httpError, send, serveFile } from './http'
@@ -27,6 +27,7 @@ import {
   listProviders,
   modelInfo,
   openResearchSession,
+  projectFiles,
   promote,
   readCheckReport,
   recordCheckFeedback,
@@ -147,6 +148,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
   const live = new Map<string, Live>()
   const opening = new Map<string, Promise<Live>>()
   const starting = new Set<string>()
+  const lastAcceptedAsk = new Map<string, string>()
   const evo = { running: false, log: [] as string[], runId: '' as string, ctrl: undefined as AbortController | undefined }
 
   const broadcast = (l: Live, e: Record<string, unknown>) => {
@@ -381,14 +383,14 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       .all(id) as { type: string; payload: string; ts: string }[]
 
     const usedSkillsMap = new Map<string, { name: string; version?: number; ts: string }>()
-    const checks: { kind: string; file?: string; venue?: string | null; packs?: string[]; ok?: boolean; issues?: number; ts: string }[] = []
+    const checks: { kind: string; file?: string; venue?: string | null; packs?: string[]; ok?: boolean; status?: string; issues?: number; ts: string }[] = []
     for (const r of evRows) {
       let p: Record<string, any> = {}
       try { p = JSON.parse(r.payload) } catch { continue }
       if (r.type === 'host.skill.read' && p.name) {
         usedSkillsMap.set(String(p.name), { name: String(p.name), version: p.version, ts: r.ts })
       } else if (r.type === 'host.manuscript.check' || r.type === 'host.figure.check') {
-        checks.push({ kind: r.type === 'host.manuscript.check' ? 'manuscript' : 'figure', file: p.file, venue: p.venue, packs: p.packs, ok: p.ok, issues: p.issues, ts: r.ts })
+        checks.push({ kind: r.type === 'host.manuscript.check' ? 'manuscript' : 'figure', file: p.file, venue: p.venue, packs: p.packs, ok: p.ok, status: p.status, issues: p.issues, ts: r.ts })
       }
     }
 
@@ -416,14 +418,46 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       for (const d of dirs.slice(0, 10)) {
         try {
           const rep = JSON.parse(readFileSync(d.jsonPath, 'utf8')) as {
-            summary: { file: string; packs?: string[]; variant?: string | null; stage?: string }
+            summary: { file: string; source_path?: string; packs?: string[]; variant?: string | null; stage?: string }
             counts: Record<string, number>
             findings: { id: string; rule: string; severity: string; loc: string; message: string; evidence?: string; source?: string; pack?: string }[]
             verify?: string[]
           }
+          const file = rep.summary?.file
+          let source = rep.summary?.source_path
+          if (!source && file && /\.(tex|pdf)$/i.test(file)) {
+            // Older reports recorded the source in the session trace and stored only its name in JSON.
+            source = checks.findLast((item) => item.kind === 'manuscript' && item.file && basename(item.file) === file)?.file
+            if (!source) {
+              const matches = projectFiles(cwd, file).filter((item) => basename(item.path) === file)
+              if (matches.length === 1) source = matches[0].path
+            }
+          }
+          const existingSource = (path: string) => {
+            try {
+              const absolute = inside(cwd, path)
+              return statSync(absolute, { throwIfNoEntry: false })?.isFile() ? absolute : undefined
+            } catch { return undefined }
+          }
+          const sourceFile = source ? existingSource(source) : undefined
+          const rel = (path: string) => relative(inside(cwd, '.'), path).split(sep).join('/')
+          const locationFor = (loc: string) => {
+            if (!sourceFile || typeof loc !== 'string') return undefined
+            if (/\.pdf$/i.test(sourceFile)) {
+              const page = Number(/^p\.([1-9]\d*)$/.exec(loc)?.[1])
+              if (Number.isSafeInteger(page)) return { path: rel(sourceFile), page }
+            } else if (/\.tex$/i.test(sourceFile)) {
+              const match = /^(.+\.tex):([1-9]\d*)$/i.exec(loc)
+              if (!match || !Number.isSafeInteger(Number(match[2]))) return undefined
+              const path = existingSource(resolve(dirname(sourceFile), match[1]))
+              if (path) return { path: rel(path), line: Number(match[2]) }
+            }
+            return undefined
+          }
           const findings = (rep.findings ?? []).slice(0, 200).map((f) => ({
             ...f,
-            verdict: verdicts.get(`${rep.summary?.file}#${f.id}#${f.rule}`) ?? null
+            location: locationFor(f.loc),
+            verdict: verdicts.get(`${file}#${f.id}#${f.rule}`) ?? null
           }))
           reports.push({
             dir: d.name,
@@ -582,6 +616,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         rt.db.exec('ROLLBACK')
         throw err
       }
+      lastAcceptedAsk.delete(id)
       rt.db.prepare('DELETE FROM library WHERE session_id = ? AND project_id IS NULL').run(id)
       rt.db.prepare('UPDATE library SET session_id = NULL WHERE session_id = ?').run(id)
       // Only the private drafts folder is removed; a project folder belongs to the user.
@@ -678,6 +713,8 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
     if (mm && req.method === 'POST') {
       const id = mm[1]
       const b = await body(req)
+      const requestId = typeof b.requestId === 'string' && /^[0-9a-f-]{36}$/.test(b.requestId) ? b.requestId : undefined
+      if (requestId && lastAcceptedAsk.get(id) === requestId) return send(res, 202, { ok: true, alreadyAccepted: true })
       if (starting.has(id)) return send(res, 409, { error: '上一轮还在运行' })
       starting.add(id)
       try {
@@ -751,7 +788,8 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         blocks.unshift({ type: 'text', text })
         const live0 = l
         live0.busy = true
-        broadcast(live0, { type: 'status', status: 'running', model: live0.rs.model, effort: live0.rs.effort ?? null, permission: live0.meta.permission })
+        if (requestId) lastAcceptedAsk.set(id, requestId)
+        broadcast(live0, { type: 'status', status: 'running', requestId, model: live0.rs.model, effort: live0.rs.effort ?? null, permission: live0.meta.permission })
         send(res, 202, { ok: true })
         live0.rs
           .ask(blocks)
@@ -836,7 +874,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       const cwd = sessionDirectory(mm[1])
       const f = inside(cwd, url.searchParams.get('path') ?? '')
       if (!existsSync(f) || !statSync(f).isFile()) return send(res, 404, { error: 'not found' })
-      return await serveProjectFile(rt, res, f, url.searchParams.get('preview') === 'first-page')
+      return await serveProjectFile(rt, res, f, url.searchParams)
     }
     mm = m(/^\/api\/sessions\/([\w-]+)\/upload$/)
     if (mm && req.method === 'POST') {

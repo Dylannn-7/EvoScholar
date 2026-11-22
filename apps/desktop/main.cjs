@@ -50,8 +50,8 @@ async function startServer () {
   workbench = createServerApp(rt, { webDir: join(APP, 'apps/web/public'), auth })
   const server = createServer(workbench.handler)
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
-  // Cleaning up leftover sandbox containers waits on Docker; do it after the window can open.
-  void Promise.resolve(rt.executor.recover?.()).catch(() => {})
+  // Smoke tests use a fresh workspace, so there are no leftover containers to recover.
+  if (process.env.EVOSCHOLAR_SMOKE !== '1') void Promise.resolve(rt.executor.recover?.()).catch(() => {})
   stopServer = async () => {
     await workbench.dispose().catch(() => {})
     server.close()
