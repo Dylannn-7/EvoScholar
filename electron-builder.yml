@@ -22,6 +22,7 @@ files:
   - prompts/**
   - skills/**
   - python/*.py
+  - assets/**
   - sandbox/**
   - rulepacks/figures/**
   - rulepacks/writing/**

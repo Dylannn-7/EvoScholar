@@ -470,3 +470,4 @@ body.fresh .thread { flex: 0 0 auto; overflow: visible; -webkit-mask: none; mask
 .skd-file { display: flex; justify-content: space-between; gap: 12px; border: 0; background: transparent; color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; font: 12.5px/1.4 var(--mono); text-align: left; }
 .skd-file:hover:not(:disabled), .skd-file.on { background: var(--fill-2); }
 .skd-file:disabled { cursor: default; color: var(--text-3); }
+.img-fallback { display: grid; place-items: center; width: 100%; height: 100%; min-height: 80px; font-size: 12px; color: var(--text-3); }

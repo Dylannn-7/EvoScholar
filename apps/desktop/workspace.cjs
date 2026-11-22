@@ -6,7 +6,7 @@ const { basename, join, relative } = require('node:path')
 
 // On each new app version: mirrored folders match the install exactly (stale files go away);
 // merged paths are refreshed without deleting, because evolution adds prompts/system@g-*.md there.
-const MIRRORED = ['python', 'sandbox', 'rulepacks/figures', 'rulepacks/writing']
+const MIRRORED = ['python', 'sandbox', 'rulepacks/figures', 'rulepacks/writing', 'assets']
 const MERGED = ['evoscholar.config.json', 'prompts', '.dockerignore', 'scripts/setup-python.mjs', 'scripts/build-sandbox.mjs', 'scripts/requirements.txt']
 // Genomes evolve with the user: only missing files are added. Skills are handled per skill below.
 const USER_SEEDED = ['genomes']
@@ -25,6 +25,9 @@ function prepareWorkspace ({ appDir, root, version }) {
   if (upgraded) {
     for (const rel of MIRRORED) { rmSync(join(root, rel), { recursive: true, force: true }); copy(rel, true) }
     for (const rel of MERGED) copy(rel, true)
+  } else {
+    // Same version, newer build (for example a fixed installer): fill in files it added.
+    for (const rel of [...MIRRORED, ...MERGED]) copy(rel, false)
   }
   for (const rel of USER_SEEDED) copy(rel, false)
   seedSkills(appDir, root, upgraded)

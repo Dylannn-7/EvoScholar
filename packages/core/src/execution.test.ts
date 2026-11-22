@@ -1,13 +1,13 @@
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { checkProjectRoot, stageDirectory, StagedProject } from './staged-project'
+import { checkProjectRoot, stageDirectory, StagedProject, validateDeliverablePaths } from './staged-project'
 import { chooseExecution, type ExecutionJob, type ProcessResult } from './execution'
 import { DEFAULT_SANDBOX_IMAGE, DockerExecutor, bootMinute, dockerCreateArgs } from './docker-executor'
-import { runProcess, type ToolEnv } from './tools'
+import { buildTools, runProcess, type ToolEnv } from './tools'
 import type { Workspace } from './config'
 
 function fixture(t: TestContext) {
@@ -66,6 +66,67 @@ test('staged projects reject overlapping roots, limit copies and preserve unmodi
   assert.throws(() => project.publish('s-fixture'), /已有不同内容/)
   const limited = new StagedProject(cwd, stage.work, { files: 3, bytes: 2 })
   assert.throws(() => limited.sync(), /大小超限/)
+})
+
+test('execution tools normalize delivery paths without mutating harness arguments', (t) => {
+  const { env } = fixture(t)
+  const [python, command] = buildTools(['run_python', 'run_command'], env)
+  const deliverables = ['./answer.json']
+  Object.freeze(deliverables)
+  const pythonArgs = Object.freeze({ code: 'print(7)', deliverables })
+  const commandArgs = Object.freeze({ command: 'pwd', deliverables })
+
+  assert.deepEqual(python.validate(pythonArgs), { code: 'print(7)', deliverables: ['answer.json'] })
+  assert.deepEqual(command.validate(commandArgs), { command: 'pwd', deliverables: ['answer.json'] })
+  assert.deepEqual(deliverables, ['./answer.json'])
+})
+
+test('declared container deliverables publish to their project paths and preserve intervening user edits', (t) => {
+  const { cwd } = fixture(t)
+  const stage = stageDirectory()
+  t.after(stage.dispose)
+  const project = new StagedProject(cwd, stage.work)
+  const final = 'answer.json'
+  writeFileSync(join(cwd, final), 'previous')
+  const requested = project.planDelivery(['./answer.json', 'reports/stats.csv'])
+  project.sync()
+  writeFileSync(join(stage.work, final), 'new answer')
+  mkdirSync(join(stage.work, 'reports'))
+  writeFileSync(join(stage.work, 'reports', 'stats.csv'), 'n\n3\n')
+  writeFileSync(join(stage.work, 'scratch.txt'), 'intermediate')
+  assert.deepEqual(project.publish('s-fixture', requested).sort(), [
+    final, join('evoscholar-out', 's-fixture', 'scratch.txt'), join('reports', 'stats.csv')
+  ].sort())
+  assert.equal(readFileSync(join(cwd, final), 'utf8'), 'new answer')
+  assert.equal(readFileSync(join(cwd, 'reports', 'stats.csv'), 'utf8'), 'n\n3\n')
+  assert.equal(existsSync(join(cwd, 'scratch.txt')), false)
+  assert.equal(existsSync(join(cwd, 'evoscholar-out', 's-fixture', final)), false)
+
+  writeFileSync(join(cwd, final), 'user before next run')
+  const later = project.planDelivery([final])
+  project.sync()
+  assert.equal(readFileSync(join(stage.work, final), 'utf8'), 'user before next run')
+  writeFileSync(join(stage.work, final), 'container update')
+  writeFileSync(join(cwd, final), 'user during the run')
+  assert.throws(() => project.publish('s-fixture', later), /在容器运行期间已被修改/)
+  assert.equal(readFileSync(join(cwd, final), 'utf8'), 'user during the run')
+})
+
+test('declared delivery rejects protected paths, duplicate paths and incomplete output sets', (t) => {
+  const { cwd } = fixture(t)
+  const stage = stageDirectory()
+  t.after(stage.dispose)
+  const project = new StagedProject(cwd, stage.work)
+  for (const path of ['../above.txt', '.env', '/absolute.txt', 'C:\\outside.txt', 'evoscholar-in/input.csv']) {
+    assert.throws(() => validateDeliverablePaths([path]), /交付路径|容器交付/)
+  }
+  assert.throws(() => validateDeliverablePaths(['out.txt', './out.txt']), /重复/)
+  const requested = project.planDelivery(['out.txt', 'missing.txt'])
+  project.sync()
+  writeFileSync(join(stage.work, 'out.txt'), 'one of two')
+  assert.throws(() => project.publish('s-fixture', requested), /未找到指定的交付文件/)
+  assert.equal(existsSync(join(cwd, 'out.txt')), false)
+  assert.equal(existsSync(join(cwd, 'evoscholar-out')), false)
 })
 
 test('unavailable execution fails closed, host fallback requires permission and bypass uses the container', async (t) => {
@@ -173,6 +234,39 @@ test('real Linux container smoke test (prebuilt local image)', { timeout: 90_000
   assert.equal(result.code, 0, result.out)
   assert.doesNotMatch(result.out, /Glyph .* missing/)
   assert.ok(readFileSync(join(cwd, 'evoscholar-out', 's-fixture', 'chart.png')).length > 100)
+
+  const paths: string[] = []
+  const approvals: string[] = []
+  const tools = buildTools(['run_python', 'run_command'], {
+    ...env, executor,
+    approve: async (_tool, summary) => { approvals.push(summary); return true },
+    onFiles: files => paths.push(...files)
+  })
+  const context = { signal: AbortSignal.timeout(50_000) } as never
+  const use = async (name: string, input: Record<string, unknown>) => {
+    const tool = tools.find(t => t.name === name)!
+    const args = tool.validate!(input as never)
+    assert.equal(await tool.authorize!(args, context), true)
+    const result = await tool.execute(args, context)
+    assert.ok('content' in result)
+    assert.equal(Boolean(result.isError), false, JSON.stringify(result.content))
+  }
+  await use('run_python', {
+    code: 'from shutil import copyfile\ncopyfile("chart.png", "final.png")\nopen("notes.tmp", "w").write("draft")',
+    deliverables: ['final.png']
+  })
+  await use('run_command', { command: 'mkdir -p reports && printf "done" > reports/summary.txt', deliverables: ['reports/summary.txt'] })
+  assert.deepEqual(readFileSync(join(cwd, 'final.png')), readFileSync(join(cwd, 'evoscholar-out', 's-fixture', 'chart.png')))
+  assert.equal(readFileSync(join(cwd, 'reports', 'summary.txt'), 'utf8'), 'done')
+  assert.equal(readFileSync(join(cwd, 'evoscholar-out', 's-fixture', 'notes.tmp'), 'utf8'), 'draft')
+  assert.ok(paths.includes('final.png'))
+  assert.ok(paths.includes(join('reports', 'summary.txt')))
+  assert.ok(approvals[0].includes('final.png'))
+  const failed = await executor.run(env, {
+    ...job, code: 'open("failed.txt", "w").write("unfinished")\nraise SystemExit(1)', deliverables: ['failed.txt']
+  }, 30, AbortSignal.timeout(35_000))
+  assert.equal(failed.code, 1)
+  assert.equal(existsSync(join(cwd, 'failed.txt')), false)
 
   writeFileSync(join(cwd, 'hello.txt'), 'served')
   const service = await executor.start(env, { host: ['python3', []], sandbox: ['python', '-m', 'http.server', '8765', '--bind', '127.0.0.1'] }, AbortSignal.timeout(60_000))
