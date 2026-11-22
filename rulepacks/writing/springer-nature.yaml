@@ -1,10 +1,141 @@
 id: springer-nature
-name: 'Springer Nature / Nature 系列（Nature Photonics、Light: Science & Applications、Nature
-  Communications、Nature Machine Intelligence）'
-extends:
-- common
-status: stub
-sources: []
-rules: []
+name: 'Springer Nature（Nature Photonics、Light: Science & Applications、Nature Communications、Nature Machine Intelligence）'
+description: 按期刊与稿型检查摘要、题名、图表数量和指定章节。下列类型为常见研究稿及 Light 的综述和 Perspective。
+extends: [common]
+require_variant: true
+variants:
+  nphoton: Nature Photonics · Article
+  lsa: 'Light: Science & Applications · Article'
+  lsa-review: 'Light: Science & Applications · Review Article'
+  lsa-perspective: 'Light: Science & Applications · Perspective'
+  ncomms: Nature Communications · Article
+  nmi: Nature Machine Intelligence · Article
+  nmi-analysis: Nature Machine Intelligence · Analysis
+sources:
+  - id: nphoton
+    title: Nature Photonics Content Types · Article
+    url: https://www.nature.com/nphoton/content
+    checked: 2026-11-22
+  - id: lsa
+    title: 'Light: Science & Applications Guide for Authors（2026 年 1 月）'
+    url: https://www.nature.com/documents/Guide_for_Authors_LSA_updated_in_2026-1-15.pdf
+    checked: 2026-11-22
+  - id: ncomms
+    title: Nature Communications · Article
+    url: https://www.nature.com/ncomms/submit/article
+    checked: 2026-11-22
+  - id: nmi
+    title: Nature Machine Intelligence Content Types · Article and Analysis
+    url: https://www.nature.com/natmachintell/content
+    checked: 2026-11-22
+rules:
+  - id: nphoton.abstract
+    check: abstract_length
+    applies: [nphoton]
+    params: { lang: en, max: 200 }
+    source: nphoton
+  - id: nphoton.abstract.citations
+    check: abstract_content
+    applies: [nphoton]
+    params: { no_citations: true }
+    source: nphoton
+  - id: nphoton.display_items
+    check: display_item_limit
+    applies: [nphoton]
+    params: { max: 6 }
+    source: nphoton
+  - id: nphoton.sections
+    check: required_sections
+    applies: [nphoton]
+    params: { sections: [Results, Discussion, ['Methods', 'Online Methods']], severity: info, exact: true }
+    source: nphoton
+  - id: lsa.title
+    check: title_length
+    applies: [lsa, lsa-review, lsa-perspective]
+    params: { count: characters, max: 199 }
+    source: lsa
+  - id: lsa.abstract
+    check: abstract_length
+    applies: [lsa, lsa-review, lsa-perspective]
+    params: { lang: en, max: 250 }
+    source: lsa
+  - id: lsa.abstract.citations
+    check: abstract_content
+    applies: [lsa, lsa-review, lsa-perspective]
+    params: { no_citations: true }
+    source: lsa
+  - id: lsa.sections
+    check: required_sections
+    applies: [lsa]
+    params: { sections: [Introduction, Results, Discussion, Materials and Methods, 'Data Availability'], severity: info, exact: true }
+    source: lsa
+  - id: lsa.section_order
+    check: section_order
+    applies: [lsa]
+    params: { order: [Introduction, Results, Discussion, Materials and Methods] }
+    source: lsa
+  - id: lsa.references.count
+    check: reference_stats
+    params_by_variant:
+      lsa: { max_total: 50 }
+      lsa-review: { max_total: 100 }
+    source: lsa
+  - id: ncomms.title
+    check: title_length
+    applies: [ncomms]
+    params: { count: words, max: 15 }
+    severity: info
+    source: ncomms
+  - id: ncomms.abstract
+    check: abstract_length
+    applies: [ncomms]
+    params: { lang: en, max: 200 }
+    severity: info
+    source: ncomms
+  - id: ncomms.abstract.citations
+    check: abstract_content
+    applies: [ncomms]
+    params: { no_citations: true }
+    severity: info
+    source: ncomms
+  - id: ncomms.display_items
+    check: display_item_limit
+    applies: [ncomms]
+    params: { max: 10 }
+    severity: info
+    source: ncomms
+  - id: nmi.abstract
+    check: abstract_length
+    params: { lang: en, max: 150 }
+    params_by_variant:
+      nmi: {}
+      nmi-analysis: { min: 100 }
+    source: nmi
+  - id: nmi.abstract.citations
+    check: abstract_content
+    applies: [nmi, nmi-analysis]
+    params: { no_citations: true }
+    source: nmi
+  - id: nmi.display_items
+    check: display_item_limit
+    applies: [nmi, nmi-analysis]
+    params: { max: 6 }
+    source: nmi
+  - id: nmi.sections
+    check: required_sections
+    applies: [nmi, nmi-analysis]
+    params: { sections: [Results, Discussion, ['Methods', 'Online Methods']], severity: info, exact: true }
+    source: nmi
 verify:
-- 本规则包尚未核实作者指南（依据应为：Nature 系列作者指南）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: nphoton
+    applies: [nphoton]
+    text: 正文至多 3,000 词，不计摘要、Methods、参考文献和图例。核对引言无独立标题、图表合计不超过 6 项及参考文献通常不超过 50 条。
+  - source: lsa
+    applies: [lsa, lsa-review, lsa-perspective]
+    text: Article 与 Review 的建议篇幅均为 6,000 词，Perspective 为 2,000 词，均不计摘要、参考文献及图表。按稿型核对参考文献和利益冲突声明。原创研究的 Data Availability 放在 Methods 末尾。
+  - source: ncomms
+    applies: [ncomms]
+    text: 初投稿格式灵活。作者指南建议正文不超过 5,000 词，通常可放至多 10 项图表。少于 2,000 词时图表至多 4 项。出版前须提交作者贡献和利益冲突声明。
+  - source: nmi
+    applies: [nmi, nmi-analysis]
+    text: 正文至多 3,500 词，不计摘要、Methods、参考文献和图例。核对引言无独立标题、图表合计不超过 6 项及参考文献通常不超过 50 条。

@@ -19,8 +19,9 @@ export const manuscriptCheck: ToolFactory = (env) => ({
   version: '1',
   description:
     '按规则包检查稿件（.tex 主文件会沿 \\input 追踪；.docx；.md；编译后的 .pdf 用于页数和元数据）。' +
-    '规则包：common（默认，所有包都会带上）、hust-thesis（variant: master / doctor / undergrad）、ml-conference（variant: neurips2026 / neurips2025 / icml2026 / iclr2026）、' +
-    'optica、ieee-journal、gbt7714，以及其他期刊包（未核实的包只给「请核对」提示）。' +
+    '规则包：common（默认）、hust-thesis（variant: master / doctor / undergrad）、ml-conference（variant: neurips2026 / neurips2025 / icml2026 / iclr2026 / icml2027 / iclr2027）、' +
+    'aaai、cvf、acl、eccv、ijcai、optica、ieee-journal、gbt7714、advanced-photonics、springer-journal、cn-physics。' +
+    'acs、wiley、science、springer-nature、cn-optics、cn-computing 的专用规则按期刊或稿型 variant 选择，见插件的规则包详情。' +
     '返回带定位（文件:行、段落 N、p.N）和依据的问题清单；annotate=true 时另存带批注的副本（Word 插批注，LaTeX 行尾 % EVO 注释），原稿不改。',
   parameters: {
     type: 'object',

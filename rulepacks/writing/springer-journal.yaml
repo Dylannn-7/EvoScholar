@@ -1,9 +1,27 @@
 id: springer-journal
-name: Springer 期刊（sn-jnl 模板）（IJCV）
-extends:
-- common
-status: stub
-sources: []
-rules: []
+name: Springer 期刊（International Journal of Computer Vision）
+description: 检查 IJCV 的英文摘要、关键词及声明标题。
+extends: [common]
+sources:
+  - id: guide
+    title: International Journal of Computer Vision Submission Guidelines
+    url: https://link.springer.com/journal/11263/submission-guidelines
+    checked: 2026-11-22
+rules:
+  - id: ijcv.abstract.length
+    check: abstract_length
+    params: { lang: en, min: 150, max: 250 }
+    source: guide
+  - id: ijcv.keywords
+    check: keywords
+    params: { lang: en, min: 4, max: 6 }
+    source: guide
+  - id: ijcv.declarations
+    check: required_sections
+    params: { sections: [['Statements and Declarations', 'Statements & Declarations', 'Competing Interests', 'Conflict of Interest']], severity: info, exact: true }
+    source: guide
 verify:
-- 本规则包尚未核实作者指南（依据应为：Springer 期刊模板）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: guide
+    text: 摘要中的缩写须先定义，引用须能明确定位。Statements and Declarations 中核对利益冲突，并按研究实际情况填写资助、数据、代码和伦理声明。
+  - source: guide
+    text: 参考文献按第一作者姓氏字母排序。请对照 References 小节核对文内作者–年份引用及 DOI 链接。LaTeX 文件以投稿系统编译出的 PDF 为准。

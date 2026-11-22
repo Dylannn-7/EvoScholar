@@ -43,7 +43,10 @@ export type WritingRulepackSummary = {
   description?: string
   variants: { id: string; label: string }[]
   ruleCount: number
+  extends: string[]
   verifyCount: number
+  verify: { text: string; applies?: string[]; stages?: string[]; source?: string }[]
+  sources: { id: string; title: string; url?: string; file?: string; checked?: string }[]
 }
 
 export type ToolSummary = { name: string; description: string; enabled: boolean; source: 'builtin' | 'evolved' | 'imported' }
@@ -100,15 +103,24 @@ export function getCapabilities(rt: Runtime): CapabilitiesSummary {
   }))
 
   const writingRulepacks: WritingRulepackSummary[] = readYamlDir(join(rt.ws.root, 'rulepacks', 'writing'))
-    .map((d) => ({
-      id: d.id,
-      name: String(d.name ?? d.id),
-      status: (d.status === 'stub' ? 'stub' : 'verified') as 'verified' | 'stub',
-      description: d.description ? String(d.description) : undefined,
-      variants: d.variants && typeof d.variants === 'object' ? Object.entries(d.variants).map(([id, label]) => ({ id, label: String(label) })) : [],
-      ruleCount: Array.isArray(d.rules) ? d.rules.length : 0,
-      verifyCount: Array.isArray(d.verify) ? d.verify.length : 0
-    }))
+    .map((d): WritingRulepackSummary => {
+      const verify = (Array.isArray(d.verify) ? d.verify : []).map((v) =>
+        typeof v === 'string' ? { text: v } : { text: v.text, applies: v.applies, stages: v.stages, source: v.source })
+      return {
+        id: d.id,
+        name: String(d.name ?? d.id),
+        status: d.status === 'stub' ? 'stub' : 'verified',
+        description: d.description ? String(d.description) : undefined,
+        variants: d.variants && typeof d.variants === 'object' ? Object.entries(d.variants).map(([id, label]) => ({ id, label: String(label) })) : [],
+        ruleCount: Array.isArray(d.rules) ? d.rules.length : 0,
+        extends: d.extends ?? [],
+        verifyCount: verify.length,
+        verify,
+        sources: (d.sources ?? []).map(({ id, title, url, file, checked }: WritingRulepackSummary['sources'][number]) => ({
+          id, title, url, file, checked: checked ? String(checked) : undefined
+        }))
+      }
+    })
     .sort((a, b) => (a.status === b.status ? b.ruleCount - a.ruleCount || a.id.localeCompare(b.id) : a.status === 'verified' ? -1 : 1))
 
   const env = { ws: rt.ws, cwd: rt.ws.dataDir, ledger: rt.ledger, category: () => 'usage' as const }

@@ -1,6 +1,6 @@
 {
   "name": "evoscholar",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "EvoScholar: a self-evolving personal research workbench (literature, data and figures, manuscript checks) whose agent harness evolves in the loop",
   "license": "Apache-2.0",

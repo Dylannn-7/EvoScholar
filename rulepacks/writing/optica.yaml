@@ -1,11 +1,12 @@
 id: optica
 name: Optica Publishing Group 期刊（Optica、Optics Express、Optics Letters、Photonics Research）
+description: 检查摘要、标题、引用和交叉引用。图件规格见「期刊出图」中的 Optica 规则包。
 extends: [common]
 sources:
   - id: style
     title: Optica Publishing Group Journal Style Guide
     url: https://opg.optica.org/content/author/portal/item/style-optica-styleguide/
-    checked: 2026-11-18
+    checked: 2026-11-22
 rules:
   - id: optica.abstract.length
     check: abstract_length
@@ -43,5 +44,4 @@ rules:
     source: style
     note: Authors must identify equations and figures in the text by inserting Eq. or Fig. before the number；公式编号写作 Eq. (1)
 verify:
-  - 各刊篇幅与字数上限（Optics Letters、Optica、Photonics Research 等）各不相同，作者指南页未统一给出，请查目标期刊页面。
-  - 图的版面要求见出图规则包 rulepacks/figures/optica.yaml。
+  - Optics Letters 和 Optica 的 Letter 最多 4 个印刷页，Optica 的 Memorandum 最多 2 个印刷页。请用相应的排版模板或校样核对；其他稿型按目标期刊指南执行。

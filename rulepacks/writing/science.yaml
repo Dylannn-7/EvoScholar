@@ -1,9 +1,49 @@
 id: science
 name: Science 系列（Science Advances）
-extends:
-- common
-status: stub
-sources: []
-rules: []
+description: 按 Science Advances 2026 年 7 月模板检查题名与摘要，并按稿型核对正文结构。
+extends: [common]
+require_variant: true
+variants:
+  article: Research Article
+  resource: Research Resource
+  review: Review Article
+sources:
+  - id: template
+    title: Science Advances 官方主稿 Word 模板（2026 年 7 月）
+    url: https://www.science.org/cms/asset/31ef4809-4465-48df-ab24-4cfc11f381df/advances_ms_template_07_2026.docx
+    checked: 2026-11-22
+  - id: portal
+    title: AAAS Science Content Tracking System（期刊作者须知入口）
+    url: https://cts.sciencemag.org/
+    checked: 2026-11-22
+rules:
+  - id: sciadv.title.length
+    check: title_length
+    params: { count: characters, max: 135 }
+    source: template
+  - id: sciadv.abstract.length
+    check: abstract_length
+    params: { lang: en, max: 250 }
+    source: template
+    note: 采用 2026 年 7 月 Word 模板的上限。
+  - id: sciadv.abstract.citations
+    check: abstract_content
+    params: { no_citations: true }
+    source: template
+  - id: sciadv.sections
+    check: required_sections
+    applies: [article, resource]
+    params: { sections: [Introduction, Results, Discussion, Materials and Methods], severity: info, exact: true }
+    source: template
+  - id: sciadv.section_order
+    check: section_order
+    applies: [article, resource]
+    params: { order: [Introduction, Results, Discussion, Materials and Methods, [References, 参考文献]] }
+    source: template
 verify:
-- 本规则包尚未核实作者指南（依据应为：AAAS 作者指南）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: template
+    text: 核对摘要为单段且不引用文献、表或图。7 月模板给出的摘要上限为 250 词，全文为 17,000 词（不含参考文献）。综述和有学科特殊要求的稿件可采用不同章节结构。
+  - source: portal
+    text: 投稿前打开期刊 Information for Authors 核对当前篇幅和附件要求。该页面本次访问受限，自动检查采用可下载的官方 Word 模板。
+  - source: template
+    text: 在致谢后核对资助、作者贡献、利益冲突和数据材料获取声明。正文及补充材料共用一份参考文献表。仅在补充材料引用的条目排在末尾，不计入正文建议上限。

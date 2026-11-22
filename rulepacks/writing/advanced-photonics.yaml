@@ -1,9 +1,41 @@
 id: advanced-photonics
-name: Advanced Photonics（Advanced Photonics）
-extends:
-- common
-status: stub
-sources: []
-rules: []
+name: Advanced Photonics
+description: 依据 SPIE 期刊稿件模板检查摘要引用、关键词和可识别的图表题位置。
+extends: [common]
+sources:
+  - id: template
+    title: SPIE 官方期刊 LaTeX 模板
+    url: https://www.overleaf.com/latex/templates/spie-journal-papers-sample-manuscript-showing-style-and-formatting-specifications/vdydzwfvfvqg
+    checked: 2026-11-22
+  - id: ethics
+    title: Advanced Photonics Guidelines for Ethical Publishing
+    url: https://neurophotonics.spiedigitallibrary.org/journals/advanced-photonics-code-of-ethics
+    checked: 2026-11-22
+  - id: journal
+    title: Advanced Photonics Author Guidelines（期刊投稿页）
+    url: https://www.spiedigitallibrary.org/journals/advanced-photonics/author-guidelines
+    checked: 2026-11-22
+rules:
+  - id: ap.abstract.present
+    check: abstract_length
+    params: { lang: en }
+    source: template
+  - id: ap.abstract.citations
+    check: abstract_content
+    params: { no_citations: true }
+    source: template
+  - id: ap.keywords
+    check: keywords
+    params: { lang: en, min: 3, max: 6 }
+    source: template
+  - id: ap.caption_position
+    check: caption_position
+    params: { table: above, figure: below }
+    source: template
 verify:
-- 本规则包尚未核实作者指南（依据应为：SPIE 与中国激光杂志社联合出版）。参考文献格式、摘要长度、篇幅与结构要求请核对目标期刊最新要求；目前只运行通用检查。
+  - source: template
+    text: 按 SPIE 模板核对表题置于表上、图题置于图下，并用 spiejour 样式编排参考文献。用生成式 AI 清理语言或语法时，按模板在致谢中披露。
+  - source: journal
+    text: 期刊投稿页本次访问受限。请按该页核对专刊、稿型的篇幅及附加文件。自动检查依据 SPIE 官方期刊模板。
+  - source: ethics
+    text: 核对作者贡献、利益冲突和转载许可。
