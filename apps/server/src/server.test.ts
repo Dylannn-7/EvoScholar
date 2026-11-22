@@ -130,6 +130,14 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   stEff = (await (await localFetch(`${base}/api/state`)).json()) as { efforts: Record<string, string> }
   assert.equal(stEff.efforts['deepseek/deepseek-flash'], 'max')
 
+  // Workbench theme: unknown values are rejected, a valid choice persists and comes back in state.
+  const badTheme = await localFetch(`${base}/api/settings/ui`, { method: 'PUT', headers: H, body: JSON.stringify({ theme: 'sepia' }) })
+  assert.equal(badTheme.status, 400)
+  const okTheme = await localFetch(`${base}/api/settings/ui`, { method: 'PUT', headers: H, body: JSON.stringify({ theme: 'light' }) })
+  assert.equal(okTheme.status, 200)
+  const stTheme = (await (await localFetch(`${base}/api/state`)).json()) as { ui: { theme?: string } }
+  assert.equal(stTheme.ui.theme, 'light')
+
   // Fork s1 -> creates a new session referencing the same workspace branch
   const forkRes = await localFetch(`${base}/api/sessions/${s1.id}/fork`, { method: 'POST', headers: H, body: '{}' })
   assert.equal(forkRes.status, 200)
