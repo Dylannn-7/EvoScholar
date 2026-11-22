@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileType } from './library'
 // node:sqlite ships with Node >= 22.13; no native addon to compile.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite')
@@ -257,6 +258,7 @@ export function withTransaction<T>(db: Db, action: () => T): T {
 export function openDb(dataDir: string): Db {
   mkdirSync(dataDir, { recursive: true })
   const db = new DatabaseSync(join(dataDir, 'evoscholar.sqlite'))
+  db.function('library_file_type', { deterministic: true }, (path) => fileType(String(path)))
   db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;')
   // WAL needs shared memory; network/FUSE mounts reject it. TRUNCATE also avoids deleting files.
   try {
