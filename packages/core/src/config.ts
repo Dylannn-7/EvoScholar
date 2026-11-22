@@ -44,9 +44,14 @@ export type PermissionMode = 'ask' | 'acceptEdits' | 'plan' | 'bypass'
 export const PERMISSION_MODES: PermissionMode[] = ['ask', 'acceptEdits', 'plan', 'bypass']
 /** Per-user settings in <dataDir>/settings.json (never committed). */
 export type ExecutionSettings = { engine?: string; image?: string; hostMode?: boolean }
+export type ThemePreference = 'dark' | 'light' | 'system'
+export const THEME_PREFERENCES: readonly ThemePreference[] = ['dark', 'light', 'system']
+export type UiSettings = { theme?: ThemePreference }
 export type UserSettings = {
   providers: Record<string, ProviderOverride>
   execution?: ExecutionSettings
+  /** Workbench appearance. */
+  ui?: UiSettings
   defaults: { model?: string; effort?: string; fast?: string; vision?: string; permission?: PermissionMode; figureStyle?: string }
   /** Remembered reasoning effort per model ref. */
   efforts: Record<string, string>
@@ -117,6 +122,7 @@ export function loadSettings(dataDir: string, config?: EvoConfig): UserSettings 
     providers: raw.providers ?? {},
     defaults: raw.defaults ?? {},
     execution: raw.execution,
+    ui: raw.ui && THEME_PREFERENCES.includes(raw.ui.theme as ThemePreference) ? { theme: raw.ui.theme } : undefined,
     // One-time migration: efforts used to live in the repo config.
     efforts: raw.efforts ?? { ...(config?.reasoningEffort ?? {}) }
   }

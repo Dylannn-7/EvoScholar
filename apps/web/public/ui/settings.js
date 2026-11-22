@@ -1,5 +1,5 @@
 // Settings: model providers (protocol → base URL → key → fetch models → test), defaults & permissions, appearance.
-import { setFxQuality, store } from '../app.js'
+import { setFxQuality, setThemePreference, store, themePreference } from '../app.js'
 import { api, del, put, post } from './api.js'
 import { icon } from './icons.js'
 import { confirmDialog, esc, openModal, toast } from './modal.js'
@@ -259,8 +259,18 @@ function appearance (body) {
   let q = 'auto'
   try { q = localStorage.getItem('evoscholar.fxQuality') || 'auto' } catch {}
   const Q = [['auto', '自动', '按设备性能选择'], ['high', '高', '262,144 个粒子'], ['mid', '中', '65,536 个粒子'], ['low', '低', '16,384 个粒子'], ['off', '关闭', '纯色背景，最省电']]
-  body.innerHTML = `<div class="panel"><h3>背景粒子</h3>
+  const theme = themePreference()
+  const T = [['dark', '深色', '深色背景，适合暗光环境'], ['light', '浅色', '浅色背景，适合明亮环境和投影'], ['system', '跟随系统', '随操作系统的深色、浅色设置切换']]
+  body.innerHTML = `<div class="panel"><h3>界面主题</h3>
+    ${T.map(([id, l, d]) => `<div class="opt-row"><div class="t"><b>${l}</b><span>${d}</span></div><button class="switch ${theme === id ? 'on' : ''}" data-theme-pref="${id}" type="button" aria-label="${l}"></button></div>`).join('')}</div>
+    <div class="panel"><h3>背景粒子</h3>
     ${Q.map(([id, l, d]) => `<div class="opt-row"><div class="t"><b>${l}</b><span>${d}</span></div><button class="switch ${q === id ? 'on' : ''}" data-q="${id}" type="button" aria-label="${l}"></button></div>`).join('')}</div>`
+  body.querySelectorAll('[data-theme-pref]').forEach((b) => (b.onclick = async () => {
+    const pref = b.dataset.themePref
+    setThemePreference(pref)
+    body.querySelectorAll('[data-theme-pref]').forEach((x) => x.classList.toggle('on', x === b))
+    try { await put('/api/settings/ui', { theme: pref }); if (store.state) store.state.ui = { ...store.state.ui, theme: pref } } catch (err) { toast(err.message, 'err') }
+  }))
   body.querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => {
     setFxQuality(b.dataset.q)
     body.querySelectorAll('[data-q]').forEach((x) => x.classList.toggle('on', x === b))

@@ -517,6 +517,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         providers: listProviders(ws.config).map(({ models, ...pv }) => ({ ...pv, models: pv.hasKey ? models : [] })),
         defaults: ws.settings.defaults,
         efforts: ws.settings.efforts,
+        ui: ws.settings.ui ?? {},
         projects: listProjects(rt.db),
         sessions: listSessions(),
         pending: (rt.db.prepare(`SELECT COUNT(*) n FROM candidates WHERE status = 'pending'`).get() as { n: number }).n,
