@@ -213,8 +213,7 @@ export const runPython: ToolFactory = (env) => ({
       throw new Error('请提供 code 或 file，且只能提供一个')
     validateTimeout(a.timeout_s, 900)
     if (a.args !== undefined && (!Array.isArray(a.args) || !a.args.every((x) => typeof x === 'string'))) throw new Error('args must be strings')
-    if (a.deliverables !== undefined) a.deliverables = validateDeliverablePaths(a.deliverables)
-    return a as Json
+    return (a.deliverables === undefined ? a : { ...a, deliverables: validateDeliverablePaths(a.deliverables) }) as Json
   },
   authorize: async (args, ctx) => {
     const a = args as { code?: string; file?: string; deliverables?: string[] }
@@ -264,8 +263,7 @@ export const runCommand: ToolFactory = (env) => ({
     if (typeof a.command !== 'string' || !a.command.trim()) throw new Error('command required')
     validateTimeout(a.timeout_s, 900)
     checkCommand(a.command)
-    if (a.deliverables !== undefined) a.deliverables = validateDeliverablePaths(a.deliverables)
-    return a as Json
+    return (a.deliverables === undefined ? a : { ...a, deliverables: validateDeliverablePaths(a.deliverables) }) as Json
   },
   authorize: async (args, ctx) => {
     const a = args as { command: string; deliverables?: string[] }

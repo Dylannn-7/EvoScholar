@@ -68,6 +68,19 @@ test('staged projects reject overlapping roots, limit copies and preserve unmodi
   assert.throws(() => limited.sync(), /大小超限/)
 })
 
+test('execution tools normalize delivery paths without mutating harness arguments', (t) => {
+  const { env } = fixture(t)
+  const [python, command] = buildTools(['run_python', 'run_command'], env)
+  const deliverables = ['./answer.json']
+  Object.freeze(deliverables)
+  const pythonArgs = Object.freeze({ code: 'print(7)', deliverables })
+  const commandArgs = Object.freeze({ command: 'pwd', deliverables })
+
+  assert.deepEqual(python.validate(pythonArgs), { code: 'print(7)', deliverables: ['answer.json'] })
+  assert.deepEqual(command.validate(commandArgs), { command: 'pwd', deliverables: ['answer.json'] })
+  assert.deepEqual(deliverables, ['./answer.json'])
+})
+
 test('declared container deliverables publish to their project paths and preserve intervening user edits', (t) => {
   const { cwd } = fixture(t)
   const stage = stageDirectory()
