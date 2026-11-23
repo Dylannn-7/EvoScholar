@@ -908,4 +908,15 @@ test('desktop update endpoints coalesce checks and persist update preferences be
   assert.equal((await mutate(checkPath, 'POST')).status, 200)
   assert.deepEqual((await read('/api/state')).update, { hasUnreadUpdate: true, latestVersion: '0.6.0' })
   assert.equal(settings().autoCheck, true)
+
+  // A restart keeps the saved lastCheckedAt but loses the release details held in memory: the first automatic
+  // check of the new process must run, otherwise the rail dot and banner stay hidden until the next interval.
+  const restarted = createServerApp(rt, { webDir: WEB, auth: createLocalAuth(), appUpdate: { version: '0.4.0', platform: 'darwin', arch: 'arm64' }, fetchImpl })
+  const before = requests
+  const afterRestart = await restarted.checkForUpdates({ automatic: true })
+  assert.equal(requests, before + 1)
+  assert.equal(afterRestart.hasUnreadUpdate, true)
+  await restarted.checkForUpdates({ automatic: true })
+  assert.equal(requests, before + 1)
+  await restarted.dispose()
 })
