@@ -7,10 +7,36 @@ import { openFilePreviewModal } from './review.js'
 import { chooseFolder } from './folder-picker.js'
 import { md } from './markdown.js'
 import { loadSpectralExample, openOperatorRecord, operatorCard } from './operator-evidence.js'
+import { shouldShowHint } from './onboarding-state.js'
 
 const shell = (root, title, desc, actions = '') => {
   root.innerHTML = `<div class="page glass dark"><div class="page-head"><h1>${title}</h1><div class="page-actions">${actions}</div>${desc ? `<div class="desc">${desc}</div>` : ''}</div><div class="page-body"></div></div>`
   return root.querySelector('.page-body')
+}
+const PAGE_HINTS = {
+  trajectory: '这里记录每次自进化的触发、归因和沉淀。在「记忆」查看和编辑经验与规则，在「版本」对比、批准或回滚 harness 版本。',
+  plugins: '这里管理技能、工具、规则包和出图风格。可执行技能在另外两个会话执行成功后，需你批准才转正。',
+  library: '会话中上传和生成的文件都在这里，可按项目和会话查找，标为交付物或在文件夹中显示。'
+}
+function renderPageHint (root, id) {
+  if (!shouldShowHint(store.state, id)) return
+  const hint = document.createElement('aside')
+  hint.className = 'page-hint'
+  hint.innerHTML = `<span>${PAGE_HINTS[id]}</span><button class="btn ghost small" type="button">知道了</button>`
+  root.querySelector('.page-head').after(hint)
+  const button = hint.querySelector('button')
+  button.onclick = async () => {
+    button.disabled = true
+    try {
+      await put('/api/settings/ui', { dismissedHints: { [id]: true } })
+      const ui = (store.state.ui ??= {})
+      ;(ui.dismissedHints ??= {})[id] = true
+      ;(root.querySelector('.page-hint') ?? hint).remove()
+    } catch (err) {
+      toast(err.message, 'err')
+      button.disabled = false
+    }
+  }
 }
 const SOURCE = { builtin: ['内置', ''], evolved: ['进化产生', 'accent'], imported: ['导入', 'warn'] }
 const srcBadge = (s) => { const [l, c] = SOURCE[s || 'builtin']; return `<span class="badge ${c}">${l}</span>` }
@@ -49,6 +75,7 @@ export async function renderPlugins (root, arg) {
   if (typeof arg === 'string' && ['skills', 'tools', 'rules', 'styles'].includes(arg)) pluginTab = arg
   const body = shell(root, '插件', '',
     '<button class="btn primary small" id="importSkill" type="button">导入技能</button>')
+  renderPageHint(root, 'plugins')
   root.querySelector('#importSkill').onclick = () => importDialog(root)
   const [c, ur, st] = await Promise.all([api('/api/capabilities'), api('/api/plugins/rules'), api('/api/styles').catch(() => ({ styles: [], current: null }))])
   const counts = { skills: c.skills.length, tools: c.tools.length, rules: c.writingRulepacks.length + c.figureRulepacks.length + ur.rules.length, styles: st.styles.length }
@@ -300,6 +327,7 @@ async function downloadLibraryFile (f) {
 export async function renderLibrary (root, arg) {
   if (arg) Object.assign(lib, { scope: arg.project ? (arg.project === 'drafts' ? 'drafts' : `p:${arg.project}`) : 'all', session: arg.session || '', type: '', q: '', selected: 0 })
   const body = shell(root, '资料空间', '')
+  renderPageHint(root, 'library')
   body.classList.add('lib-body')
   const limit = 60
   let offset = 0
@@ -639,6 +667,7 @@ function memoryScatter (memory, score) {
 export async function renderTrajectory (root, arg) {
   if (typeof arg === 'string' && ['timeline', 'memory', 'overlays', 'versions'].includes(arg)) trajTab = arg
   const body = shell(root, '轨迹', '')
+  renderPageHint(root, 'trajectory')
   const [ev, evo, example] = await Promise.all([api('/api/evolve'), api('/api/evolution'), loadSpectralExample()])
   const approvedReleases = new Set(ev.log.filter((e) => e.data?.action === 'kernel.approve').map((e) => e.data.releaseId))
   const openSession = (id) => { go('workbench'); document.dispatchEvent(new CustomEvent('evo:open-session', { detail: id })) }

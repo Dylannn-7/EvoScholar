@@ -6,6 +6,8 @@ import { toast } from './ui/modal.js'
 import { initWorkbench } from './ui/workbench.js'
 import { renderSettings } from './ui/settings.js'
 import { renderLibrary, renderPlugins, renderTrajectory, renderUsage } from './ui/pages.js'
+import { openOnboarding } from './ui/onboarding.js'
+import { shouldShowOnboarding } from './ui/onboarding-state.js'
 
 export const $ = (s, el = document) => el.querySelector(s)
 
@@ -17,19 +19,17 @@ function applyTheme () {
   const resolved = themePref === 'system' ? (darkQuery.matches ? 'dark' : 'light') : themePref
   document.documentElement.dataset.theme = resolved
 }
-/** Remember the preference locally and apply it; the server copy is written by the settings page. */
+/** Apply the preference; the settings API persists it across launches. */
 export function setThemePreference (pref) {
   if (!THEMES.includes(pref)) return
   themePref = pref
-  try { localStorage.setItem('evoscholar.theme', pref) } catch {}
   applyTheme()
 }
 export const themePreference = () => themePref
 darkQuery.addEventListener?.('change', () => { if (themePref === 'system') applyTheme() })
 {
   // The desktop shell passes the saved theme in the URL so the first paint already matches.
-  let initial = new URLSearchParams(location.search).get('theme')
-  if (!THEMES.includes(initial)) { try { initial = localStorage.getItem('evoscholar.theme') } catch {} }
+  const initial = new URLSearchParams(location.search).get('theme')
   setThemePreference(THEMES.includes(initial) ? initial : 'light')
   // The macOS desktop shell hides the title bar; the page then leaves room for the window buttons.
   // Kept for the tab's lifetime: the router rewrites the URL, and a reload must not lose it.
@@ -101,6 +101,12 @@ const RENDER = { trajectory: renderTrajectory, plugins: renderPlugins, library: 
 let view = 'workbench'
 let workbench
 
+export function goHome (starterId) {
+  go('workbench')
+  workbench.home()
+  if (starterId) workbench.fillStarter(starterId)
+}
+
 export function go (next, arg) {
   view = next
   for (const v of [...VIEWS.map((x) => x.id), 'settings']) $(`#view-${v}`).hidden = v !== next
@@ -123,7 +129,7 @@ function renderRail () {
 document.getElementById('rail').addEventListener('click', (e) => {
   const b = e.target.closest('[data-go]')
   if (!b) return
-  if (b.dataset.home) { go('workbench'); workbench.home(); return }
+  if (b.dataset.home) { goHome(); return }
   go(b.dataset.go)
 })
 
@@ -222,6 +228,7 @@ async function boot() {
   if (sid) workbench.open(sid)
   else workbench.home()
   go(RENDER[hash] ? hash : 'workbench', sub)
+  if (!sid && view === 'workbench' && shouldShowOnboarding(store.state)) openOnboarding()
 }
 addEventListener('evo:unpaired', () => showPairing(workbench ? '会话令牌已失效，请重新配对。' : ''))
 void (async () => {
