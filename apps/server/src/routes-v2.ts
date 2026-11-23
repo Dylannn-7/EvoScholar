@@ -8,8 +8,10 @@ import { operatorEvidence } from './operator-evidence'
 import { dirname, join } from 'node:path'
 import {
   DEFAULT_SANDBOX_IMAGE,
+  PAGE_HINT_IDS,
   THEME_PREFERENCES,
-  type ThemePreference,
+  type PageHintId,
+  type UiSettings,
   PERMISSION_LABELS,
   PERMISSION_MODES,
   PROTOCOLS,
@@ -229,8 +231,25 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
     }
     if (p === '/api/settings/ui' && method === 'PUT') {
       const b = await body(req)
-      if (!THEME_PREFERENCES.includes(b.theme as ThemePreference)) throw httpError(400, '未知界面主题')
-      settings().ui = { ...settings().ui, theme: b.theme as ThemePreference }
+      if (b.theme === undefined && b.onboardingCompleted === undefined && b.dismissedHints === undefined)
+        throw httpError(400, '请提供至少一项界面设置')
+      const next: UiSettings = { ...settings().ui }
+      if (b.theme !== undefined) {
+        if (!THEME_PREFERENCES.includes(b.theme)) throw httpError(400, '未知界面主题')
+        next.theme = b.theme
+      }
+      if (b.onboardingCompleted !== undefined) {
+        if (typeof b.onboardingCompleted !== 'boolean') throw httpError(400, '向导完成状态必须为布尔值')
+        next.onboardingCompleted = b.onboardingCompleted
+      }
+      if (b.dismissedHints !== undefined) {
+        const hints = b.dismissedHints
+        if (!hints || typeof hints !== 'object' || Array.isArray(hints) || Object.entries(hints).some(
+          ([id, value]) => !PAGE_HINT_IDS.includes(id as PageHintId) || typeof value !== 'boolean'
+        )) throw httpError(400, '页面提示设置无效')
+        next.dismissedHints = { ...next.dismissedHints, ...hints }
+      }
+      settings().ui = next
       saveSettings(ws)
       return send(res, 200, { ui: settings().ui }), true
     }

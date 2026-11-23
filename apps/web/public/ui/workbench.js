@@ -6,7 +6,15 @@ import { icon } from './icons.js'
 import { formatToolSummary, md } from './markdown.js'
 import { confirmDialog, esc, openModal, promptDialog, toast } from './modal.js'
 import { chooseFolder } from './folder-picker.js'
+import { openOnboarding } from './onboarding.js'
 import { openFilePreviewModal, openReportReviewModal } from './review.js'
+
+export const STARTERS = [
+  ['literature', 'search', '文献核验', '逐条核对参考文献的 DOI、题名、作者与年份', '核对这份参考文献列表的真实性：逐条查 DOI、题名、作者和年份，标出查不到、元数据不一致或已撤稿的条目，并给出可直接替换的正确著录。'],
+  ['figure', 'image', '期刊规范出图', '按目标期刊尺寸、字号与配色出图并自检', '按 Optica 单栏规范把实验数据画成图：坐标轴带单位，标出关键特征（峰位、阈值等），导出矢量图，并运行出图检查确认尺寸、字号和标签都合格。'],
+  ['thesis', 'shield', '学位论文自查', '按学校规范检查结构、编号与参考文献', '按华中科技大学学位论文规范检查我的论文稿件：章节结构、图表公式编号、引用格式和参考文献著录（GB/T 7714），给出带定位的问题清单和修改建议。']
+]
+export const starterCards = () => STARTERS.map(([id, ic, title, desc]) => `<button type="button" class="starter" data-starter="${id}">${icon(ic, 16)}<span class="st-t">${title}</span><span class="st-d">${desc}</span></button>`).join('')
 
 const PERMS = {
   ask: { label: '询问', desc: '写文件和执行前询问', icon: 'shield' },
@@ -271,20 +279,17 @@ export function initWorkbench () {
     const m = /(^|\s)@([^\s@]*)$/.exec(input.value.slice(0, input.selectionStart))
     if (m) atMenu($('#cbar [data-b="at"]'), m[2])
   })
-  // Scenario starters under the composer on a fresh session: one click fills a ready-made task.
-  const STARTERS = [
-    ['literature', 'search', '文献核验', '逐条核对参考文献的 DOI、题名、作者与年份', '核对这份参考文献列表的真实性：逐条查 DOI、题名、作者和年份，标出查不到、元数据不一致或已撤稿的条目，并给出可直接替换的正确著录。'],
-    ['figure', 'image', '期刊规范出图', '按目标期刊尺寸、字号与配色出图并自检', '按 Optica 单栏规范把实验数据画成图：坐标轴带单位，标出关键特征（峰位、阈值等），导出矢量图，并运行出图检查确认尺寸、字号和标签都合格。'],
-    ['thesis', 'shield', '学位论文自查', '按学校规范检查结构、编号与参考文献', '按华中科技大学学位论文规范检查我的论文稿件：章节结构、图表公式编号、引用格式和参考文献著录（GB/T 7714），给出带定位的问题清单和修改建议。']
-  ]
-  $('#starters').innerHTML = STARTERS.map(([id, ic, title, desc]) => `<button type="button" class="starter" data-starter="${id}">${icon(ic, 16)}<span class="st-t">${title}</span><span class="st-d">${desc}</span></button>`).join('')
-  $('#starters').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-starter]')
-    const item = b && STARTERS.find((x) => x[0] === b.dataset.starter)
+  $('#starters').innerHTML = starterCards()
+  W.fillStarter = (id) => {
+    const item = STARTERS.find((x) => x[0] === id)
     if (!item || W.sending) return
     input.value = item[4]
     autosize(); input.focus()
     input.setSelectionRange(input.value.length, input.value.length)
+  }
+  $('#starters').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-starter]')
+    if (b) W.fillStarter(b.dataset.starter)
   })
   input.addEventListener('focus', () => fx.call('setMouseStrength', 0.15))
   input.addEventListener('blur', () => fx.call('setMouseStrength'))
@@ -696,7 +701,7 @@ export function initWorkbench () {
     $('#convHead').innerHTML = ''
     const hasModel = !!W.model
     inner.innerHTML = `<div class="greet"><h1>今天想研究什么？</h1>${hasModel ? '' : '<p style="margin-top:14px"><button class="btn primary" id="goSetup" type="button">接入模型</button></p>'}</div>`
-    $('#goSetup')?.addEventListener('click', () => go('settings', 'models'))
+    $('#goSetup')?.addEventListener('click', () => openOnboarding({ step: 1 }))
     setFresh(true)
     renderBar(); renderTree(); syncFx()
     try { history.replaceState(null, '', location.pathname) } catch {}

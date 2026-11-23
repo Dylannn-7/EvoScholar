@@ -1,8 +1,9 @@
 // Settings: model providers (protocol → base URL → key → fetch models → test), defaults & permissions, appearance.
-import { setFxQuality, setThemePreference, store, themePreference } from '../app.js'
+import { goHome, setFxQuality, setThemePreference, store, themePreference } from '../app.js'
 import { api, del, put, post } from './api.js'
 import { icon } from './icons.js'
 import { confirmDialog, esc, openModal, toast } from './modal.js'
+import { openOnboarding } from './onboarding.js'
 
 const TABS = [
   { id: 'models', label: '模型与密钥', icon: 'key' },
@@ -285,6 +286,8 @@ function about (body) {
     <div class="kv"><span>当前 genome</span><span><code>${esc(s.genome.id)}</code></span></div>
     ${app.workspace ? `<div class="kv"><span>工作区</span><span class="kv-path"><code title="${esc(app.workspace)}">${esc(app.workspace)}</code><button class="btn ghost small" id="revealWorkspace" type="button">在文件夹中显示</button></span></div>` : ''}
     <div class="kv"><span>项目文件</span><span><code>evoscholar-out/</code>、<code>evoscholar-in/</code></span></div>
-    <div class="kv"><span>源代码</span><span><a href="https://github.com/Dylannn-7/EvoScholar" target="_blank" rel="noopener">github.com/Dylannn-7/EvoScholar</a></span></div></div>`
+    <div class="kv"><span>源代码</span><span><a href="https://github.com/Dylannn-7/EvoScholar" target="_blank" rel="noopener">github.com/Dylannn-7/EvoScholar</a></span></div>
+    <button class="btn ghost small" id="reopenOnboarding" type="button">重新打开新手向导</button></div>`
   body.querySelector('#revealWorkspace')?.addEventListener('click', () => post('/api/workspace/reveal').catch((err) => toast(err.message, 'err')))
+  body.querySelector('#reopenOnboarding').onclick = () => { goHome(); openOnboarding() }
 }

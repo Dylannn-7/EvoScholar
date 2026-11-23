@@ -109,13 +109,14 @@ async function smokeCheck (origin) {
       const preview = await fetch('/api/styles/evo-default/preview')
       return {
         heading: document.querySelector('.greet h1')?.textContent || '',
+        onboarding: !!document.querySelector('.onboarding-modal'),
         pairing: !!document.querySelector('#pairing'),
         state: (await fetch('/api/state')).status,
         // Bundled assets: the style gallery must work in a fresh workspace without Python.
         stylePreview: preview.status + ' ' + (preview.headers.get('content-type') || '')
       }
     })()`)
-    result.ok = result.heading.includes('今天想研究什么') && !result.pairing && result.state === 200 && result.stylePreview.startsWith('200 image/png')
+    result.ok = result.heading.includes('今天想研究什么') && result.onboarding && !result.pairing && result.state === 200 && result.stylePreview.startsWith('200 image/png')
     // Requests from other local programs still need the token.
     result.unauthenticated = (await fetch(`${origin}/api/state`)).status
     // Informational: tools a Finder launch must still find through the extended PATH.

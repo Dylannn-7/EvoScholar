@@ -438,6 +438,33 @@ body.fresh .starters { display: grid; }
 .modal-body { padding: 4px 22px 20px; }
 .modal-msg { color: var(--text-2); line-height: 1.6; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.onboarding-modal .modal-body { padding: 22px; }
+.ob-header, .ob-footer { display: flex; align-items: center; gap: 12px; }
+.ob-header { justify-content: space-between; }
+.ob-header h2 { margin: 0; }
+.ob-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 0; margin: 16px 0; list-style: none; }
+.ob-steps li { padding: 7px 9px; border-bottom: 2px solid var(--hair-2); color: var(--text-2); }
+.ob-steps [aria-current="step"] { border-color: var(--accent); color: var(--strong); font-weight: 600; }
+.ob-body h3 { margin: 0 0 10px; font-size: 17px; }
+.ob-body p { margin: 0 0 12px; }
+.ob-body p.result { margin: 10px 0; }
+.ob-body p a { color: var(--strong); }
+.ob-providers { margin: 12px 0; }
+.ob-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ob-grid-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ob-card { padding: 14px; }
+.ob-card h4 { margin: 0 0 8px; font-size: 14px; }
+.ob-card .seg { width: fit-content; max-width: 100%; flex-wrap: wrap; }
+.ob-log { max-height: 9em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--mono); }
+.ob-footer { margin-top: 18px; }
+.ob-footer span { flex: 1; }
+.ob-footer button, .page-hint button { flex-shrink: 0; }
+.page-hint { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 28px 12px; padding: 10px 14px; border-radius: 12px; background: var(--fill); box-shadow: 0 0 0 1px var(--hair) inset; color: var(--text); }
+@media (max-width: 600px) {
+  .ob-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ob-grid, .ob-grid-three { grid-template-columns: 1fr; }
+  .ob-footer { flex-wrap: wrap; }
+}
 .modal.modal-lightbox { width: min(1200px, calc(100vw - 32px)); background: rgba(12, 12, 16, .97); }
 .lightbox-bar { display: flex; align-items: center; gap: 10px; padding: 12px 0; }
 .lightbox-title { flex: 1; color: var(--text-2); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

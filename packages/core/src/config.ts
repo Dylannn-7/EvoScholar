@@ -46,7 +46,13 @@ export const PERMISSION_MODES: PermissionMode[] = ['ask', 'acceptEdits', 'plan',
 export type ExecutionSettings = { engine?: string; image?: string; hostMode?: boolean }
 export type ThemePreference = 'dark' | 'light' | 'system'
 export const THEME_PREFERENCES: readonly ThemePreference[] = ['dark', 'light', 'system']
-export type UiSettings = { theme?: ThemePreference }
+export type PageHintId = 'trajectory' | 'plugins' | 'library'
+export const PAGE_HINT_IDS: readonly PageHintId[] = ['trajectory', 'plugins', 'library']
+export type UiSettings = {
+  theme?: ThemePreference
+  onboardingCompleted?: boolean
+  dismissedHints?: Partial<Record<PageHintId, boolean>>
+}
 export type UserSettings = {
   providers: Record<string, ProviderOverride>
   execution?: ExecutionSettings
@@ -116,13 +122,22 @@ export function loadSettings(dataDir: string, config?: EvoConfig): UserSettings 
   const f = settingsFile(dataDir)
   let raw: Partial<UserSettings> = {}
   if (existsSync(f)) {
-    try { raw = JSON.parse(readFileSync(f, 'utf8')) } catch { raw = {} }
+    try { raw = JSON.parse(readFileSync(f, 'utf8')) ?? {} } catch { raw = {} }
+  }
+  const ui: UiSettings = {}
+  if (raw.ui) {
+    if (THEME_PREFERENCES.includes(raw.ui.theme as ThemePreference)) ui.theme = raw.ui.theme
+    if (typeof raw.ui.onboardingCompleted === 'boolean') ui.onboardingCompleted = raw.ui.onboardingCompleted
+    for (const id of PAGE_HINT_IDS) {
+      const dismissed = raw.ui.dismissedHints?.[id]
+      if (typeof dismissed === 'boolean') (ui.dismissedHints ??= {})[id] = dismissed
+    }
   }
   return {
     providers: raw.providers ?? {},
     defaults: raw.defaults ?? {},
     execution: raw.execution,
-    ui: raw.ui && THEME_PREFERENCES.includes(raw.ui.theme as ThemePreference) ? { theme: raw.ui.theme } : undefined,
+    ui: Object.keys(ui).length ? ui : undefined,
     // One-time migration: efforts used to live in the repo config.
     efforts: raw.efforts ?? { ...(config?.reasoningEffort ?? {}) }
   }

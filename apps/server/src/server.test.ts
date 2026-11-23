@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, request } from 'node:http'
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import { join, resolve } from 'node:path'
@@ -63,7 +63,7 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   })
 
   // Static UI modules load cleanly
-  for (const path of ['/', '/style.css', '/app.js', '/ui/modal.js', '/ui/markdown.js', '/ui/views.js', '/ui/operator-evidence.js']) {
+  for (const path of ['/', '/style.css', '/app.js', '/ui/modal.js', '/ui/markdown.js', '/ui/views.js', '/ui/operator-evidence.js', '/ui/onboarding.js', '/ui/onboarding-state.js']) {
     const res = await localFetch(`${base}${path}`)
     assert.equal(res.status, 200, `GET ${path}`)
   }
@@ -158,12 +158,24 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   assert.equal(stEff.efforts['deepseek/deepseek-flash'], 'max')
 
   // Workbench theme: unknown values are rejected, a valid choice persists and comes back in state.
-  const badTheme = await localFetch(`${base}/api/settings/ui`, { method: 'PUT', headers: H, body: JSON.stringify({ theme: 'sepia' }) })
-  assert.equal(badTheme.status, 400)
-  const okTheme = await localFetch(`${base}/api/settings/ui`, { method: 'PUT', headers: H, body: JSON.stringify({ theme: 'light' }) })
-  assert.equal(okTheme.status, 200)
-  const stTheme = (await (await localFetch(`${base}/api/state`)).json()) as { ui: { theme?: string } }
-  assert.equal(stTheme.ui.theme, 'light')
+  const uiUrl = `${base}/api/settings/ui`
+  const putUi = (value: unknown) => localFetch(uiUrl, { method: 'PUT', headers: H, body: JSON.stringify(value) })
+  assert.equal((await fetch(uiUrl, { method: 'PUT', headers: H, body: '{"onboardingCompleted":true}' })).status, 401)
+  assert.equal((await localFetch(uiUrl, { method: 'PUT', body: '{"onboardingCompleted":true}' })).status, 403)
+  assert.equal((await putUi({ theme: 'light' })).status, 200)
+  assert.equal((await putUi({ onboardingCompleted: true, dismissedHints: { trajectory: true } })).status, 200)
+  const ui = { theme: 'light', onboardingCompleted: true, dismissedHints: { trajectory: true, plugins: false } }
+  assert.deepEqual(await (await putUi({ dismissedHints: { plugins: false } })).json(), { ui })
+  const settingsPath = join(ws.dataDir, 'settings.json')
+  const beforeInvalid = readFileSync(settingsPath, 'utf8')
+  for (const invalid of [{}, { extra: true }, { theme: 'sepia' }, { onboardingCompleted: 'true' },
+    { theme: 'dark', dismissedHints: { unknown: true } }, { dismissedHints: { library: 1 } },
+    { dismissedHints: [] }, { dismissedHints: null }]) {
+    assert.equal((await putUi(invalid)).status, 400)
+  }
+  assert.equal(readFileSync(settingsPath, 'utf8'), beforeInvalid)
+  assert.deepEqual(JSON.parse(beforeInvalid).ui, ui)
+  assert.deepEqual((await (await localFetch(`${base}/api/state`)).json() as { ui: unknown }).ui, ui)
 
   // Fork s1 -> creates a new session referencing the same workspace branch
   const forkRes = await localFetch(`${base}/api/sessions/${s1.id}/fork`, { method: 'POST', headers: H, body: '{}' })
