@@ -6,7 +6,7 @@ import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } fro
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import { join, resolve } from 'node:path'
-import { FILE_LIMITS, consolidate, openRuntime, openWorkspace, recordCandidateVerification } from '@evoscholar/core'
+import { FILE_LIMITS, consolidate, openRuntime, openWorkspace, recordCandidateVerification, writeSkillSource } from '@evoscholar/core'
 import { createLocalAuth } from './local-auth'
 import { createServerApp } from './server'
 import { body, send } from './http'
@@ -63,7 +63,7 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   })
 
   // Static UI modules load cleanly
-  for (const path of ['/', '/style.css', '/app.js', '/ui/modal.js', '/ui/markdown.js', '/ui/views.js']) {
+  for (const path of ['/', '/style.css', '/app.js', '/ui/modal.js', '/ui/markdown.js', '/ui/views.js', '/ui/operator-evidence.js']) {
     const res = await localFetch(`${base}${path}`)
     assert.equal(res.status, 200, `GET ${path}`)
   }
@@ -81,6 +81,33 @@ test('server endpoints: sessions CRUD, summary, check-feedback, capabilities, an
   // Create two sessions, pin & rename the first, verify sorting puts pinned first
   const s1 = (await (await localFetch(`${base}/api/sessions`, { method: 'POST', headers: H, body: JSON.stringify({ title: 'First' }) })).json()) as { id: string; cwd: string }
   const s2 = (await (await localFetch(`${base}/api/sessions`, { method: 'POST', headers: H, body: JSON.stringify({ title: 'Second' }) })).json()) as { id: string; cwd: string }
+
+  const example = await (await localFetch(`${base}/examples/spectral-operator-evidence.json`)).json() as {
+    records: Record<string, { label: string; text?: string }[]>
+  }
+  assert.match(example.records.trigger[0].text!, /ValueError/)
+  assert.ok(example.records.result.some((record) => record.label === 'normal.csv' && record.text?.includes('0.08400849')))
+  const releaseId = 'spectra-v1-fixture'
+  const forged = rt.evolve.log({ kind: 'adjust', text: '锻造 v1', sessionId: s1.id, data: {
+    action: 'kernel.forge', releaseId, skill: 'spectra', version: 1, trigger: { tool: 'run_python', invocationId: 'run/csv' }
+  } })
+  const insert = rt.db.prepare('INSERT INTO events (session_id, ts, genome_id, type, payload) VALUES (?, ?, ?, ?, ?)')
+  const ts = new Date().toISOString()
+  const host = (session: string, type: string, payload: Record<string, unknown>) =>
+    Number(insert.run(session, ts, rt.genomes.activeId(), type, JSON.stringify(payload)).lastInsertRowid)
+  const failure = host(s1.id, 'tool.result', { invocationId: 'run/csv', isError: true, preview: 'ValueError: Wavelength' })
+  host(s2.id, 'tool.result', { invocationId: 'run/csv', isError: true, preview: '另一个会话的报错' })
+  host(s2.id, 'host.kernel.run', { releaseId: 'spectra-v2', ok: true, output: '另一个版本的输出' })
+  const measured = host(s2.id, 'host.kernel.run', { releaseId, ok: true, input: 'holdout.csv', output: '__EVO_RESULT__{"fwhm_nm":0.118}' })
+  const approval = rt.evolve.log({ kind: 'learned', text: '用户批准 v1', sessionId: s2.id, data: { action: 'kernel.approve', releaseId } })
+  const evidenceUrl = `${base}/api/evolve/operators/${forged}`
+  assert.equal((await fetch(evidenceUrl)).status, 401)
+  const evidence = await (await localFetch(evidenceUrl)).json() as Record<string, { id: string; session: string; text: string }[]>
+  assert.deepEqual(evidence.trigger.map((record) => [record.id, record.text]), [[`events:${failure}`, 'ValueError: Wavelength']])
+  assert.deepEqual(evidence.version.map((record) => record.id), [`evolve_log:${forged}`, `evolve_log:${approval}`])
+  assert.deepEqual(evidence.result.map((record) => [record.id, record.session]), [[`events:${measured}`, s2.id]])
+  assert.match(evidence.result[0].text, /0\.118/)
+  assert.equal((await localFetch(`${base}/api/evolve/operators/${approval}`)).status, 404)
 
   const patched = (await (await localFetch(`${base}/api/sessions/${s1.id}`, { method: 'PATCH', headers: H, body: JSON.stringify({ title: 'Renamed First', pinned: true }) })).json()) as { title: string; pinned: boolean }
   assert.equal(patched.title, 'Renamed First')
@@ -563,6 +590,27 @@ test('all API reads require a bearer, and cross-port origins are forbidden', asy
   assert.equal((await patchSkill('matplotlib', { trusted: false })).status, 400)
   assert.equal((await localFetch(base + '/api/plugins/skills/matplotlib/file?path=' + encodeURIComponent('../../evoscholar.config.json'))).status, 400)
   assert.equal((await localFetch(base + '/api/plugins/skills/no-such-skill')).status, 404)
+
+  const kernelName = 'instrument-parser'
+  const kernelDir = join(dir, 'skills', kernelName)
+  for (const version of [1, 2, 3]) {
+    const revision = join(kernelDir, 'revisions', `v${version}`)
+    mkdirSync(revision, { recursive: true })
+    const skill = `---\nname: ${kernelName}\nversion: ${version}\ndescription: 解析光谱 v${version}\n---\n`
+    writeFileSync(join(revision, 'kernel.py'), `def run(path):\n    return ${version}\n`)
+    writeFileSync(join(revision, 'SKILL.md'), skill)
+    if (version === 1) writeFileSync(join(kernelDir, 'SKILL.md'), skill)
+  }
+  writeSkillSource(dir, kernelName, { type: 'forged', status: 'active', kernel: true, releases: {
+    active: 2, trial: 3, approved: [1, 2], scope: { project: 'project:lab', input: { extension: '.csv', argument: 'path', header: ['nm,power'] } }
+  } })
+  const kernelUrl = base + '/api/plugins/skills/' + kernelName
+  assert.equal((await patchSkill(kernelName, { rollbackVersion: 3 })).status, 400)
+  assert.equal((await patchSkill(kernelName, { rollbackVersion: 1 })).status, 200)
+  const restored = await (await localFetch(kernelUrl)).json() as { version: number; source: { releases: { trial: number } }; kernel: Record<string, string> }
+  assert.equal(restored.version, 1)
+  assert.equal(restored.source.releases.trial, 3)
+  assert.match(restored.kernel['kernel.py'], /return 1/)
   const gateway = 'http://127.0.0.1:19000/v1'
   const update = (data: object) => localFetch(base + '/api/providers/fixture', {
     method: 'PUT', headers: { 'x-evoscholar': '1' }, body: JSON.stringify({ custom: true, ...data })

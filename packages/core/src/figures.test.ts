@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { TOOL_FACTORIES, pythonBin, type ToolEnv } from './tools'
@@ -26,11 +26,13 @@ fig, ax = plt.subplots(figsize=(8, 3)); ax.plot([0, 1], [0, 1]); fig.savefig('wi
 `], { cwd })
   const tool = TOOL_FACTORIES.figure_check(env)
   const signal = new AbortController().signal
+  writeFileSync(join(cwd, 'wide.preview.png'), 'original preview')
   const r = (await tool.execute(tool.validate!({ path: 'wide.pdf', venue: 'nature' }) as never, { signal } as never)) as { content: { type: string; text?: string; mimeType?: string }[] }
   assert.match(r.content[0].text!, /✗ 1 个错误 · wide\.pdf（规则包 nature）· 203\.2×76\.2 mm/)
   assert.match(r.content[0].text!, /超过 183 mm/)
   assert.equal(r.content.at(-1)!.type, 'image')
   assert.equal(r.content.at(-1)!.mimeType, 'image/png')
+  assert.equal(readFileSync(join(cwd, 'wide.preview.png'), 'utf8'), 'original preview')
   const low = (await tool.execute({ path: 'low.png', venue: 'ieee' } as never, { signal } as never)) as { content: { text?: string }[] }
   assert.match(low.content[0].text!, /低于要求 600 dpi/)
   const missing = (await tool.execute({ path: 'no-dpi.png', venue: 'ieee', photo: true } as never, { signal } as never)) as typeof low

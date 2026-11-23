@@ -141,6 +141,45 @@ class FigureChecks(unittest.TestCase):
         self.assertIn('dpi', self.rules(r['issues']))
         self.assertFalse(r['ok'])
 
+    def test_pdf_checks_exported_width_font_embedding_and_image_dpi(self):
+        F.apply_style('nature')
+        fig, ax = plt.subplots(figsize=F.figsize('nature', 'single'))
+        ax.imshow(np.arange(100).reshape(10, 10))
+        with plt.rc_context({'pdf.fonttype': 3}):
+            fig.savefig('type3.pdf', dpi=80)
+        bad = F.check_file('type3.pdf', 'nature', columns='double')
+        self.assertTrue({'width', 'font.type3', 'dpi.embedded'} <= self.rules(bad['issues']))
+        self.assertLess(bad['measured']['min_embedded_dpi'], 80)
+
+        with plt.rc_context({'pdf.use14corefonts': True}):
+            fig.savefig('unembedded.pdf', dpi=400)
+        missing = F.check_file('unembedded.pdf', 'nature', columns='single')
+        self.assertIn('font.embedding', self.rules(missing['issues']))
+        self.assertTrue(missing['measured']['unembedded_fonts'])
+
+    def test_publication_export_preserves_existing_files_if_checks_fail(self):
+        F.apply_style('nature')
+        fig, ax = plt.subplots(figsize=F.figsize('nature', 'single'), layout='constrained')
+        ax.plot([1, 2], [3, 4])
+        ax.set(xlabel='Time (s)', ylabel='Power (W)')
+        script = Path('draft.py')
+        script.write_text('print("plot source")\n', encoding='utf-8')
+        args = dict(script=script, analysis={'inputs': ['raw_data/input.csv'], 'processing': ['Raw values']},
+                    venue='nature', columns='single')
+        with plt.rc_context({'savefig.bbox': 'tight', 'pdf.use14corefonts': True}):
+            report = F.save_publication(fig, 'figures/fig1', **args)
+        pdf = Path('figures/fig1.pdf')
+        previous = pdf.read_bytes()
+        self.assertEqual(report['status'], 'pass')
+        self.assertEqual(Path('figures/plot_fig1.py').read_bytes(), script.read_bytes())
+        self.assertEqual(json.loads(Path('figures/fig1.analysis.json').read_text())['figure_check']['status'], 'pass')
+        self.assertEqual(Path(report['preview']).name, 'fig1.preview.png')
+
+        ax.set_xlabel('Time \U0010ffff (s)')
+        with self.assertRaisesRegex(ValueError, '缺少字形'):
+            F.save_publication(fig, 'figures/fig1', **args)
+        self.assertEqual(pdf.read_bytes(), previous)
+
     def test_target_column_uses_effective_dpi(self):
         from PIL import Image
         img = Image.new('RGB', (1200, 600))

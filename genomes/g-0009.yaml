@@ -2,7 +2,7 @@ id: g-0009
 parent: g-0007
 createdBy: manual
 createdAt: 2026-11-18 17:07:45.782000+00:00
-status: active
+status: archived
 note: 启用导入技能 scientific-visualization、matplotlib、seaborn（来自 K-Dense-AI/scientific-agent-skills，用户选择）；figure-style
   更新到 v2（接入出图风格库 SciencePlots / tueplots / aquarel / cmcrameri）
 instructions:
