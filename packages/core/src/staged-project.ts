@@ -159,7 +159,10 @@ export class StagedProject {
           this.imported.set(rel, { source: file.key, copy: copy.key })
           continue
         }
-        throw new Error(`项目和容器同时修改了 ${rel}，请先解决覆盖冲突`)
+        // The container's edit was already published to the session output folder, so nothing is lost:
+        // the project version is newer, refresh the working copy from it.
+        if (this.seen.get(rel) !== copy.key)
+          throw new Error(`项目和容器同时修改了 ${rel}，容器中的修改尚未保存，请先解决覆盖冲突`)
       }
       bytes += file.size - (copy?.size ?? 0)
       count += copy ? 0 : 1
