@@ -68,6 +68,25 @@ test('staged projects reject overlapping roots, limit copies and preserve unmodi
   assert.throws(() => limited.sync(), /大小超限/)
 })
 
+test('project edits after a published container edit refresh the working copy instead of blocking every run', (t) => {
+  const { cwd } = fixture(t)
+  const stage = stageDirectory()
+  t.after(stage.dispose)
+  writeFileSync(join(cwd, 'plot.py'), 'v1')
+  const project = new StagedProject(cwd, stage.work)
+  project.sync()
+  writeFileSync(join(stage.work, 'plot.py'), 'container v2')
+  assert.deepEqual(project.publish('s-fixture'), [join('evoscholar-out', 's-fixture', 'plot.py')])
+  writeFileSync(join(cwd, 'plot.py'), 'project v3')
+  project.sync()
+  assert.equal(readFileSync(join(stage.work, 'plot.py'), 'utf8'), 'project v3')
+  assert.equal(readFileSync(join(cwd, 'evoscholar-out', 's-fixture', 'plot.py'), 'utf8'), 'container v2')
+  // An unsaved container edit still blocks the sync, so it cannot be silently overwritten.
+  writeFileSync(join(stage.work, 'plot.py'), 'container v4, not published')
+  writeFileSync(join(cwd, 'plot.py'), 'project v5')
+  assert.throws(() => project.sync(), /尚未保存/)
+})
+
 test('execution tools normalize delivery paths without mutating harness arguments', (t) => {
   const { env } = fixture(t)
   const [python, command] = buildTools(['run_python', 'run_command'], env)
