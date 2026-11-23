@@ -32,6 +32,8 @@
 
 **下载安装包（推荐）。** 在 [Releases](https://github.com/Dylannn-7/EvoScholar/releases) 下载对应系统的安装包：macOS 选 `EvoScholar-<版本>-arm64.dmg`（Apple 芯片）或 `-x64.dmg`（Intel），Windows 选 `EvoScholar-Setup-<版本>.exe`。安装后双击打开，不需要终端，也没有配对步骤。
 
+应用内会提示新版本，可在「设置 → 关于」下载对应系统的安装包。
+
 安装包暂未签名，第一次打开需要多一步：
 
 - **macOS**：在「应用程序」里右键 EvoScholar → 打开 → 打开。也可以在「系统设置 → 隐私与安全性」里点「仍要打开」。
