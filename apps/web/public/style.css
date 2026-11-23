@@ -553,6 +553,15 @@ body.fresh .starters { display: grid; }
 .flow-row .frefs { display: inline-flex; gap: 4px; flex-wrap: wrap; vertical-align: middle; }
 .flow-row p { margin: 4px 0 0; color: var(--text); font-size: 12.5px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .flow-row .fa { flex: none; align-self: center; color: var(--text-3); display: grid; }
+.operator-step { border: 0; text-align: left; color: var(--text); font: inherit; cursor: pointer; }
+.operator-step:hover { background: rgb(var(--ink) / .07); }
+.operator-step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.operator-summary { display: block; margin-top: 4px; font-size: 12.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.operator-records { display: grid; gap: 8px; }
+.operator-record { min-width: 0; border: 1px solid var(--hair); border-radius: 10px; padding: 10px 12px; }
+.operator-record summary { cursor: pointer; color: var(--strong); font-size: 13px; }
+.operator-record-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; font-size: 11px; color: var(--text-3); }
+.operator-record .skd-code + .skd-code { margin-top: 6px; }
 .flow.compact { padding: 8px 14px 8px 16px; }
 .flow .flow-text { flex: 1; min-width: 0; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 code.ref { font-size: 11px; padding: 1px 6px; border-radius: 6px; color: var(--fc); background: rgb(var(--fcc) / .12); }

@@ -6,6 +6,7 @@ import { confirmDialog, esc, openModal, promptDialog, toast } from './modal.js'
 import { openFilePreviewModal } from './review.js'
 import { chooseFolder } from './folder-picker.js'
 import { md } from './markdown.js'
+import { loadSpectralExample, openOperatorRecord, operatorCard } from './operator-evidence.js'
 
 const shell = (root, title, desc, actions = '') => {
   root.innerHTML = `<div class="page glass dark"><div class="page-head"><h1>${title}</h1><div class="page-actions">${actions}</div>${desc ? `<div class="desc">${desc}</div>` : ''}</div><div class="page-body"></div></div>`
@@ -21,7 +22,7 @@ let pluginTab = 'skills'
 const DOMAINS = { literature: ['文献核查', 'search'], figure: ['统计绘图', 'image'], optics: ['光电分析', 'bolt'], ml: ['机器学习', 'brain'], data: ['数据处理', 'data'], writing: ['论文合规', 'shield'], diagram: ['示意图', 'palette'], learned: ['沉淀技能', 'code'], other: ['其他', 'plugins'] }
 const SKILL_META = {
   'literature-review': ['literature'], 'research-integrity': ['literature'], 'writing-check': ['writing'],
-  'figure-style': ['figure'], 'figure-composer': ['figure'], 'tikz-diagram': ['diagram'],
+  'figure-style': ['figure'], 'figure-composer': ['figure'], 'statistical-analysis': ['figure'], 'tikz-diagram': ['diagram'],
   'optics-spectra': ['optics'], 'optics-fields': ['optics'], 'device-curves': ['optics'],
   'ml-curves': ['ml'], 'ml-results': ['ml'], 'data-tables': ['data'],
   matplotlib: ['figure', 'Matplotlib 科研绘图：精细控制图元，画少见图型，导出 PNG / PDF / SVG。快速统计图用 seaborn，期刊多面板组图用 scientific-visualization。'],
@@ -179,6 +180,8 @@ async function openSkillDetail (root, name) {
   const src = d.source || {}
   const imported = ['github', 'zip', 'folder'].includes(src.type)
   const kind = src.type === 'forged' ? '锻造' : src.bundled ? '随应用附带' : imported ? '导入' : '内置'
+  const releases = src.releases
+  const previous = (releases?.approved || []).filter((v) => v !== releases.active).sort((a, b) => b - a)
   openModal({
     title: name,
     wide: true,
@@ -187,6 +190,15 @@ async function openSkillDetail (root, name) {
       ${d.description ? `<p class="skd-desc">${esc(d.description)}</p>` : ''}
       ${imported && !src.bundled ? `<label class="inline skd-opt"><input type="checkbox" id="skTrust" ${src.trusted ? 'checked' : ''}> 信任这个技能</label>` : ''}
       ${src.type === 'forged' ? `<label class="inline skd-opt"><input type="checkbox" id="skKernel" ${src.disabled ? '' : 'checked'}> 启用</label>` : ''}
+      ${releases ? `<div class="skd-meta">
+        <span class="badge">项目内 · ${esc(releases.scope.input.extension)}</span>
+        ${releases.active ? `<span class="badge ok">生效 v${esc(releases.active)}</span>` : ''}
+        ${releases.trial ? `<span class="badge warn">试用 v${esc(releases.trial)}</span>` : ''}
+      </div><pre class="skd-code">${esc(releases.scope.input.header.join('\n'))}</pre>` : ''}
+      ${previous.length ? `<div class="inline skd-opt">
+        <select id="skRollbackVersion" aria-label="已批准的历史版本">${previous.map((v) => `<option value="${esc(v)}">v${esc(v)}</option>`).join('')}</select>
+        <button class="btn ghost small" type="button" id="skRollback">回滚算子</button>
+      </div>` : ''}
       <div class="msg assistant skd-body">${md(d.body || '')}</div>
       ${d.kernel ? Object.entries(d.kernel).map(([file, code]) => `<h4 class="skd-h">${esc(file)}</h4><pre class="skd-code">${esc(code)}</pre>`).join('') : ''}
       ${d.files.length ? `<h4 class="skd-h">附带文件</h4><div class="skd-files">${d.files.map((f) => `<button type="button" class="skd-file" data-f="${esc(f.path)}" ${f.text ? '' : 'disabled'}><span>${esc(f.path)}</span><span class="faint">${fmtSize(f.size)}</span></button>`).join('')}</div><pre class="skd-code" id="skFile" hidden></pre>` : ''}`,
@@ -196,6 +208,17 @@ async function openSkillDetail (root, name) {
       })
       el.querySelector('#skKernel')?.addEventListener('change', async (e) => {
         try { await patch(`/api/plugins/skills/${name}`, { kernelEnabled: e.target.checked }); renderPlugins(root) } catch (err) { e.target.checked = !e.target.checked; toast(err.message, 'err') }
+      })
+      el.querySelector('#skRollback')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget
+        const version = Number(el.querySelector('#skRollbackVersion').value)
+        btn.disabled = true
+        try {
+          await patch(`/api/plugins/skills/${encodeURIComponent(name)}`, { rollbackVersion: version })
+          toast(`已回滚到 v${version}`, 'ok')
+          await renderPlugins(root)
+          await openSkillDetail(root, name)
+        } catch (err) { btn.disabled = false; toast(err.message, 'err') }
       })
       el.querySelector('.skd-files')?.addEventListener('click', async (e) => {
         const b = e.target.closest('[data-f]')
@@ -616,7 +639,9 @@ function memoryScatter (memory, score) {
 export async function renderTrajectory (root, arg) {
   if (typeof arg === 'string' && ['timeline', 'memory', 'overlays', 'versions'].includes(arg)) trajTab = arg
   const body = shell(root, '轨迹', '')
-  const [ev, evo] = await Promise.all([api('/api/evolve'), api('/api/evolution')])
+  const [ev, evo, example] = await Promise.all([api('/api/evolve'), api('/api/evolution'), loadSpectralExample()])
+  const approvedReleases = new Set(ev.log.filter((e) => e.data?.action === 'kernel.approve').map((e) => e.data.releaseId))
+  const openSession = (id) => { go('workbench'); document.dispatchEvent(new CustomEvent('evo:open-session', { detail: id })) }
   const pending = evo.candidates.filter((c) => c.status === 'pending')
   const live = ev.memory.filter((m) => m.status !== 'retired')
   const overlays = ev.overlays.filter((o) => o.status === 'trial' || o.status === 'kept')
@@ -629,7 +654,19 @@ export async function renderTrajectory (root, arg) {
       ${pick.size ? `<button class="btn primary small" id="consol" type="button">沉淀为 genome 候选（${pick.size}）</button>` : ''}
       ${trajTab === 'memory' ? `<div class="seg">${[['live', '在用'], ['trial', '试用'], ['active', '生效'], ['retired', '已淘汰']].map(([id, l]) => `<button type="button" class="${memFilter === id ? 'on' : ''}" data-mf="${id}">${l}</button>`).join('')}</div><button class="btn ghost small" id="addPref" type="button">${icon('plus', 14)}添加偏好</button>` : ''}</div>`
     if (trajTab === 'timeline') {
-      html += ev.log.length ? `<div class="flow-legend">${FLOW_CATS.map(([id, l]) => `<span><i class="fc-${id}"></i>${l}</span>`).join('')}</div><div class="flows">${ev.log.map((e) => flowCard(e, sessLink)).join('')}</div>` : '<div class="empty-state"><b>还没有自进化记录</b></div>'
+      const sample = example ? operatorCard({ ...example, id: 'spectral-example', sample: true }) : ''
+      const records = ev.log.map((e) => {
+        const data = e.data
+        if (data?.action !== 'kernel.forge') return flowCard(e, sessLink)
+        const title = `${data.skill} v${data.version}`
+        return operatorCard({ id: e.id, title, badge: '算子', summaries: {
+          trigger: data.trigger ? `同回合最近报错 · ${data.trigger.tool}` : '无关联报错',
+          version: approvedReleases.has(data.releaseId) ? '已记录人工批准' : '锻造时为试用',
+          result: '查看本版本的运行输出'
+        } })
+      })
+      if (records.length) html += `<div class="flow-legend">${FLOW_CATS.map(([id, l]) => `<span><i class="fc-${id}"></i>${l}</span>`).join('')}</div>`
+      html += records.length || sample ? `<div class="flows">${sample}${records.join('')}</div>` : '<div class="empty-state"><b>还没有自进化记录</b></div>'
     } else if (trajTab === 'memory') {
       const list = ev.memory.filter((m) => memFilter === 'live' ? m.status !== 'retired' : m.status === memFilter)
       if (ev.memory.length) html += memoryScatter(ev.memory, score)
@@ -724,7 +761,8 @@ export async function renderTrajectory (root, arg) {
     }
     const t = e.target.closest('[data-t]'); if (t) { trajTab = t.dataset.t; return draw() }
     const mf = e.target.closest('[data-mf]'); if (mf) { memFilter = mf.dataset.mf; return draw() }
-    const sl = e.target.closest('[data-sess]'); if (sl) { go('workbench'); return document.dispatchEvent(new CustomEvent('evo:open-session', { detail: sl.dataset.sess })) }
+    const evidence = e.target.closest('[data-operator-id]'); if (evidence) return openOperatorRecord(evidence, example, openSession)
+    const sl = e.target.closest('[data-sess]'); if (sl) return openSession(sl.dataset.sess)
     try {
       if (e.target.closest('#addPref')) {
         const text = await promptDialog({ title: '添加偏好', message: '', multiline: true })

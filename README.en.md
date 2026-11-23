@@ -81,6 +81,8 @@ npm run demo
 
 The Plugins page manages skills, tools, rule packs and figure styles. Skills use the [Agent Skills](https://github.com/anthropics/skills) format (`SKILL.md` + optional references / scripts) and can be imported from a GitHub path, a zip or a local folder. Besides the built-in skills, scientific-visualization, matplotlib and seaborn from [K-Dense scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills) are included.
 
+For publication figures, place the experiment inputs in the project's `raw_data/` directory and specify the venue and column width in chat. With `statistical-analysis` enabled, the assistant runs the workflow in the sandbox and produces a PDF, a PNG rendered from that PDF, a runnable plotting script and an analysis log. Rebuild any existing sandbox image from Code execution before using this workflow.
+
 ![26 figure styles](docs/images/figure-styles.jpg)
 
 ## Data and privacy

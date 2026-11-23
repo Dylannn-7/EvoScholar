@@ -83,6 +83,8 @@ npm run demo
 
 「插件」页管理技能、工具、规则包和出图风格。技能使用 [Agent Skills](https://github.com/anthropics/skills) 格式（`SKILL.md` + 可选的 references / scripts），可以从 GitHub 路径、zip 或本地文件夹导入。内置技能之外，已集成 [K-Dense scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills) 的 scientific-visualization、matplotlib、seaborn。
 
+论文定稿图可在项目里把实验输入放到 `raw_data/`，并在对话中指定期刊和栏宽。启用 `statistical-analysis` 技能后，助手会在容器中生成 PDF、PDF 渲染预览、重跑脚本和分析日志。已有沙箱镜像的工作区需在「代码执行」中重新构建一次镜像。
+
 ![26 种出图风格](docs/images/figure-styles.jpg)
 
 ## 数据与隐私

@@ -51,6 +51,13 @@ export function validateDeliverablePaths(value: unknown): string[] {
   })
 }
 
+export function validatePublicationDeliverables(value: unknown): string[] {
+  const paths = validateDeliverablePaths(value)
+  if (!paths.length || paths.some(path => !/^(figures|processed)\//.test(path)))
+    throw new Error('论文出图须声明交付文件，路径只能位于 figures/ 或 processed/')
+  return paths
+}
+
 function scan(root: string, limits = STAGE_LIMITS, rejectLinks = false): Map<string, File> {
   const files = new Map<string, File>()
   let bytes = 0, entries = 0
@@ -186,7 +193,7 @@ export class StagedProject {
     }))
   }
 
-  publish(sessionId: string, delivery?: ReadonlyMap<string, string | undefined>): string[] {
+  publish(sessionId: string, delivery?: ReadonlyMap<string, string | undefined>, declaredOnly = false): string[] {
     const output = join('evoscholar-out', sessionId)
     const pending: { rel: string; file: File; dest: string; target: string; source: string; old?: string; next?: string }[] = []
     const destinations = new Set<string>()
@@ -196,7 +203,7 @@ export class StagedProject {
     }
     for (const [rel, file] of files) {
       const explicit = delivery?.has(rel)
-      if (!explicit && this.seen.get(rel) === file.key) continue
+      if (!explicit && (declaredOnly || this.seen.get(rel) === file.key)) continue
       const dest = explicit || contained(output, rel) ? rel : join(output, rel)
       const target = validateStageTarget(this.root, dest)
       const source = validateStageTarget(this.work, rel)
