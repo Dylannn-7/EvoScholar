@@ -1,8 +1,8 @@
 # 循环内自进化（In-Loop Self-Evolution）设计
 
-状态：v3 方案 + `docs/PLAN.md` §3 的修改。**P3 已实现（2026-11-19）**：记忆库（经验 / 偏好，Beta 打分，试用 → 生效 → 淘汰，外部来源标为 untrusted）、回忆注入（回合开始 + 失败时上下文检索）、失败信号与强制反思、第三次相同失败的 guard、reflect / note_lesson / recall / tune_harness / offer_choices 五个工具、会话覆盖层（prompt.note、tool.note、skill.enable / disable，下一回合通过 configure 生效）、回答前自检（每回合最多一次）、回合评分与归因、迟到的好评 / 差评补记、「以后都……」直接记为置顶偏好、用户修改交付文件后的观察。代码在 `packages/core/src/evolve/`，测试在 `evolve.loop.test.ts`。
-**P4 已实现（2026-11-19）**：forge_skill / run_skill（静态检查 + 沙箱测试，试用 → 在另外两个会话复用成功后转正）、patch_skill（文档技能的新版本，经会话覆盖层试用）、propose_rule（写作规则提案进入用户规则包 `data/rulepacks/user.yaml`，试用规则以提示出现，用户采纳后生效）、沉淀（选中的会话调整和高分经验 → 一个 genome 候选，用户在「轨迹 → 版本」批准）。反思过的失败不再触发自检；「以后都 / 一律 / 每次都」才记为明确偏好。
-仍未实现：workflow.* 与 route / param 算子；回放集验证（目前沉淀只生成候选，由用户审批；本地有 `evals/` 时可用 `npm run es -- evolve` 做回归）。按 PLAN §3 第 5 条去掉了评委打分。
+状态：以下机制均已实现（截至 0.3.6）。**记忆与反思**：记忆库（经验 / 偏好，Beta 打分，试用 → 生效 → 淘汰，外部来源标为 untrusted）、回忆注入（回合开始 + 失败时上下文检索）、失败信号与强制反思、第三次相同失败的 guard、reflect / note_lesson / recall / tune_harness / offer_choices 五个工具、会话覆盖层（prompt.note、tool.note、skill.enable / disable，下一回合通过 configure 生效）、回答前自检（每回合最多一次）、回合评分与归因、迟到的好评 / 差评补记、「以后都……」直接记为置顶偏好、用户修改交付文件后的观察。代码在 `packages/core/src/evolve/`，测试在 `evolve.loop.test.ts`。
+**技能与沉淀**：forge_skill / run_skill（静态检查 + 沙箱测试，试用 → 在另外两个会话复用成功后转正）、patch_skill（文档技能的新版本，经会话覆盖层试用）、propose_rule（写作规则提案进入用户规则包 `data/rulepacks/user.yaml`，试用规则以提示出现，用户采纳后生效）、沉淀（选中的会话调整和高分经验 → 一个 genome 候选，用户在「轨迹 → 版本」批准）。反思过的失败不再触发自检；「以后都 / 一律 / 每次都」才记为明确偏好。
+**候选验证**：genome 候选可在本地做离线回放验证（`verifyCandidateOffline`），验证记录（运行编号、通过数与总数、范围）随候选显示在「轨迹 → 版本」；未经验证的候选需用户再次确认才能上线。可执行技能按项目与输入格式限定，按版本试用、审批转正并可回滚（见第 5 节）。尚未实现：workflow.* 与 route / param 算子。D9 的评委打分后来取消，回合评分只用用户信号与环境信号。
 
 ## 0. 已确定的决策
 
