@@ -12,7 +12,7 @@ export const $ = (s, el = document) => el.querySelector(s)
 // ---------------------------------------------------------------- theme (dark / light / follow system)
 const THEMES = ['dark', 'light', 'system']
 const darkQuery = matchMedia('(prefers-color-scheme: dark)')
-let themePref = 'dark'
+let themePref = 'light'
 function applyTheme () {
   const resolved = themePref === 'system' ? (darkQuery.matches ? 'dark' : 'light') : themePref
   document.documentElement.dataset.theme = resolved
@@ -30,7 +30,7 @@ darkQuery.addEventListener?.('change', () => { if (themePref === 'system') apply
   // The desktop shell passes the saved theme in the URL so the first paint already matches.
   let initial = new URLSearchParams(location.search).get('theme')
   if (!THEMES.includes(initial)) { try { initial = localStorage.getItem('evoscholar.theme') } catch {} }
-  setThemePreference(THEMES.includes(initial) ? initial : 'dark')
+  setThemePreference(THEMES.includes(initial) ? initial : 'light')
   // The macOS desktop shell hides the title bar; the page then leaves room for the window buttons.
   // Kept for the tab's lifetime: the router rewrites the URL, and a reload must not lose it.
   let shellMac = new URLSearchParams(location.search).get('shell') === 'mac'
