@@ -1,0 +1,214 @@
+{
+  "title": "光谱算子迁移验证",
+  "badge": "合成光谱样例",
+  "recordedAt": "2026-11-23T02:05:29.134Z",
+  "summaries": {
+    "trigger": "单表头 CSV 读取在波长列名处报 ValueError",
+    "version": "instrument-spectrum v1，试用 · 待人工批准",
+    "result": "留出通过 0/2 → 2/2，正常谱峰位和线宽一致"
+  },
+  "records": {
+    "trigger": [
+      {
+        "id": "spec-original",
+        "label": "训练样本的首次读取报错",
+        "text": "[退出码 1]\nValueError: could not convert string to float: 'Wavelength'\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/control/cell.py\", line 2, in <module>\n    np.loadtxt('training.csv', delimiter=',', skiprows=1, unpack=True)\n    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/site-packages/numpy/lib/_npyio_impl.py\", line 1397, in loadtxt\n    arr = _read(fname, dtype=dtype, comment=comment, delimiter=delimiter,\n                converters=converters, skiplines=skiprows, usecols=usecols,\n                unpack=unpack, ndmin=ndmin, encoding=encoding,\n                max_rows=max_rows, quote=quotechar)\n  File \"/usr/local/lib/python3.13/site-packages/numpy/lib/_npyio_impl.py\", line 1048, in _read\n    arr = _load_from_filelike(\n        data, delimiter=delimiter, comment=comment, quote=quote,\n    ...<3 lines>...\n        encoding=encoding, filelike=filelike,\n        byte_converters=byte_converters)\nValueError: could not convert string 'Wavelength' to float64 at row 0, column 1.",
+        "data": {
+          "input": "training.csv",
+          "firstLines": [
+            "Lab Spectrometer,Export 2",
+            "Wavelength,Signal",
+            "nm,linear a.u."
+          ],
+          "skiprows": 1
+        }
+      }
+    ],
+    "version": [
+      {
+        "id": "spec-forge",
+        "label": "锻造与沙箱测试",
+        "text": "已加入技能库：instrument-spectrum v1（当前项目，.csv 表头匹配时试用）。1 个测试通过。用 run_skill 指定 version=1 调用。",
+        "data": {
+          "kind": "adjust",
+          "text": "锻造可执行技能 instrument-spectrum v1（试用，1 个测试通过）：读取指定仪器导出的波长和线性信号，测量主峰及半高全宽",
+          "refs": [
+            "K:instrument-spectrum@v1"
+          ],
+          "data": {
+            "action": "kernel.forge",
+            "releaseId": "844fec5d-27ab-4a26-833c-b46daecce5bb",
+            "skill": "instrument-spectrum",
+            "version": 1,
+            "scope": {
+              "project": "project:spectra",
+              "input": {
+                "argument": "path",
+                "extension": ".csv",
+                "header": [
+                  "Lab Spectrometer,Export 2",
+                  "Wavelength,Signal",
+                  "nm,linear a.u."
+                ]
+              }
+            },
+            "status": "trial",
+            "tests": "__EVO_PASS__ 1"
+          }
+        }
+      },
+      {
+        "id": "spec-release",
+        "label": "版本与审批状态",
+        "data": {
+          "type": "forged",
+          "kernel": true,
+          "status": "trial",
+          "sessions": [
+            "spec-forge"
+          ],
+          "reuses": [
+            "spec-run-0",
+            "spec-run-1",
+            "spec-run-2"
+          ],
+          "importedAt": "2026-11-23T02:05:26.192Z",
+          "releases": {
+            "scope": {
+              "project": "project:spectra",
+              "input": {
+                "argument": "path",
+                "extension": ".csv",
+                "header": [
+                  "Lab Spectrometer,Export 2",
+                  "Wavelength,Signal",
+                  "nm,linear a.u."
+                ]
+              }
+            },
+            "approved": [],
+            "trial": 1
+          }
+        }
+      },
+      {
+        "id": "kernel.py",
+        "label": "v1 源码",
+        "text": "\nimport numpy as np\nimport evoscholar_data as D\n\ndef measure(x, y):\n    peak = D.find_peaks(x, y, n=1)[0]\n    result = D.fwhm(x, y, index=peak['index'], baseline=0.17)\n    return {'center_nm': result['center'], 'fwhm_nm': result['fwhm']}\n\ndef run(path):\n    x, y = np.loadtxt(path, delimiter=',', skiprows=3, unpack=True)\n    return measure(x, y)\n"
+      },
+      {
+        "id": "test_kernel.py",
+        "label": "v1 的训练样本测试",
+        "text": "\nfrom pathlib import Path\nfrom kernel import run\n\ndef test_training_fixture():\n    Path('training.csv').write_text(\"Lab Spectrometer,Export 2\\nWavelength,Signal\\nnm,linear a.u.\\n1549.8,0.17\\n1549.9,0.67\\n1550.0,1.17\\n1550.1,0.67\\n1550.2,0.17\\n\")\n    result = run('training.csv')\n    assert result['center_nm'] == 1550.0\n    assert abs(result['fwhm_nm'] - 0.2) < 1e-9\n"
+      }
+    ],
+    "result": [
+      {
+        "id": "spec-baseline",
+        "label": "留出基线与正常谱参考值",
+        "text": "[退出码 0]\nBASELINE={\"held-a.csv\": {\"error\": \"ValueError\", \"message\": \"could not convert string 'Wavelength' to float64 at row 0, column 1.\"}, \"held-b.csv\": {\"error\": \"ValueError\", \"message\": \"could not convert string 'Wavelength' to float64 at row 0, column 1.\"}, \"normal\": {\"center_nm\": 1550.045, \"fwhm_nm\": 0.08400849378176645}, \"plain\": {\"center_nm\": 1550.045, \"fwhm_nm\": 0.08400849378176645}}"
+      },
+      {
+        "id": "spec-run-0",
+        "label": "held-a.csv",
+        "text": "instrument-spectrum v1\n结果：{\"center_nm\": 1550.205, \"fwhm_nm\": 0.11800964142685189}",
+        "data": {
+          "expected": {
+            "center_nm": 1550.205,
+            "fwhm_nm": 0.118
+          },
+          "tolerance_nm": {
+            "center": 0.00125,
+            "fwhm": 0.001
+          },
+          "trace": {
+            "kind": "kernel.run",
+            "skill": "instrument-spectrum",
+            "version": 1,
+            "releaseId": "844fec5d-27ab-4a26-833c-b46daecce5bb",
+            "status": "trial",
+            "input": "held-a.csv",
+            "ok": true,
+            "exitCode": 0,
+            "output": "__EVO_RESULT__{\"center_nm\": 1550.205, \"fwhm_nm\": 0.11800964142685189}"
+          }
+        }
+      },
+      {
+        "id": "spec-run-1",
+        "label": "held-b.csv",
+        "text": "instrument-spectrum v1\n结果：{\"center_nm\": 1549.875, \"fwhm_nm\": 0.1960040694223153}",
+        "data": {
+          "expected": {
+            "center_nm": 1549.875,
+            "fwhm_nm": 0.196
+          },
+          "tolerance_nm": {
+            "center": 0.00125,
+            "fwhm": 0.001
+          },
+          "trace": {
+            "kind": "kernel.run",
+            "skill": "instrument-spectrum",
+            "version": 1,
+            "releaseId": "844fec5d-27ab-4a26-833c-b46daecce5bb",
+            "status": "trial",
+            "input": "held-b.csv",
+            "ok": true,
+            "exitCode": 0,
+            "output": "__EVO_RESULT__{\"center_nm\": 1549.875, \"fwhm_nm\": 0.1960040694223153}"
+          }
+        }
+      },
+      {
+        "id": "spec-run-2",
+        "label": "normal.csv",
+        "text": "instrument-spectrum v1\n结果：{\"center_nm\": 1550.045, \"fwhm_nm\": 0.08400849378176645}",
+        "data": {
+          "expected": {
+            "center_nm": 1550.045,
+            "fwhm_nm": 0.084
+          },
+          "tolerance_nm": {
+            "center": 0.00125,
+            "fwhm": 0.001
+          },
+          "trace": {
+            "kind": "kernel.run",
+            "skill": "instrument-spectrum",
+            "version": 1,
+            "releaseId": "844fec5d-27ab-4a26-833c-b46daecce5bb",
+            "status": "trial",
+            "input": "normal.csv",
+            "ok": true,
+            "exitCode": 0,
+            "output": "__EVO_RESULT__{\"center_nm\": 1550.045, \"fwhm_nm\": 0.08400849378176645}"
+          }
+        }
+      },
+      {
+        "id": "spec-format",
+        "label": "异格式正常谱",
+        "text": "run_skill 未完成：输入格式不匹配：文件表头不匹配"
+      },
+      {
+        "id": "spec-other-project",
+        "label": "跨项目调用",
+        "text": "run_skill 未完成：当前项目没有可执行技能 instrument-spectrum v1；请检查作用域、版本和启用状态"
+      },
+      {
+        "id": "spec-integrity",
+        "label": "原始文件检查",
+        "data": {
+          "byteIdentical": true,
+          "files": [
+            "held-a.csv",
+            "held-b.csv",
+            "normal.csv",
+            "plain.csv"
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -28,7 +28,7 @@ import { skillIndex } from './skills'
 import { openWorkflow } from './workflow'
 import { installEvolveLoop, type EvolveHooks, type EvolveLoop } from './evolve/loop'
 import { EvolveStore } from './evolve/store'
-import { extraSkills, listSkills, type SkillRef } from './skills'
+import { kernelProject, listSkills, skillSource, type SkillRef } from './skills'
 import { kernelIndex } from './evolve/kernels'
 import { reconcileRuntime } from './recovery'
 
@@ -128,7 +128,7 @@ export async function openResearchSession(
   const approve = permissionGate(opts.permission ?? (() => 'ask'), opts.approve)
   let loop: EvolveLoop | undefined
   const onFiles = (paths: string[]) => { loop?.noteFiles(paths); opts.onFiles?.(paths) }
-  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, genomeId: genome.id, skills: genome.skills, approve, trace, model: ref, onFiles,
+  const env: ToolEnv = { ws: rt.ws, cwd, ledger: rt.ledger, category: () => category, sessionId, projectId: opts.evolve?.projectId, genomeId: genome.id, skills: genome.skills, approve, trace, model: ref, onFiles,
     executor: rt.executor, permission: opts.permission,
     hostExecutionAllowed: () => {
       const mode = opts.permission?.()
@@ -139,7 +139,7 @@ export async function openResearchSession(
     loop = installEvolveLoop({
       store: opts.evolve.store, sessionId, projectId: opts.evolve.projectId, stage: opts.stage, cwd,
       turnId: () => recorder.turn, emit: opts.evolve.emit, choose: opts.evolve.choose,
-      toolNames: genome.tools.enabled, skillNames: listSkills(rt.ws.root).map((x) => x.name), env
+      toolNames: genome.tools.enabled, skillNames: listSkills(rt.ws.root).filter((x) => skillSource(rt.ws.root, x.name).type !== 'forged').map((x) => x.name), env
     })
   }
   const platform = '模型代码默认在 Linux 容器用 POSIX 命令语法执行；宿主和容器通过项目相对路径交换文件。'
@@ -164,11 +164,11 @@ export async function openResearchSession(
       if (meta && !skills.some((x) => x.name === name)) skills = [...skills, { name, version: meta.version }]
     }
     const tools = [...buildTools(genome.tools.enabled, { ...env, skills }, overrides, (s) => rt.genomes.text(s)), ...(workflow?.tools ?? []), ...(loop?.tools ?? [])]
-    const forged = loop ? kernelIndex(rt.ws.root, extraSkills(rt.ws.root).map((x) => x.name)) : ''
+    const forged = loop ? kernelIndex(rt.ws.root, kernelProject(env)) : ''
     const style = rt.ws.settings?.defaults.figureStyle ? `\n- 用户默认出图风格：${rt.ws.settings.defaults.figureStyle}（在 run_python 里 \`import evoscholar_styles as S; S.use('${rt.ws.settings.defaults.figureStyle}', venue=...)\`；用户另有要求时以用户为准）` : ''
     const projectRules = loop?.projectRules() ?? ''
-    const instructions = rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, skills) + forged + (workflow?.instructions ?? '') + (loop?.instructions ?? '') + (ov?.instructions ?? '') + envNote + style + projectRules
-    return { tools, instructions, version: JSON.stringify([ov?.version ?? '', projectRules]) }
+    const instructions = rt.genomes.text(genome.instructions.system) + skillIndex(rt.ws.root, skills.filter((x) => skillSource(rt.ws.root, x.name).type !== 'forged')) + forged + (workflow?.instructions ?? '') + (loop?.instructions ?? '') + (ov?.instructions ?? '') + envNote + style + projectRules
+    return { tools, instructions, version: JSON.stringify([ov?.version ?? '', projectRules, forged]) }
   }
   const initial = assemble()
   let configured = initial.version

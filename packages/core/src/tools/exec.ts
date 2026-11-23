@@ -6,7 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { join, relative, sep } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { chooseExecution, type ExecutionJob, type IsolatedService, type ProcessResult } from '../execution'
-import { existingDeliverables, validateDeliverablePaths } from '../staged-project'
+import { existingDeliverables, validateDeliverablePaths, validatePublicationDeliverables } from '../staged-project'
 import { checkCommand, modelPath } from './sandbox'
 import { objectArgs, shellFor, textResult, type ToolEnv, type ToolFactory } from './types'
 
@@ -193,6 +193,7 @@ export const runPython: ToolFactory = (env) => ({
   description:
     '在工作目录中运行 Python（已装 numpy、pandas、scipy、matplotlib、SciencePlots 时可直接用；图用 savefig 保存为文件，不要 plt.show()）。' +
     '传 code 运行一段代码，或传 file 运行已有脚本（可带 args）。每次调用是独立进程，变量不保留，中间结果请写到文件。' +
+    '论文定稿出图用 publication=true：仅在容器中运行，raw_data/ 只读，成功后仅回写明确列出的 figures/ 或 processed/ 文件。' +
     deliveryDescription,
   parameters: {
     type: 'object',
@@ -201,35 +202,42 @@ export const runPython: ToolFactory = (env) => ({
       file: { type: 'string', description: '工作目录内的 .py 脚本路径' },
       args: { type: 'array', items: { type: 'string' } },
       timeout_s: { type: 'integer', minimum: 1, maximum: 900, description: '默认 120' },
+      publication: { type: 'boolean', description: '启用论文出图模式，需同时指定 deliverables' },
       deliverables: deliverablesParameter
     },
     additionalProperties: false
   },
   scheduling: 'exclusive',
   validate(i) {
-    const a = objectArgs(i, ['code', 'file', 'args', 'timeout_s', 'deliverables'])
+    const a = objectArgs(i, ['code', 'file', 'args', 'timeout_s', 'publication', 'deliverables'])
     if ((a.code === undefined) === (a.file === undefined) ||
       (a.code !== undefined && typeof a.code !== 'string') || (a.file !== undefined && typeof a.file !== 'string'))
       throw new Error('请提供 code 或 file，且只能提供一个')
     validateTimeout(a.timeout_s, 900)
     if (a.args !== undefined && (!Array.isArray(a.args) || !a.args.every((x) => typeof x === 'string'))) throw new Error('args must be strings')
+    if (a.publication !== undefined && typeof a.publication !== 'boolean') throw new Error('publication 必须为布尔值')
+    if (a.publication) return { ...a, deliverables: validatePublicationDeliverables(a.deliverables) } as Json
     return (a.deliverables === undefined ? a : { ...a, deliverables: validateDeliverablePaths(a.deliverables) }) as Json
   },
   authorize: async (args, ctx) => {
-    const a = args as { code?: string; file?: string; deliverables?: string[] }
+    const a = args as { code?: string; file?: string; deliverables?: string[]; publication?: boolean }
     const summary = a.file ? `运行脚本 ${a.file}` : `运行 Python 代码：\n${String(a.code).slice(0, 600)}`
-    return approve(env, 'run_python', summary + deliveryApproval(a.deliverables), ctx.signal)
+    return approve(env, 'run_python', (a.publication ? '论文出图 · ' : '') + summary + deliveryApproval(a.deliverables), ctx.signal)
   },
   async execute(args, ctx) {
-    const a = args as { code?: string; file?: string; args?: string[]; timeout_s?: number; deliverables?: string[] }
-    const mode = await chooseExecution(env)
+    const a = args as { code?: string; file?: string; args?: string[]; timeout_s?: number; deliverables?: string[]; publication?: boolean }
+    if (a.publication && !(await env.executor?.available())) throw new Error('论文出图的原数据只读保护需要 Linux 容器，请启动容器引擎并准备镜像')
+    const mode = a.publication ? 'isolated' : await chooseExecution(env)
     const args0 = a.args ?? []
     const script = a.file === undefined ? undefined : modelPath(env, a.file)
     const before = mode === 'host' ? snapshot(env.cwd) : new Map<string, number>()
     let r
     if (mode === 'isolated') {
       const path = script ? relative(modelPath(env, '.'), script).split(sep).join('/') : '/control/cell.py'
-      const job: ExecutionJob = { host: [pythonBin(env), []], sandbox: ['python', path, ...args0], code: a.code, deliverables: a.deliverables }
+      const job: ExecutionJob = {
+        host: [pythonBin(env), []], sandbox: ['python', path, ...args0], code: a.code,
+        deliverables: a.deliverables, publication: a.publication
+      }
       r = await env.executor!.run(env, job, a.timeout_s ?? 120, ctx.signal)
     } else {
       let file = script

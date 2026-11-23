@@ -13,6 +13,7 @@ upstream license as LICENSE.repo.md and its provenance in .source.json:
   - skills/scientific-visualization
   - skills/matplotlib
   - skills/seaborn
+  - skills/statistical-analysis (adapted for EvoScholar's SciPy workflow)
 
 The figure style catalog (python/evoscholar_styles.py) uses these packages, installed from PyPI by
 `npm run setup:python` (not redistributed here):

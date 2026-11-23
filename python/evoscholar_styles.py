@@ -140,8 +140,11 @@ def use(style: str | None = None, venue: str | dict | None = None) -> dict:
     info: dict[str, Any] = {'style': entry['id'], 'library': entry['library']}
     if venue is not None or kind == 'evo':
         import evoscholar_fig as F
-        info |= F.apply_style(venue) if venue is not None else F.apply_style(None)
+        rules = F.load_rules(venue)
+        info |= F.apply_style(rules)
         if kind != 'evo':
+            if (rules.get('axes') or {}).get('gridlines') is not None:
+                keep.pop('axes.grid', None)
             mpl.rcParams.update(keep)
     _add_cjk_fallback()
     return info

@@ -15,6 +15,7 @@ export type ToolEnv = {
   ledger: Ledger
   category: () => BudgetCategory
   sessionId?: string
+  projectId?: string | null
   genomeId?: string
   skills?: readonly SkillRef[]
   /** Read-only workflow children do not save shared scratch outputs. */

@@ -7,7 +7,9 @@ import { inflateRawSync } from 'node:zlib'
 import YAML from 'yaml'
 import { atomicWriteFile } from './atomic-file'
 import type { Runtime } from './session'
-import { listSkills, readSkillFile, skillNameValid, skillSource, writeSkillSource, type SkillSource } from './skills'
+import {
+  kernelRevisionPath, listSkills, readKernelSkill, readSkillFile, skillNameValid, skillSource, writeSkillSource, type SkillSource
+} from './skills'
 import { inside } from './tools/sandbox'
 import { pythonBin, runProcess } from './tools/exec'
 import { readUserRules, writeUserRules } from './evolve/kernels'
@@ -256,6 +258,7 @@ export async function importSkill(rt: Runtime, src: { folder?: string; zip?: str
 
 /** Enabling or disabling a skill changes the harness: recorded as a manual genome version. */
 export function setSkillEnabled(rt: Runtime, name: string, on: boolean) {
+  if (on && skillSource(rt.ws.root, name).type === 'forged') throw new Error('可执行技能请使用独立的启停开关')
   const meta = listSkills(rt.ws.root).find((s) => s.name === name)
   if (!meta) throw new Error(`没有技能 ${name}`)
   const g = rt.genomes.load()
@@ -322,15 +325,22 @@ const KERNEL_FILES = ['kernel.py', 'test_kernel.py']
 
 /** Read-only detail for the plugin page: body, revisions, bundled files and forged source. */
 export function skillDetail(root: string, name: string) {
-  const s = readSkillFile(root, name)
+  const source = skillSource(root, name)
+  const selected = source.releases?.active ?? source.releases?.trial
+  const s = selected === undefined ? readSkillFile(root, name) : readKernelSkill(root, name, source, selected)
   if (!s) return undefined
   const dir = inside(root, join('skills', name))
   const versions = new Set<number>([s.meta.version])
+  if (source.releases) {
+    for (const version of [...source.releases.approved, source.releases.trial]) {
+      if (version !== undefined) versions.add(version)
+    }
+  }
   const files: { path: string; size: number; text: boolean }[] = []
   const walk = (d: string, depth: number) => {
     if (depth > 6 || files.length >= 300) return
     for (const entry of readdirSync(d, { withFileTypes: true })) {
-      if (entry.isSymbolicLink() || entry.name === '.source.json' || entry.name === '__pycache__') continue
+      if (entry.isSymbolicLink() || entry.name.startsWith('.') || entry.name === '__pycache__') continue
       const full = join(d, entry.name)
       const rel = relative(dir, full).split(sep).join('/')
       if (entry.isDirectory()) { walk(full, depth + 1); continue }
@@ -341,9 +351,10 @@ export function skillDetail(root: string, name: string) {
     }
   }
   walk(dir, 0)
-  const source = skillSource(root, name)
+  const kernelPath = kernelRevisionPath(name, source, selected ?? 1)
+  const kernelDir = inside(root, kernelPath)
   const kernel = source.type === 'forged'
-    ? Object.fromEntries(KERNEL_FILES.filter((f) => existsSync(join(dir, f))).map((f) => [f, readSkillText(root, name, f)]))
+    ? Object.fromEntries(KERNEL_FILES.filter((f) => existsSync(join(kernelDir, f))).map((f) => [f, readSkillText(root, name, relative(dir, join(kernelDir, f)))]))
     : undefined
   return {
     name, version: s.meta.version, description: s.meta.description, body: s.body, source,
@@ -375,4 +386,19 @@ export function setKernelEnabled(rt: Runtime, name: string, on: boolean) {
   const src = skillSource(rt.ws.root, name)
   if (src.type !== 'forged') throw new Error('只有锻造的可执行技能可以单独启停')
   writeSkillSource(rt.ws.root, name, { ...src, disabled: !on })
+}
+
+/** Restore an already approved release. Trials and their reuse evidence stay independent. */
+export function rollbackKernel(rt: Runtime, name: string, version: unknown) {
+  const src = skillSource(rt.ws.root, name)
+  const releases = src.releases
+  if (src.type !== 'forged' || !releases || typeof version !== 'number' ||
+      !Number.isSafeInteger(version) || !releases.approved.includes(version))
+    throw new Error('只能回滚到已批准的可执行技能版本')
+  if (!existsSync(inside(rt.ws.root, join(kernelRevisionPath(name, src, version), 'kernel.py'))))
+    throw new Error('该版本缺少可执行代码')
+  if (releases.active === version) return
+  writeSkillSource(rt.ws.root, name, { ...src, status: 'active', releases: { ...releases, active: version } })
+  rt.evolve.log({ kind: 'revert', text: `可执行技能 ${name} v${releases.active} 回滚为 v${version}`,
+    refs: [`K:${name}@v${version}`], data: { skill: name, version, from: releases.active } })
 }

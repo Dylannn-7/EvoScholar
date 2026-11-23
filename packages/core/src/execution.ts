@@ -10,6 +10,7 @@ export type ExecutionJob = {
   code?: string
   skillDir?: string
   emptyWorkspace?: boolean
+  publication?: boolean
   /** Final files whose container-relative paths are also their destinations in the project. */
   deliverables?: string[]
 }

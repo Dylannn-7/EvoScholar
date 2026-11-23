@@ -3,15 +3,19 @@
 // run_skill: call it (promoted to active after successful reuse in two other sessions and human approval);
 // patch_skill: add a point to a document skill as a new revision (session overlay until approved);
 // propose_rule: a writing rule for the user's own rule pack (trial until the user accepts it).
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { dirname, extname, join, relative, sep } from 'node:path'
 import YAML from 'yaml'
 import type { AgentTool, Json } from '@evoscholar/harness'
 import { atomicWriteFile } from '../atomic-file'
-import { inside } from '../tools/sandbox'
+import { inside, modelPath } from '../tools/sandbox'
 import { pythonBin, runModelProcess } from '../tools/exec'
 import { objectArgs, textResult, type ToolEnv } from '../tools/types'
-import { readSkillFile, saveSkillRevision, skillNameValid, skillSource, writeSkillSource } from '../skills'
+import {
+  extraSkills, kernelProject, kernelRevisionPath, readSkillFile, saveSkillRevision, skillNameValid, skillSource,
+  visibleKernelRevisions, writeSkillSource, type KernelInputFormat, type KernelReleases, type SkillSource
+} from '../skills'
 import { validateMemoryText, type EvolveEvent, type EvolveStore } from './store'
 
 const BANNED: [RegExp, string][] = [
@@ -37,9 +41,25 @@ export function checkKernelCode(code: string, file = 'kernel.py'): string[] {
 }
 
 const RUNNER = `import importlib.util, json, sys
+from pathlib import Path
+
+args = json.loads(sys.argv[3])
+input_format = json.loads(sys.argv[4])
+if input_format:
+    expected = input_format['header']
+    try:
+        path = Path(args[input_format['argument']])
+        if path.suffix.lower() != input_format['extension']:
+            raise ValueError('文件后缀不匹配')
+        with path.open('r', encoding='utf-8-sig') as source:
+            actual = [source.readline(513).removesuffix('\\n') for _ in expected]
+        if actual != expected:
+            raise ValueError('文件表头不匹配')
+    except (OSError, ValueError) as error:
+        sys.exit('输入格式不匹配：' + str(error))
+
 spec = importlib.util.spec_from_file_location('evo_kernel_' + sys.argv[2], sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-args = json.loads(sys.argv[3])
 res = mod.run(**args)
 print('__EVO_RESULT__' + json.dumps(res, ensure_ascii=False, default=str))`
 const TEST_RUNNER = `import sys
@@ -56,6 +76,7 @@ export type KernelHooks = {
   sessionId: string
   env: ToolEnv
   emit: (e: EvolveEvent) => void
+  lastFailure?: () => { invocationId: string; tool: string } | undefined
   addOverlay: (op: string, target: string, value: string, reason: string) => string
 }
 
@@ -69,6 +90,55 @@ export function readUserRules(dataDir: string): UserRule[] {
 export function writeUserRules(dataDir: string, rules: UserRule[]): void {
   mkdirSync(inside(dataDir, 'rulepacks'), { recursive: true })
   atomicWriteFile(inside(dataDir, userRulesFile(dataDir)), YAML.stringify({ id: 'user', name: '我的规则', status: 'verified', description: '你在使用中沉淀的写作规则（来自智能体提案或你的纠正）', sources: [{ id: 'user', title: '用户在 EvoScholar 中确认的规则' }], rules }))
+}
+
+function kernelInputFormat(value: unknown): KernelInputFormat {
+  const { argument, extension, header } = objectArgs(value, ['argument', 'extension', 'header'], ['argument', 'extension', 'header'])
+  if (typeof argument !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(argument))
+    throw new Error('输入格式的 argument 须为 Python 文件路径参数名')
+  if (typeof extension !== 'string' || !/^\.[a-zA-Z0-9]{1,12}$/.test(extension))
+    throw new Error('输入格式的 extension 须形如 .csv')
+  if (!Array.isArray(header) || !header.length || header.length > 8 ||
+      !header.every((line) => typeof line === 'string' && line.length <= 512 && !/[\r\n\0]/.test(line)) ||
+      !header.some((line) => line.trim()))
+    throw new Error('输入格式的 header 须为 1–8 条逐行匹配的 UTF-8 表头')
+  return { argument, extension: extension.toLowerCase(), header }
+}
+
+function publishTrial(root: string, name: string, src: SkillSource, scope: KernelReleases['scope'], session: string,
+                      files: { code: string; test: string; description: string; usage?: string }) {
+  const dir = inside(root, join('skills', name))
+  const parent = dirname(dir)
+  mkdirSync(parent, { recursive: true })
+  const fresh = !existsSync(dir)
+  const dest = fresh ? mkdtempSync(join(parent, '.forge-')) : dir
+  try {
+    const revisions = join(dest, 'revisions')
+    mkdirSync(revisions, { recursive: true })
+    // An interrupted metadata update can leave an unreferenced revision. Never reuse its number.
+    const version = 1 + Math.max(0, ...readdirSync(revisions).map((entry) => Number(/^v(\d+)$/.exec(entry)?.[1] ?? 0)))
+    const releaseId = randomUUID()
+    const draft = mkdtempSync(join(revisions, '.draft-'))
+    const body = `---\n${YAML.stringify({ name, version, description: files.description })}---\n\n# ${name}\n\n${files.description}\n\n${files.usage ?? ''}\n\n用 run_skill 调用，指定 name、version=${version}，args 传入 run() 的关键字参数。\n`
+    try {
+      writeFileSync(join(draft, 'kernel.py'), files.code)
+      writeFileSync(join(draft, 'test_kernel.py'), files.test)
+      writeFileSync(join(draft, 'SKILL.md'), body)
+      writeFileSync(join(draft, '.release-id'), releaseId)
+      renameSync(draft, join(revisions, `v${version}`))
+    } finally { rmSync(draft, { recursive: true, force: true }) }
+    if (!existsSync(join(dest, 'SKILL.md'))) atomicWriteFile(join(dest, 'SKILL.md'), body)
+    const next: SkillSource = {
+      ...src, type: 'forged', kernel: true, status: src.releases?.active === undefined ? 'trial' : 'active',
+      sessions: [session], reuses: [], importedAt: new Date().toISOString(),
+      releases: { ...src.releases, scope, approved: src.releases?.approved ?? [], trial: version }
+    }
+    atomicWriteFile(join(dest, '.source.json'), JSON.stringify(next, null, 2) + '\n')
+    if (fresh) renameSync(dest, dir)
+    return { version, releaseId }
+  } finally {
+    if (fresh) rmSync(dest, { recursive: true, force: true })
+  }
 }
 
 export function kernelTools(h: KernelHooks): AgentTool[] {
@@ -87,23 +157,34 @@ export function kernelTools(h: KernelHooks): AgentTool[] {
       }
     }
   })
-  const summaryOf = (name: string, a: Record<string, any>) => name === 'forge_skill' ? `锻造可执行技能 ${a.name}，并在沙箱里运行它的测试：\n${String(a.code).slice(0, 500)}` : name === 'run_skill' ? `运行技能 ${a.name}：${JSON.stringify(a.args ?? {}).slice(0, 300)}`
+  const summaryOf = (name: string, a: Record<string, any>) => name === 'forge_skill' ? `为当前项目锻造可执行技能 ${a.name}，并在沙箱里运行测试：\n${String(a.code).slice(0, 500)}` : name === 'run_skill' ? `运行技能 ${a.name}${a.version ? ` v${a.version}` : ''}：${JSON.stringify(a.args ?? {}).slice(0, 300)}`
     : name === 'patch_skill' ? `保存技能 ${a.skill} 的试用版本` : `保存写作规则 ${a.id} 的试用提案`
 
   return [
-    tool('forge_skill', '把本会话里已经跑通的一段处理流程封装成可复用的函数（可执行技能）。code 必须定义 run(**kwargs)，文件路径作为参数传入且用相对路径；test 写 test_ 开头的函数，用本会话真实输入的小片段验证 run。注意：测试在一个独立的空临时目录里运行，读不到项目文件——样例数据请内联在测试里（或在测试里用相对路径写一个小文件再读）。不允许联网、子进程、eval/exec、写死绝对路径或访问上级目录，违规时会指出具体行。宿主会做静态检查并在沙箱里跑测试，通过后以「试用」状态加入技能库，在其他会话成功复用两次后请求用户确认转正。',
+    tool('forge_skill', '把本会话跑通的文件处理流程封装为 run(**kwargs) 和 test_ 测试函数。指定稳定的 UTF-8 表头和文件后缀，试用版本只在当前项目可用。测试在空目录运行，请内联输入样例。文件路径使用相对路径。不允许联网、子进程或动态执行代码。后续版本可与已生效版本并存，在另外两个会话执行成功后请求人工确认转正。',
       {
         name: { type: 'string', description: '小写字母、数字和 -，如 parse-lumerical-csv' },
         description: { type: 'string', description: '一句话：做什么、输入什么、输出什么' },
         code: { type: 'string', description: 'kernel.py 的完整内容，必须定义 run(**kwargs)' },
         test: { type: 'string', description: 'test_kernel.py 的完整内容（from kernel import run）' },
+        input_format: {
+          type: 'object', properties: {
+            argument: { type: 'string', description: 'run 接收输入文件相对路径的参数名' },
+            extension: { type: 'string', description: '文件后缀，例如 .csv' },
+            header: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8, description: '稳定且有区分度的 UTF-8 文件开头各行，逐行精确匹配' }
+          }, required: ['argument', 'extension', 'header'], additionalProperties: false
+        },
         usage: { type: 'string', description: '参数说明和示例调用' }
-      }, ['name', 'description', 'code', 'test'], async (a, signal) => {
+      }, ['name', 'description', 'code', 'test', 'input_format'], async (a, signal) => {
         const name = String(a.name)
         if (!skillNameValid(name)) throw new Error('名称只能用小写字母、数字和 -')
-        const existing = readSkillFile(root, name)
+        const scope = { project: kernelProject(h.env), input: kernelInputFormat(a.input_format) }
         const src = skillSource(root, name)
-        if (existing && src.type !== 'forged') throw new Error(`已有同名技能 ${name}（${src.type === 'builtin' ? '内置' : '导入'}），请换个名字`)
+        if ((src.type !== 'forged' && existsSync(inside(root, join('skills', name)))) ||
+            (src.type === 'forged' && src.status === 'active' && !src.releases))
+          throw new Error(`已有同名技能 ${name}，请为新的项目算子使用不同名称`)
+        if (src.releases && JSON.stringify(src.releases.scope) !== JSON.stringify(scope))
+          throw new Error('该名称已绑定其他项目或输入格式，请使用不同名称')
         if (!/^\s*def\s+run\s*\(/m.test(a.code)) throw new Error('code 里必须定义 run(**kwargs)')
         const bad = [...checkKernelCode(a.code), ...checkKernelCode(a.test, 'test_kernel.py')]
         if (bad.length) throw new Error(`静态检查不通过：${bad.join('；')}`)
@@ -123,31 +204,25 @@ export function kernelTools(h: KernelHooks): AgentTool[] {
           if (r.code !== 0 || !/__EVO_PASS__/.test(r.stdout)) throw new Error(`测试没有通过：\n${r.out.trim().split('\n').slice(-12).join('\n')}`)
           const n = Number(/__EVO_PASS__ (\d+)/.exec(r.stdout)?.[1] ?? 0)
           const current = skillSource(root, name)
-          if (current.status === 'active' &&
-            !(await h.env.approve?.('forge_skill', `进化确认：用试用版本替换已生效的可执行技能 ${name}`, 'evolution', signal)))
-            throw new Error('用户尚未批准替换已生效的技能')
           signal?.throwIfAborted()
-          if (skillSource(root, name).importedAt !== src.importedAt) throw new Error('技能已被其他会话更新，请重新检查')
-          const dir = inside(root, join('skills', name))
-          mkdirSync(dir, { recursive: true })
-          const kernel = inside(dir, 'kernel.py')
-          if (existsSync(kernel)) atomicWriteFile(inside(dir, 'kernel.prev.py'), readFileSync(kernel))
-          atomicWriteFile(kernel, a.code)
-          atomicWriteFile(inside(dir, 'test_kernel.py'), a.test)
-          const body = `# ${name}\n\n${a.description}\n\n## 用法\n${a.usage || '用 run_skill 调用，args 传入 run() 的关键字参数。'}\n\n调用：\`run_skill({"name": "${name}", "args": {...}})\`。源码见附带文件 kernel.py，测试见 test_kernel.py。\n`
-          if (existing) saveSkillRevision(root, name, String(a.description), body)
-          else atomicWriteFile(inside(dir, 'SKILL.md'), `---\n${YAML.stringify({ name, version: 1, description: String(a.description) })}---\n\n${body}`)
-          writeSkillSource(root, name, { type: 'forged', status: 'trial', sessions: [...new Set([...(src.sessions ?? []), h.sessionId])], reuses: [], kernel: true, importedAt: new Date().toISOString() })
-          h.emit({ kind: 'adjust', text: `锻造可执行技能 ${name}（试用，${n} 个测试通过）：${a.description}`, refs: [`K:${name}`], data: { skill: name } })
-          return `已加入技能库：${name}（试用）。${n} 个测试通过。以后用 run_skill 调用；在另外两个会话成功复用后可提请你确认转正。`
+          if ((current.type !== 'forged' && existsSync(inside(root, join('skills', name)))) ||
+              current.type !== src.type || current.importedAt !== src.importedAt ||
+              current.releases?.trial !== src.releases?.trial) throw new Error('技能已被其他会话更新，请重新检查')
+          const { version, releaseId } = publishTrial(root, name, current, scope, h.sessionId, {
+            code: a.code, test: a.test, description: a.description, usage: a.usage
+          })
+          h.emit({ kind: 'adjust', text: `锻造可执行技能 ${name} v${version}（试用，${n} 个测试通过）：${a.description}`,
+            refs: [`K:${name}@v${version}`], data: { action: 'kernel.forge', releaseId, skill: name, version, scope,
+              status: 'trial', tests: r.stdout.trim().slice(-2000), trigger: h.lastFailure?.() } })
+          return `已加入技能库：${name} v${version}（当前项目，${scope.input.extension} 表头匹配时试用）。${n} 个测试通过。用 run_skill 指定 version=${version} 调用。`
         } finally {
           rmSync(tmp, { recursive: true, force: true })
         }
       }, 'exec'),
-    tool('run_skill', '调用锻造技能的 run 函数，或通过 file 和 argv 运行已启用的导入技能中的 Python 脚本。容器内技能资源只读。args 传给锻造技能，argv 传给附带脚本。',
+    tool('run_skill', '指定可执行技能的名称和版本调用 run。执行前核对项目、实际文件后缀和表头。args 传给 run。导入技能仍用 file 和 argv 运行已启用的 Python 脚本。',
       {
         name: { type: 'string' }, args: { type: 'object' }, file: { type: 'string' },
-        argv: { type: 'array', items: { type: 'string' } }
+        argv: { type: 'array', items: { type: 'string' } }, version: { type: 'integer', minimum: 1 }
       }, ['name'], async (a, signal) => {
         const name = String(a.name)
         if (!skillNameValid(name)) throw new Error('技能名无效')
@@ -169,32 +244,58 @@ export function kernelTools(h: KernelHooks): AgentTool[] {
           if (result.code !== 0) throw new Error(result.out.slice(-2000) || '附带脚本执行失败')
           return result.out.slice(-6000) || '脚本执行完成'
         }
-        const kernel = inside(dir, 'kernel.py')
-        if (src.type !== 'forged' || !existsSync(kernel)) throw new Error(`没有可执行技能 ${name}`)
-        if (src.disabled) throw new Error(`可执行技能 ${name} 已停用`)
-        const args = [name.replace(/-/g, '_'), JSON.stringify(a.args ?? {})]
+        const version: unknown = a.version ?? (src.releases ? undefined : 1)
+        if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1)
+          throw new Error('可执行技能须指定有效的 version')
+        const selected = visibleKernelRevisions(src, kernelProject(h.env)).find((revision) => revision.version === version)
+        if (!selected) throw new Error(`当前项目没有可执行技能 ${name} v${version}；请检查作用域、版本和启用状态`)
+        const kernel = inside(root, join(kernelRevisionPath(name, src, version), 'kernel.py'))
+        if (!existsSync(kernel)) throw new Error(`缺少技能 ${name} v${version} 的代码`)
+        const releaseFile = inside(root, join(dirname(kernel), '.release-id'))
+        const releaseId = src.releases && existsSync(releaseFile) ? readFileSync(releaseFile, 'utf8').trim() : undefined
+        const input = src.releases?.scope.input
+        if (a.args !== undefined && (a.args === null || typeof a.args !== 'object' || Array.isArray(a.args)))
+          throw new Error('args 须为关键字参数对象')
+        const kwargs = { ...(a.args ?? {}) }
+        if (input) {
+          const path = kwargs[input.argument]
+          if (typeof path !== 'string' || !path || /^[\\/]|^[A-Za-z]:/.test(path))
+            throw new Error(`args.${input.argument} 须为项目相对文件路径`)
+          const pathInProject = modelPath(h.env, path)
+          if (!statSync(pathInProject, { throwIfNoEntry: false })?.isFile())
+            throw new Error('输入文件不存在或不是普通文件')
+          kwargs[input.argument] = relative(realpathSync(h.env.cwd), pathInProject).split(sep).join('/')
+        }
+        const args = [name.replace(/-/g, '_') + '_v' + version, JSON.stringify(kwargs), JSON.stringify(input ?? null)]
         const r = await runModelProcess(h.env, {
           host: [pythonBin(h.env), ['-c', RUNNER, kernel, ...args]],
           sandbox: ['python', '-c', RUNNER, '/control/skill/kernel.py', ...args], skillDir: dirname(kernel)
         }, 300, signal)
         const m = /__EVO_RESULT__(.*)$/m.exec(r.stdout)
+        h.env.trace?.({ kind: 'kernel.run', skill: name, version, releaseId, status: selected.status,
+          input: input && kwargs[input.argument], ok: r.code === 0 && !!m, exitCode: r.code, output: r.out.trim().slice(-6000) })
         if (r.code !== 0 || !m) throw new Error(r.out.trim().split('\n').slice(-10).join('\n') || `退出码 ${r.code}`)
         const current = skillSource(root, name)
-        if (current.type === 'forged' && current.importedAt === src.importedAt && !(current.sessions ?? []).includes(h.sessionId)) {
+        const currentReleases = current.releases
+        if (selected.status === 'trial' && currentReleases?.trial === version && !current.disabled &&
+            !(current.sessions ?? []).includes(h.sessionId)) {
           const reuses = [...new Set([...(current.reuses ?? []), h.sessionId])]
           if (reuses.length !== (current.reuses ?? []).length) writeSkillSource(root, name, { ...current, reuses })
-          if (current.status === 'trial' && reuses.length >= 2 &&
-            await h.env.approve?.('run_skill', `进化确认：可执行技能 ${name} 已在 ${reuses.length} 个会话复用成功，是否转正？`, 'evolution', signal)) {
+          if (reuses.length >= 2 &&
+            await h.env.approve?.('run_skill', `进化确认：${name} v${version} 已在另外 ${reuses.length} 个会话执行成功。核对结果后可批准在当前项目生效。`, 'evolution', signal)) {
             signal?.throwIfAborted()
             const latest = skillSource(root, name)
-            if (latest.type === 'forged' && latest.importedAt === src.importedAt && latest.status === 'trial') {
-              writeSkillSource(root, name, { ...latest, status: 'active' })
-              h.emit({ kind: 'learned', text: `可执行技能 ${name} 已经用户批准转正`, refs: [`K:${name}`] })
+            const releases = latest.releases
+            if (releases?.trial === version && releases.active === currentReleases.active && !latest.disabled) {
+              writeSkillSource(root, name, { ...latest, status: 'active',
+                releases: { ...releases, trial: undefined, active: version, approved: [...releases.approved, version] } })
+              h.emit({ kind: 'learned', text: `可执行技能 ${name} v${version} 已经用户批准转正`, refs: [`K:${name}@v${version}`],
+                data: { action: 'kernel.approve', releaseId, skill: name, version, reuses } })
             }
           }
         }
         const out = r.stdout.slice(0, m.index).trim()
-        return `${out ? `${out.slice(-2000)}\n` : ''}结果：${m[1].slice(0, 6000)}`
+        return `${name} v${version}\n${out ? `${out.slice(-2000)}\n` : ''}结果：${m[1].slice(0, 6000)}`
       }, 'exec'),
     tool('patch_skill', '给一个文档技能（SKILL.md）补充一条要点，例如它漏掉的坑或更好的做法。生成新版本文件，在本会话立即试用；持久化到 genome 需要用户批准。',
       { skill: { type: 'string' }, addition: { type: 'string', description: '要补充的一条要点' }, reason: { type: 'string' } }, ['skill', 'addition', 'reason'], async (a) => {
@@ -241,8 +342,9 @@ export function kernelTools(h: KernelHooks): AgentTool[] {
 }
 
 /** Index of forged executable skills for the system prompt. */
-export function kernelIndex(root: string, names: string[]): string {
-  const rows = names.map((n) => ({ n, s: skillSource(root, n), d: readSkillFile(root, n)?.meta.description ?? '' })).filter((x) => x.s.type === 'forged' && !x.s.disabled)
+export function kernelIndex(root: string, project: string): string {
+  const rows = extraSkills(root, project)
   if (!rows.length) return ''
-  return `\n\n## 可执行技能（自进化锻造，用 run_skill 调用）\n${rows.map((x) => `- ${x.n}${x.s.status === 'trial' ? '（试用）' : ''}：${x.d}`).join('\n')}`
+  return `\n\n## 可执行技能（用 run_skill 指定名称和 version；有适用的生效版本时优先使用）\n${rows.map((x) =>
+    `- ${x.name} v${x.version}（${x.status === 'trial' ? '试用' : '生效'}）：${x.description}${x.input ? ` 输入格式 ${JSON.stringify(x.input)}` : ''}`).join('\n')}`
 }

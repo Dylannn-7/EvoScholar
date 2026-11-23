@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import warnings
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Iterable
@@ -428,14 +429,60 @@ def _len_mm(value: str | None) -> float | None:
     return v * {'pt': MM_PER_IN / PT_PER_IN, 'px': MM_PER_IN / 96, 'in': MM_PER_IN, 'mm': 1, 'cm': 10}[u]
 
 
+def _check_pdf(path, rules, target_width, require_embedded_fonts, measured, issues):
+    import pymupdf
+
+    with pymupdf.open(path) as doc:
+        page = doc[0]
+        width = page.rect.width * MM_PER_IN / PT_PER_IN
+        height = page.rect.height * MM_PER_IN / PT_PER_IN
+        fonts = page.get_fonts(full=True)
+        measured['fonts'] = sorted({f'{f[3]} ({f[2]})' for f in fonts})
+        editable = _get(rules, 'font', 'editable')
+        type3 = sorted({f[3] for f in fonts if f[2] == 'Type3'})
+        if type3:
+            severity = 'error' if require_embedded_fonts or editable else 'warning'
+            issues.append(_issue(severity, 'font.type3', f'PDF 含 Type 3 字体（{", ".join(type3)}），建议用 pdf.fonttype=42 导出 TrueType'))
+        unembedded = sorted({f[3] for f in fonts if f[2] != 'Type3' and (not f[0] or not doc.extract_font(f[0])[3])})
+        if unembedded:
+            severity = 'error' if require_embedded_fonts or editable else 'warning'
+            issues.append(_issue(severity, 'font.embedding', f'PDF 字体未嵌入：{", ".join(unembedded)}'))
+        measured['unembedded_fonts'] = unembedded
+        if editable and not fonts:
+            severity = 'error' if require_embedded_fonts else 'warning'
+            issues.append(_issue(severity, 'font.editable', 'PDF 没有可编辑文字所需的字体资源，请检查文字是否被转曲'))
+        if '\ufffd' in page.get_text():
+            issues.append(_issue('warning', 'font.text', 'PDF 抽取文字含替换字符 U+FFFD，请核对字形和文字编码'))
+
+        images = []
+        scale = width / target_width if target_width is not None else 1.0
+        # Image transforms give the two placed edge lengths, including for rotated images.
+        for image in page.get_image_info():
+            a, b, c, d, _, _ = image['transform']
+            x_pt, y_pt = math.hypot(a, b), math.hypot(c, d)
+            if x_pt and y_pt:
+                images.append((image['width'] * PT_PER_IN * scale / x_pt, image['height'] * PT_PER_IN * scale / y_pt))
+        measured['raster_images'] = len(images)
+        if images:
+            lowest = min(min(pair) for pair in images)
+            measured['min_embedded_dpi'] = round(lowest, 2)
+            need = _get(rules, 'raster_min_dpi')
+            low_count = sum(min(pair) + 0.5 < need for pair in images) if need else 0
+            if low_count:
+                issues.append(_issue('error', 'dpi.embedded', f'PDF 中 {low_count} 个嵌入位图低于 {need:g} dpi，最低为 {lowest:.2f} dpi'))
+        return width, height
+
+
 def check_file(path: str | os.PathLike, venue: str | dict | None = None, line_art: bool = True,
-               *, columns: str | None = None, target_width_mm: float | None = None) -> dict:
-    """Check the saved file. For raster images, use the selected print width to check effective DPI."""
+               *, columns: str | None = None, target_width_mm: float | None = None,
+               require_embedded_fonts: bool = False) -> dict:
+    """Check geometry, fonts and raster resolution in the exported file."""
     if columns and target_width_mm is not None:
         raise ValueError('columns 和 target_width_mm 只能指定一个')
     if target_width_mm is not None and (not math.isfinite(target_width_mm) or target_width_mm <= 0):
         raise ValueError('目标栏宽必须是正数（mm）')
     rules = load_rules(venue)
+    target = target_width_mm if target_width_mm is not None else widths_mm(rules).get(columns)
     p = Path(path)
     issues: list[dict] = []
     measured: dict[str, Any] = {'file': p.name, 'format': p.suffix.lower().lstrip('.')}
@@ -443,6 +490,8 @@ def check_file(path: str | os.PathLike, venue: str | dict | None = None, line_ar
         return {'ok': False, 'status': 'fail', 'issues': [_issue('error', 'file', f'{p.name} 不存在或为空')], 'measured': measured}
     ext = p.suffix.lower()
     w_mm = h_mm = None
+    if columns and target is None:
+        issues.append(_issue('warning', 'width.target', f'规则包没有 {columns} 栏宽，请提供目标栏宽（mm）'))
     if ext == '.svg':
         root = ET.parse(p).getroot()
         if root.tag.split('}')[-1] != 'svg':
@@ -453,19 +502,7 @@ def check_file(path: str | os.PathLike, venue: str | dict | None = None, line_ar
         if _get(rules, 'font', 'editable') and not texts:
             issues.append(_issue('warning', 'font.editable', 'SVG 里没有 <text> 元素，文字可能被转成了曲线；设置 svg.fonttype="none"'))
     elif ext == '.pdf':
-        try:
-            import pymupdf as fitz
-        except ImportError:  # pragma: no cover
-            import fitz
-        with fitz.open(p) as doc:
-            page = doc[0]
-            w_mm, h_mm = page.rect.width * MM_PER_IN / PT_PER_IN, page.rect.height * MM_PER_IN / PT_PER_IN
-            fonts = page.get_fonts()
-            measured['fonts'] = sorted({f'{f[3]} ({f[2]})' for f in fonts})
-            if any(f[2] == 'Type3' for f in fonts) and _get(rules, 'font', 'editable'):
-                issues.append(_issue('error', 'font.type3', 'PDF 含 Type 3 字体，期刊要求 TrueType（Type 42）：设置 pdf.fonttype=42'))
-            if _get(rules, 'font', 'editable') and not fonts:
-                issues.append(_issue('warning', 'font.editable', 'PDF 没有嵌入字体，文字可能被转成了曲线'))
+        w_mm, h_mm = _check_pdf(p, rules, target, require_embedded_fonts, measured, issues)
     elif ext in ('.png', '.jpg', '.jpeg', '.tif', '.tiff'):
         from PIL import Image
         with Image.open(p) as im:
@@ -478,15 +515,12 @@ def check_file(path: str | os.PathLike, venue: str | dict | None = None, line_ar
             if dpi[1] > 0 and math.isfinite(dpi[1]):
                 w_mm, h_mm = px_w / source_dpi * MM_PER_IN, px_h / dpi[1] * MM_PER_IN
 
-        target = target_width_mm if target_width_mm is not None else widths_mm(rules).get(columns)
         dpi_to_check = source_dpi
         if target is not None:
             w_mm, h_mm = target, target * px_h / px_w
             dpi_to_check = px_w / target * MM_PER_IN
             measured['target_width_mm'] = target
             measured['effective_dpi'] = round(dpi_to_check, 2)
-        elif columns:
-            issues.append(_issue('warning', 'width.target', f'规则包没有 {columns} 栏宽，请提供目标栏宽（mm）'))
 
         need = (_get(rules, 'line_art_min_dpi') if line_art else None) or _get(rules, 'raster_min_dpi')
         if need and (not columns or target is not None):
@@ -506,10 +540,17 @@ def check_file(path: str | os.PathLike, venue: str | dict | None = None, line_ar
         biggest = max(allowed.values()) if allowed else _get(rules, 'width_mm', 'max')
         if biggest and w_mm > biggest * 1.02:
             issues.append(_issue('error', 'width', f'{p.name} 宽 {w_mm:.1f} mm，超过 {biggest:g} mm'))
+        elif ext in ('.pdf', '.svg') and target is not None and abs(w_mm - target) > 0.1:
+            issues.append(_issue('error', 'width', f'{p.name} 宽 {w_mm:.2f} mm，目标栏宽为 {target:g} mm'))
+        if target is not None:
+            measured['target_width_mm'] = target
         if 'target_width_mm' in measured:
             minimum = _get(rules, 'width_mm', 'min')
             if minimum and w_mm < minimum * 0.98:
                 issues.append(_issue('error', 'width', f'目标栏宽 {w_mm:.1f} mm 小于最小宽度 {minimum:g} mm'))
+        max_height = _get(rules, 'max_height_mm')
+        if max_height and h_mm is not None and h_mm > max_height + 0.1:
+            issues.append(_issue('error', 'height', f'{p.name} 高 {h_mm:.2f} mm，超过 {max_height:g} mm 上限'))
     elif ext == '.svg' and (widths_mm(rules) or _get(rules, 'width_mm', 'max')):
         issues.append(_issue('warning', 'width', 'SVG 缺少可换算为毫米的宽度，请核对投稿尺寸'))
     max_mb = _get(rules, 'max_file_mb')
@@ -550,7 +591,7 @@ def save(fig, stem: str, venue: str | dict | None = None, formats: Iterable[str]
     for ext in formats:
         path = Path(f'{stem}.{ext}')
         path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(path, dpi=dpi if ext in ('png', 'jpg', 'tif', 'tiff') else None)
+        fig.savefig(path, dpi=dpi)
         r = check_file(path, rules, columns=columns)
         if has_vector and 'pixels' in r['measured']:  # a raster copy next to a vector file is for convenience
             r['issues'] = [i for i in r['issues'] if i['rule'] != 'format']
@@ -562,6 +603,60 @@ def save(fig, stem: str, venue: str | dict | None = None, formats: Iterable[str]
     report['preview'] = preview(src) if src else None
     report['status'] = _check_status(report['issues'], bool(rules))
     report['ok'] = report['status'] != 'fail'
+    return report
+
+
+def save_publication(fig, stem: str | os.PathLike, *, script: str | os.PathLike, analysis: dict,
+                     venue: str | dict | None = None, columns: str | None = None,
+                     target_width_mm: float | None = None, raster_dpi: int | None = None,
+                     preview_dpi: int = 300) -> dict:
+    """Export and validate a PDF, its PNG preview, the runnable source and the analysis record."""
+    import matplotlib as mpl
+
+    rules = load_rules(venue)
+    if columns and target_width_mm is not None:
+        raise ValueError('columns 和 target_width_mm 只能指定一个')
+    if target_width_mm is None and columns not in widths_mm(rules):
+        raise ValueError('论文定稿须提供规则包中明确的栏宽，或指定 target_width_mm')
+    if not analysis.get('inputs') or not analysis.get('processing'):
+        raise ValueError('分析日志须记录 inputs（输入）和 processing（处理步骤，原样使用时也请说明）')
+    stem = Path(stem)
+    source = Path(script).read_bytes()
+    raster_dpi = raster_dpi or max(_get(rules, 'raster_min_dpi', default=300), 300)
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.publication-', dir=stem.parent) as tmp:
+        staging = Path(tmp)
+        pdf = staging / (stem.name + '.pdf')
+        with warnings.catch_warnings(record=True) as caught, mpl.rc_context({
+            'savefig.bbox': None, 'pdf.fonttype': 42, 'pdf.use14corefonts': False,
+        }):
+            warnings.filterwarnings('always', message=r'Glyph \d+ .* missing from font')
+            report = check_figure(fig, rules, columns=columns)
+            fig.savefig(pdf, dpi=raster_dpi)
+        pdf_report = check_file(pdf, rules, columns=columns, target_width_mm=target_width_mm,
+                                require_embedded_fonts=True)
+        report['files'] = [{'path': str(stem.parent / pdf.name), **pdf_report}]
+        for issue in report['issues']:
+            if issue['rule'] in ('font.max', 'text.clipped'):
+                issue['level'] = 'error'
+        report['issues'].extend(pdf_report['issues'])
+        missing = sorted({str(w.message) for w in caught if re.match(r'Glyph \d+ .* missing from font', str(w.message))})
+        if missing:
+            report['issues'].append(_issue('error', 'font.glyph', '渲染时缺少字形：' + ' / '.join(missing)))
+        report['status'] = _check_status(report['issues'], bool(rules))
+        report['ok'] = report['status'] != 'fail'
+        if not report['ok']:
+            raise ValueError(format_report(report))
+
+        png = Path(preview(pdf, dpi=preview_dpi))
+        plot = staging / f'plot_{stem.name}.py'
+        log = staging / (stem.name + '.analysis.json')
+        plot.write_bytes(source)
+        log.write_text(json.dumps({**analysis, 'figure_check': report}, ensure_ascii=False, indent=2, allow_nan=False) + '\n',
+                       encoding='utf-8')
+        for path in (pdf, png, plot, log):
+            path.replace(stem.parent / path.name)
+    report['preview'] = str(stem.parent / png.name)
     return report
 
 
@@ -582,6 +677,8 @@ def format_report(report: dict) -> str:
         layout = f['measured']
         if 'effective_dpi' in layout:
             lines.append(f'- {Path(f["path"]).name} · {layout["target_width_mm"]:g} mm 栏宽下有效 DPI {layout["effective_dpi"]:g}')
+        if 'min_embedded_dpi' in layout:
+            lines.append(f'- {Path(f["path"]).name} · 嵌入位图最低有效 DPI {layout["min_embedded_dpi"]:g}')
     for i in report.get('issues', []):
         lines.append(f"- [{'错误' if i['level'] == 'error' else '提醒'}] {i['message']}")
     if report.get('preview'):
@@ -655,6 +752,7 @@ def _cli(argv: list[str]) -> int:
     c.add_argument('--venue')
     c.add_argument('--photo', action='store_true', help='位图是照片而不是线稿')
     c.add_argument('--preview', action='store_true')
+    c.add_argument('--preview-out', help='将检查预览写入指定 PNG 路径')
     width = c.add_mutually_exclusive_group()
     width.add_argument('--columns', choices=('half', 'single', 'double'))
     width.add_argument('--target-width-mm', type=float)
@@ -665,9 +763,9 @@ def _cli(argv: list[str]) -> int:
         return 0
     r = check_file(a.file, a.venue, line_art=not a.photo, columns=a.columns, target_width_mm=a.target_width_mm)
     r['venue'] = a.venue
-    if a.preview:
+    if a.preview or a.preview_out:
         try:
-            r['preview'] = preview(a.file)
+            r['preview'] = preview(a.file, out=a.preview_out)
         except Exception as e:  # pragma: no cover
             r['issues'].append(_issue('warning', 'preview', f'无法生成预览：{e}'))
             if r['ok']:
