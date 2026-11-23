@@ -61,7 +61,7 @@ async function startServer () {
 }
 
 function openWindow ({ origin, token, theme }) {
-  const pref = ['dark', 'light', 'system'].includes(theme) ? theme : 'dark'
+  const pref = ['dark', 'light', 'system'].includes(theme) ? theme : 'light'
   const light = pref === 'light' || (pref === 'system' && !nativeTheme.shouldUseDarkColors)
   const ses = session.defaultSession
   ses.webRequest.onBeforeSendHeaders({ urls: [`${origin}/*`] }, (details, callback) => {
