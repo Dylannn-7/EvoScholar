@@ -1,5 +1,5 @@
 // Workbench: project tree, transparent conversation, composer (model / effort / permission / files / @).
-import { $, closePop, fx, go, openPop, store, syncFx } from '../app.js'
+import { $, closePop, dismissUpdate, fx, go, openPop, store, syncFx } from '../app.js'
 import { ago, api, apiFetch, del, fmtSize, loadApiImages, patch, post } from './api.js'
 import { openEventStream } from './stream.js'
 import { icon } from './icons.js'
@@ -667,6 +667,21 @@ export function initWorkbench () {
     if (thread.scrollHeight - thread.scrollTop - thread.clientHeight < 240) scroll()
   }
   function banner (text) { const b = $('#banner'); b.hidden = !text; b.innerHTML = esc(text || '') }
+  W.renderUpdateBanner = () => {
+    if (W.current) return
+    const update = S().update
+    if (!update?.hasUnreadUpdate) return banner('')
+    const b = $('#banner')
+    b.hidden = false
+    b.innerHTML = `<div class="update-banner"><span>EvoScholar v${esc(update.latestVersion)} 已发布（当前 v${esc(S().app.version)}）。升级不会影响你的会话、记忆、技能和项目文件。</span>
+      <div class="inline"><button class="btn ghost small" data-view-update type="button">查看更新</button><button class="btn ghost small" data-ignore-update type="button">忽略此版本</button></div></div>`
+    b.querySelector('[data-view-update]').onclick = () => go('settings', 'about')
+    b.querySelector('[data-ignore-update]').onclick = async (event) => {
+      const button = event.currentTarget
+      button.disabled = true
+      try { await dismissUpdate(update.latestVersion) } catch (err) { toast(err.message, 'err'); button.disabled = false }
+    }
+  }
   function setFresh (on) { document.body.classList.toggle('fresh', on) }
   function renderHead () {
     const s = W.session
@@ -697,7 +712,7 @@ export function initWorkbench () {
     W.current = null; W.session = null; W.live = null; W.think = null; W.calls.clear()
     document.body.classList.remove('in-session')
     resetChoices()
-    banner('')
+    W.renderUpdateBanner()
     $('#convHead').innerHTML = ''
     const hasModel = !!W.model
     inner.innerHTML = `<div class="greet"><h1>今天想研究什么？</h1>${hasModel ? '' : '<p style="margin-top:14px"><button class="btn primary" id="goSetup" type="button">接入模型</button></p>'}</div>`

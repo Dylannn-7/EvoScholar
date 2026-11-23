@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { atomicWriteFile } from './atomic-file'
 import { dirname, join, resolve } from 'node:path'
+import { normalizeUpdateVersion } from './updater'
 
 export type BudgetConfig = {
   totalCny: number
@@ -53,11 +54,13 @@ export type UiSettings = {
   onboardingCompleted?: boolean
   dismissedHints?: Partial<Record<PageHintId, boolean>>
 }
+export type UpdateSettings = { autoCheck?: boolean; dismissedVersion?: string; lastCheckedAt?: string }
 export type UserSettings = {
   providers: Record<string, ProviderOverride>
   execution?: ExecutionSettings
   /** Workbench appearance. */
   ui?: UiSettings
+  update?: UpdateSettings
   defaults: { model?: string; effort?: string; fast?: string; vision?: string; permission?: PermissionMode; figureStyle?: string }
   /** Remembered reasoning effort per model ref. */
   efforts: Record<string, string>
@@ -133,11 +136,20 @@ export function loadSettings(dataDir: string, config?: EvoConfig): UserSettings 
       if (typeof dismissed === 'boolean') (ui.dismissedHints ??= {})[id] = dismissed
     }
   }
+  const update: UpdateSettings = {}
+  if (raw.update) {
+    const { autoCheck, dismissedVersion, lastCheckedAt } = raw.update
+    if (typeof autoCheck === 'boolean') update.autoCheck = autoCheck
+    const version = normalizeUpdateVersion(dismissedVersion)
+    if (version) update.dismissedVersion = version
+    if (typeof lastCheckedAt === 'string' && Number.isFinite(Date.parse(lastCheckedAt))) update.lastCheckedAt = lastCheckedAt
+  }
   return {
     providers: raw.providers ?? {},
     defaults: raw.defaults ?? {},
     execution: raw.execution,
     ui: Object.keys(ui).length ? ui : undefined,
+    update: Object.keys(update).length ? update : undefined,
     // One-time migration: efforts used to live in the repo config.
     efforts: raw.efforts ?? { ...(config?.reasoningEffort ?? {}) }
   }

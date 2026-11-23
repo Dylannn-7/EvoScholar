@@ -21,3 +21,15 @@ test('loadSettings validates UI preferences independently and keeps legacy theme
     theme: 'system', onboardingCompleted: true, dismissedHints: { trajectory: true, plugins: true, library: false }
   })
 })
+
+test('loadSettings validates optional update preferences independently', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-settings-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const write = (update: unknown) => writeFileSync(join(dir, 'settings.json'), JSON.stringify({ update }))
+  assert.equal(loadSettings(dir).update, undefined)
+  write({ autoCheck: 'false', dismissedVersion: 'v0.4.0', lastCheckedAt: 'bad date', unknown: 1 })
+  assert.deepEqual(loadSettings(dir).update, { dismissedVersion: '0.4.0' })
+  const lastCheckedAt = '2026-11-23T02:00:00.000Z'
+  write({ autoCheck: false, dismissedVersion: 5, lastCheckedAt })
+  assert.deepEqual(loadSettings(dir).update, { autoCheck: false, lastCheckedAt })
+})

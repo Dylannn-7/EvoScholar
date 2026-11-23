@@ -1,4 +1,5 @@
 export * from './config'
+export * from './updater'
 export * from './db'
 export * from './pricing'
 export * from './budget'
