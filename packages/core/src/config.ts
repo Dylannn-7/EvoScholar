@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { atomicWriteFile } from './atomic-file'
 import { dirname, join, resolve } from 'node:path'
+import { normalizeUpdateVersion } from './updater'
 
 export type BudgetConfig = {
   totalCny: number
@@ -46,12 +47,20 @@ export const PERMISSION_MODES: PermissionMode[] = ['ask', 'acceptEdits', 'plan',
 export type ExecutionSettings = { engine?: string; image?: string; hostMode?: boolean }
 export type ThemePreference = 'dark' | 'light' | 'system'
 export const THEME_PREFERENCES: readonly ThemePreference[] = ['dark', 'light', 'system']
-export type UiSettings = { theme?: ThemePreference }
+export type PageHintId = 'trajectory' | 'plugins' | 'library'
+export const PAGE_HINT_IDS: readonly PageHintId[] = ['trajectory', 'plugins', 'library']
+export type UiSettings = {
+  theme?: ThemePreference
+  onboardingCompleted?: boolean
+  dismissedHints?: Partial<Record<PageHintId, boolean>>
+}
+export type UpdateSettings = { autoCheck?: boolean; dismissedVersion?: string; lastCheckedAt?: string }
 export type UserSettings = {
   providers: Record<string, ProviderOverride>
   execution?: ExecutionSettings
   /** Workbench appearance. */
   ui?: UiSettings
+  update?: UpdateSettings
   defaults: { model?: string; effort?: string; fast?: string; vision?: string; permission?: PermissionMode; figureStyle?: string }
   /** Remembered reasoning effort per model ref. */
   efforts: Record<string, string>
@@ -116,13 +125,31 @@ export function loadSettings(dataDir: string, config?: EvoConfig): UserSettings 
   const f = settingsFile(dataDir)
   let raw: Partial<UserSettings> = {}
   if (existsSync(f)) {
-    try { raw = JSON.parse(readFileSync(f, 'utf8')) } catch { raw = {} }
+    try { raw = JSON.parse(readFileSync(f, 'utf8')) ?? {} } catch { raw = {} }
+  }
+  const ui: UiSettings = {}
+  if (raw.ui) {
+    if (THEME_PREFERENCES.includes(raw.ui.theme as ThemePreference)) ui.theme = raw.ui.theme
+    if (typeof raw.ui.onboardingCompleted === 'boolean') ui.onboardingCompleted = raw.ui.onboardingCompleted
+    for (const id of PAGE_HINT_IDS) {
+      const dismissed = raw.ui.dismissedHints?.[id]
+      if (typeof dismissed === 'boolean') (ui.dismissedHints ??= {})[id] = dismissed
+    }
+  }
+  const update: UpdateSettings = {}
+  if (raw.update) {
+    const { autoCheck, dismissedVersion, lastCheckedAt } = raw.update
+    if (typeof autoCheck === 'boolean') update.autoCheck = autoCheck
+    const version = normalizeUpdateVersion(dismissedVersion)
+    if (version) update.dismissedVersion = version
+    if (typeof lastCheckedAt === 'string' && Number.isFinite(Date.parse(lastCheckedAt))) update.lastCheckedAt = lastCheckedAt
   }
   return {
     providers: raw.providers ?? {},
     defaults: raw.defaults ?? {},
     execution: raw.execution,
-    ui: raw.ui && THEME_PREFERENCES.includes(raw.ui.theme as ThemePreference) ? { theme: raw.ui.theme } : undefined,
+    ui: Object.keys(ui).length ? ui : undefined,
+    update: Object.keys(update).length ? update : undefined,
     // One-time migration: efforts used to live in the repo config.
     efforts: raw.efforts ?? { ...(config?.reasoningEffort ?? {}) }
   }

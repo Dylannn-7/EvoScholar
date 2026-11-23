@@ -26,8 +26,9 @@ export function pythonBin(env: ToolEnv): string {
 
 export function childEnv(env: ToolEnv): NodeJS.ProcessEnv {
   const pyPath = [join(env.ws.root, 'python'), process.env.PYTHONPATH].filter(Boolean).join(process.platform === 'win32' ? ';' : ':')
-  // Model-facing code never sees provider keys.
-  const scrubbed = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/_API_KEY$/i.test(k)))
+  // Model-facing code never sees provider, signing, or release credentials.
+  const scrubbed = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !/_API_KEY$/i.test(key) && !/^(?:CSC_|APPLE_|AZURE_|WIN_CSC_|(?:GH|GITHUB)_TOKEN$)/i.test(key)))
   return { ...scrubbed, MPLBACKEND: 'Agg', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONPATH: pyPath, EVOSCHOLAR_CWD: env.cwd, EVOSCHOLAR_DATA: env.ws.dataDir }
 }
 

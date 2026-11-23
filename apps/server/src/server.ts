@@ -7,6 +7,7 @@ import { IMG, body, httpError, send, serveFile } from './http'
 import { serveProjectFile } from './file-preview'
 import { createV2Routes } from './routes-v2'
 import { createLocalAuth } from './local-auth'
+import { createAppUpdate, type AppUpdate } from './app-update'
 import {
   Bench,
   BudgetError,
@@ -141,11 +142,16 @@ const APP_VERSION = (() => {
   try { return String(JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf8')).version) } catch { return '' }
 })()
 
-export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: string[]; auth?: ReturnType<typeof createLocalAuth> }) {
+export function createServerApp(rt: Runtime, opts: {
+  webDir: string; alerts?: string[]; auth?: ReturnType<typeof createLocalAuth>
+  appUpdate?: AppUpdate; fetchImpl?: typeof fetch
+}) {
   const ws = rt.ws
   const auth = opts.auth ?? createLocalAuth()
   const WEB = resolve(opts.webDir)
   const alerts = opts.alerts ?? []
+  const version = opts.appUpdate?.version ?? APP_VERSION
+  const update = createAppUpdate(ws, version, opts.appUpdate, opts.fetchImpl)
   const live = new Map<string, Live>()
   const opening = new Map<string, Promise<Live>>()
   const starting = new Set<string>()
@@ -511,8 +517,24 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
       if (await v2(req, res, url)) return
     }
 
+    if (p === '/api/update/status' && req.method === 'GET') return send(res, 200, update.status())
+    if (p === '/api/update/check' && req.method === 'POST') return send(res, 200, await update.checkForUpdates())
+    if (p === '/api/update/action' && req.method === 'POST') {
+      const { action, version } = await body(req, 4096)
+      if (action === 'download' || action === 'install') throw httpError(400, '当前版本不支持应用内安装')
+      if (action !== 'dismiss') throw httpError(400, '未知的更新操作')
+      const status = update.dismiss(version)
+      if (!status) throw httpError(400, '版本号无效')
+      return send(res, 200, status)
+    }
+    if (p === '/api/settings/update' && req.method === 'PUT') {
+      const { autoCheck } = await body(req, 4096)
+      if (typeof autoCheck !== 'boolean') throw httpError(400, '自动检查更新设置必须为布尔值')
+      return send(res, 200, update.setAutoCheck(autoCheck))
+    }
     if (p === '/api/state' && req.method === 'GET') {
       const g = rt.genomes.load()
+      const { hasUnreadUpdate, latestVersion } = update.status()
       return send(res, 200, {
         genome: { id: g.id, note: g.note, tools: g.tools.enabled, parent: g.parent },
         providers: listProviders(ws.config).map(({ models, ...pv }) => ({ ...pv, models: pv.hasKey ? models : [] })),
@@ -522,7 +544,8 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
         projects: listProjects(rt.db),
         sessions: listSessions(),
         pending: (rt.db.prepare(`SELECT COUNT(*) n FROM candidates WHERE status = 'pending'`).get() as { n: number }).n,
-        app: { version: APP_VERSION, workspace: ws.root },
+        update: { hasUnreadUpdate, latestVersion },
+        app: { version, workspace: ws.root },
         alerts
       })
     }
@@ -970,6 +993,7 @@ export function createServerApp(rt: Runtime, opts: { webDir: string; alerts?: st
 
   return {
     broadcastAll,
+    checkForUpdates: update.checkForUpdates,
     handler: (req: IncomingMessage, res: ServerResponse) => {
       route(req, res).catch((e) => {
         const status = (e as { status?: number }).status ?? 500
