@@ -21,6 +21,11 @@ __pycache__/
 
 # Desktop packages
 release/
+*.p12
+*.pfx
+*.p8
+*.cer
+AuthKey_*.p8
 
 # Contest submission material (personal, local only)
 contest/

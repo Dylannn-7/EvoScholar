@@ -2,10 +2,12 @@
 // Shell: icon rail + view router + shared state. Views live in ui/*.js.
 import { api, post, storeToken } from './ui/api.js'
 import { icon } from './ui/icons.js'
-import { toast } from './ui/modal.js'
+import { esc, toast } from './ui/modal.js'
 import { initWorkbench } from './ui/workbench.js'
 import { renderSettings } from './ui/settings.js'
 import { renderLibrary, renderPlugins, renderTrajectory, renderUsage } from './ui/pages.js'
+import { openOnboarding } from './ui/onboarding.js'
+import { shouldShowOnboarding } from './ui/onboarding-state.js'
 
 export const $ = (s, el = document) => el.querySelector(s)
 
@@ -17,7 +19,10 @@ function applyTheme () {
   const resolved = themePref === 'system' ? (darkQuery.matches ? 'dark' : 'light') : themePref
   document.documentElement.dataset.theme = resolved
 }
-/** Remember the preference locally and apply it; the server copy is written by the settings page. */
+/**
+ * Apply the preference. settings.json (via the settings API) is the source of truth; the browser copy only lets
+ * the web workbench paint the right theme before /api/state arrives. The desktop shell passes it in the URL.
+ */
 export function setThemePreference (pref) {
   if (!THEMES.includes(pref)) return
   themePref = pref
@@ -79,14 +84,35 @@ addEventListener('pointermove', (e) => { pointer.x = e.clientX; pointer.y = e.cl
 })()
 
 // ---------------------------------------------------------------- shared state
+let updateRead = 0
 export const store = {
   state: null,
+  updateStatus: null,
   async refresh () {
     this.state = await api('/api/state')
     if (this.state.ui?.theme && this.state.ui.theme !== themePref) setThemePreference(this.state.ui.theme)
     renderRail()
     return this.state
+  },
+  async refreshUpdate () {
+    const read = ++updateRead
+    const status = await api('/api/update/status')
+    if (read === updateRead) this.applyUpdateStatus(status)
+  },
+  applyUpdateStatus (status) {
+    ++updateRead
+    const changed = JSON.stringify(this.updateStatus) !== JSON.stringify(status)
+    this.updateStatus = status
+    if (!changed || !this.state) return
+    this.state.update = { hasUnreadUpdate: status.hasUnreadUpdate, latestVersion: status.latestVersion }
+    renderRail()
+    workbench?.renderUpdateBanner()
+    document.dispatchEvent(new Event('evo:update-status'))
   }
+}
+
+export async function dismissUpdate (version) {
+  store.applyUpdateStatus(await post('/api/update/action', { action: 'dismiss', version }))
 }
 
 // ---------------------------------------------------------------- router
@@ -101,6 +127,12 @@ const RENDER = { trajectory: renderTrajectory, plugins: renderPlugins, library: 
 let view = 'workbench'
 let workbench
 
+export function goHome (starterId) {
+  go('workbench')
+  workbench.home()
+  if (starterId) workbench.fillStarter(starterId)
+}
+
 export function go (next, arg) {
   view = next
   for (const v of [...VIEWS.map((x) => x.id), 'settings']) $(`#view-${v}`).hidden = v !== next
@@ -114,16 +146,18 @@ export function go (next, arg) {
 
 function renderRail () {
   const pending = store.state?.pending ?? 0
+  const update = store.state?.update
+  const settingsLabel = update?.hasUnreadUpdate ? `设置（有新版本 v${esc(update.latestVersion)}）` : '设置'
   $('#rail').innerHTML = `
     <button class="rail-btn brand" data-go="workbench" data-home="1" data-tip="EvoScholar 首页" type="button">${icon('brand', 18)}</button>
     ${VIEWS.map((v) => `<button class="rail-btn ${view === v.id ? 'on' : ''}" data-go="${v.id}" data-tip="${v.label}" type="button" aria-label="${v.label}">${icon(v.icon, 19)}${v.id === 'trajectory' && pending ? '<i class="dotmark"></i>' : ''}</button>`).join('')}
     <div class="rail-sp"></div>
-    <button class="rail-btn ${view === 'settings' ? 'on' : ''}" data-go="settings" data-tip="设置" type="button" aria-label="设置">${icon('settings', 19)}</button>`
+    <button class="rail-btn ${view === 'settings' ? 'on' : ''}" data-go="settings" data-tip="${settingsLabel}" type="button" aria-label="${settingsLabel}">${icon('settings', 19)}${update?.hasUnreadUpdate ? '<i class="dotmark"></i>' : ''}</button>`
 }
 document.getElementById('rail').addEventListener('click', (e) => {
   const b = e.target.closest('[data-go]')
   if (!b) return
-  if (b.dataset.home) { go('workbench'); workbench.home(); return }
+  if (b.dataset.home) { goHome(); return }
   go(b.dataset.go)
 })
 
@@ -214,6 +248,7 @@ async function pair(code) {
   const result = await post('/api/auth/pair', { code })
   storeToken(result.token)
 }
+let updatePoll
 async function boot() {
   await store.refresh()
   const sid = new URLSearchParams(location.search).get('s')
@@ -222,6 +257,12 @@ async function boot() {
   if (sid) workbench.open(sid)
   else workbench.home()
   go(RENDER[hash] ? hash : 'workbench', sub)
+  if (!sid && view === 'workbench' && shouldShowOnboarding(store.state)) openOnboarding()
+  if (!updatePoll) void store.refreshUpdate().then(() => {
+    if (store.updateStatus?.supported && !updatePoll) {
+      updatePoll = setInterval(() => { if (!document.hidden) void store.refreshUpdate().catch(() => {}) }, 5000)
+    }
+  }).catch(() => {})
 }
 addEventListener('evo:unpaired', () => showPairing(workbench ? '会话令牌已失效，请重新配对。' : ''))
 void (async () => {

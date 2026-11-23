@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 jobs:
@@ -39,13 +40,13 @@ jobs:
     name: package (${{ matrix.os }})
     needs: test
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
-            target: --mac dmg --arm64 --x64
+            target: --mac dmg zip --arm64 --x64
             app: release/mac-arm64/EvoScholar.app/Contents/MacOS/EvoScholar
             artifact: release/*.dmg
           - os: windows-latest
@@ -53,8 +54,9 @@ jobs:
             app: release/win-unpacked/EvoScholar.exe
             artifact: release/*.exe
     env:
-      # Installers are not code-signed yet.
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      SIGN_MAC: ${{ github.event_name != 'pull_request' && matrix.os == 'macos-latest' && secrets.MAC_CERTS_BASE64 != '' && secrets.MAC_CERTS_PASSWORD != '' }}
+      NOTARIZE_MAC: ${{ github.event_name != 'pull_request' && matrix.os == 'macos-latest' && secrets.MAC_CERTS_BASE64 != '' && secrets.MAC_CERTS_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+      SIGN_WIN: ${{ github.event_name != 'pull_request' && matrix.os == 'windows-latest' && secrets.WIN_CSC_LINK != '' && secrets.WIN_CSC_KEY_PASSWORD != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -65,10 +67,78 @@ jobs:
       - run: npm run build
       - name: Build installer
         run: npx electron-builder ${{ matrix.target }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.SIGN_MAC == 'true' && 'true' || 'false' }}
+          CSC_LINK: ${{ env.SIGN_MAC == 'true' && secrets.MAC_CERTS_BASE64 || '' }}
+          CSC_KEY_PASSWORD: ${{ env.SIGN_MAC == 'true' && secrets.MAC_CERTS_PASSWORD || '' }}
+          APPLE_ID: ${{ env.NOTARIZE_MAC == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ env.NOTARIZE_MAC == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ env.NOTARIZE_MAC == 'true' && secrets.APPLE_TEAM_ID || '' }}
+          WIN_CSC_LINK: ${{ env.SIGN_WIN == 'true' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ env.SIGN_WIN == 'true' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
       - name: Smoke test the packaged app
         run: node scripts/app-smoke.mjs ${{ matrix.app }}
+      - name: Verify macOS signatures and notarization
+        if: env.SIGN_MAC == 'true'
+        run: node scripts/verify-signatures.mjs --strict release/mac-arm64/EvoScholar.app release/mac/EvoScholar.app
+      - name: Verify Windows signatures
+        if: env.SIGN_WIN == 'true'
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          node scripts/verify-signatures.mjs --strict release/win-unpacked/EvoScholar.exe "release/EvoScholar-Setup-$version.exe"
+      - name: Report unsigned build
+        if: env.SIGN_MAC != 'true' && env.SIGN_WIN != 'true'
+        run: node scripts/verify-signatures.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.os }}
-          path: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}
+            release/*.zip
+            release/*.blockmap
+            release/latest*.yml
+          if-no-files-found: error
           retention-days: 14
+
+  release-draft:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag against package version
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Tag must match package.json version v$version"
+            exit 1
+          fi
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: release-assets
+          merge-multiple: true
+      - name: Upload installers to a draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for file in "EvoScholar-$RELEASE_VERSION-arm64.dmg" "EvoScholar-$RELEASE_VERSION-x64.dmg" \
+            "EvoScholar-$RELEASE_VERSION-arm64.zip" "EvoScholar-$RELEASE_VERSION-x64.zip" \
+            "EvoScholar-Setup-$RELEASE_VERSION.exe" latest-mac.yml latest.yml; do
+            test -f "release-assets/$file" || { echo "Missing release asset: $file"; exit 1; }
+          done
+          if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft'); then
+            if [[ "$draft" != true ]]; then
+              echo "Release $GITHUB_REF_NAME has already been published"
+              exit 1
+            fi
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* --draft --verify-tag --title "EvoScholar $GITHUB_REF_NAME"
+          fi

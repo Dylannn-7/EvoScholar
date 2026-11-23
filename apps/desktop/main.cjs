@@ -47,20 +47,34 @@ async function startServer () {
   const rt = core.openRuntime(ws, (message) => workbench?.broadcastAll({ type: 'warning', message }))
   const auth = createLocalAuth()
   const { token } = auth.exchange(auth.pairing.auto)
-  workbench = createServerApp(rt, { webDir: join(APP, 'apps/web/public'), auth })
+  const appUpdate = app.isPackaged ? { version: app.getVersion(), platform: process.platform, arch: process.arch } : undefined
+  workbench = createServerApp(rt, { webDir: join(APP, 'apps/web/public'), auth, appUpdate })
   const server = createServer(workbench.handler)
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
   // Smoke tests use a fresh workspace, so there are no leftover containers to recover.
   if (process.env.EVOSCHOLAR_SMOKE !== '1') void Promise.resolve(rt.executor.recover?.()).catch(() => {})
+  let initialCheck, recurringCheck
+  if (appUpdate && process.env.EVOSCHOLAR_SMOKE !== '1') {
+    const check = async () => {
+      try { await workbench.checkForUpdates({ automatic: true }) } catch (error) { console.warn('Update check failed:', error.message) }
+    }
+    initialCheck = setTimeout(() => {
+      void check()
+      recurringCheck = setInterval(check, 12 * 60 * 60 * 1000)
+    }, 15_000)
+  }
   stopServer = async () => {
+    clearTimeout(initialCheck)
+    clearInterval(recurringCheck)
     await workbench.dispose().catch(() => {})
     server.close()
     try { rt.db.close() } catch {}
   }
-  return { origin: `http://127.0.0.1:${server.address().port}`, token, theme: ws.settings.ui?.theme }
+  const allowUpdateUrl = (url) => core.isReleaseAssetUrl(url) || core.isReleasePageUrl(url)
+  return { origin: `http://127.0.0.1:${server.address().port}`, token, theme: ws.settings.ui?.theme, allowUpdateUrl }
 }
 
-function openWindow ({ origin, token, theme }) {
+function openWindow ({ origin, token, theme, allowUpdateUrl }) {
   const pref = ['dark', 'light', 'system'].includes(theme) ? theme : 'light'
   const light = pref === 'light' || (pref === 'system' && !nativeTheme.shouldUseDarkColors)
   const ses = session.defaultSession
@@ -86,8 +100,9 @@ function openWindow ({ origin, token, theme }) {
   })
   window.once('ready-to-show', () => window.show())
   // External links (vendor key pages, docs) open in the system browser; the window stays on the workbench.
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url) && !url.startsWith(origin)) shell.openExternal(url)
+  window.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    const allowed = frameName === 'evoscholar-update' ? allowUpdateUrl(url) : /^https?:\/\//.test(url) && !url.startsWith(origin)
+    if (allowed) shell.openExternal(url)
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event, url) => {
@@ -107,15 +122,20 @@ async function smokeCheck (origin) {
     await new Promise((resolve) => setTimeout(resolve, 2500))
     result = await window.webContents.executeJavaScript(`(async () => {
       const preview = await fetch('/api/styles/evo-default/preview')
+      const update = await fetch('/api/update/status')
       return {
         heading: document.querySelector('.greet h1')?.textContent || '',
+        onboarding: !!document.querySelector('.onboarding-modal'),
         pairing: !!document.querySelector('#pairing'),
         state: (await fetch('/api/state')).status,
+        updateStatus: update.status,
+        updatePhase: (await update.json()).phase,
         // Bundled assets: the style gallery must work in a fresh workspace without Python.
         stylePreview: preview.status + ' ' + (preview.headers.get('content-type') || '')
       }
     })()`)
-    result.ok = result.heading.includes('今天想研究什么') && !result.pairing && result.state === 200 && result.stylePreview.startsWith('200 image/png')
+    result.ok = result.heading.includes('今天想研究什么') && result.onboarding && !result.pairing && result.state === 200 &&
+      result.updateStatus === 200 && result.updatePhase === 'idle' && result.stylePreview.startsWith('200 image/png')
     // Requests from other local programs still need the token.
     result.unauthenticated = (await fetch(`${origin}/api/state`)).status
     // Informational: tools a Finder launch must still find through the extended PATH.

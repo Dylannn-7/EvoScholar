@@ -1,4 +1,4 @@
-# Desktop packages: macOS dmg (arm64, x64) and Windows installer (x64). Not code-signed yet.
+# Desktop packages for macOS (arm64, x64) and Windows (x64).
 appId: io.evoscholar.app
 productName: EvoScholar
 copyright: Copyright 2026 EvoScholar contributors
@@ -35,13 +35,24 @@ files:
   - "!python/test_*.py"
   - "!apps/web/test/**"
   - "!apps/desktop/test/**"
+publish:
+  - provider: github
+    owner: Dylannn-7
+    repo: EvoScholar
+    releaseType: draft
 mac:
   target:
     - target: dmg
       arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
   category: public.app-category.education
   icon: build/icon.png
   artifactName: EvoScholar-${version}-${arch}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
 win:
   target:
     - target: nsis
