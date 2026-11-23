@@ -19,17 +19,22 @@ function applyTheme () {
   const resolved = themePref === 'system' ? (darkQuery.matches ? 'dark' : 'light') : themePref
   document.documentElement.dataset.theme = resolved
 }
-/** Apply the preference; the settings API persists it across launches. */
+/**
+ * Apply the preference. settings.json (via the settings API) is the source of truth; the browser copy only lets
+ * the web workbench paint the right theme before /api/state arrives. The desktop shell passes it in the URL.
+ */
 export function setThemePreference (pref) {
   if (!THEMES.includes(pref)) return
   themePref = pref
+  try { localStorage.setItem('evoscholar.theme', pref) } catch {}
   applyTheme()
 }
 export const themePreference = () => themePref
 darkQuery.addEventListener?.('change', () => { if (themePref === 'system') applyTheme() })
 {
   // The desktop shell passes the saved theme in the URL so the first paint already matches.
-  const initial = new URLSearchParams(location.search).get('theme')
+  let initial = new URLSearchParams(location.search).get('theme')
+  if (!THEMES.includes(initial)) { try { initial = localStorage.getItem('evoscholar.theme') } catch {} }
   setThemePreference(THEMES.includes(initial) ? initial : 'light')
   // The macOS desktop shell hides the title bar; the page then leaves room for the window buttons.
   // Kept for the tab's lifetime: the router rewrites the URL, and a reload must not lose it.
