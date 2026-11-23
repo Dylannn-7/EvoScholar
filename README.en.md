@@ -103,7 +103,7 @@ npm test
 cd python && python -m unittest
 ```
 
-`packages/harness` is the agent kernel from [aipoch/open-science](https://github.com/aipoch/open-science) (kept identical to upstream); `packages/core` holds sessions, tools, vendors and protocols (including a Gemini adapter), in-loop evolution (`src/evolve/`), plugins, projects, library and usage; `apps/server` and `apps/web` are the local server and the build-free web workbench; `apps/desktop` is the Electron shell (`npm run app`, `npm run dist` for installers in `release/`, `npm run app:smoke`); `sandbox/` builds the offline image for model code; `python/` contains the literature, figure, writing-check and style helpers. Design notes: [docs/PLAN.md](docs/PLAN.md), [docs/in-loop-evolution.md](docs/in-loop-evolution.md).
+`packages/harness` is the agent kernel from [aipoch/open-science](https://github.com/aipoch/open-science) (kept identical to upstream); `packages/core` holds sessions, tools, vendors and protocols (including a Gemini adapter), in-loop evolution (`src/evolve/`), plugins, projects, library and usage; `apps/server` and `apps/web` are the local server and the build-free web workbench; `apps/desktop` is the Electron shell (`npm run app`, `npm run dist` for installers in `release/`, `npm run app:smoke`); `sandbox/` builds the offline image for model code; `python/` contains the literature, figure, writing-check and style helpers. Design notes: [docs/in-loop-evolution.md](docs/in-loop-evolution.md).
 
 ## License
 

@@ -127,7 +127,7 @@ cd python && python -m unittest
 | `python/` | 文献、出图、写作检查与出图风格的 Python 工具 |
 | `genomes/` · `prompts/` · `skills/` · `rulepacks/` | harness 版本、提示词、技能、规则包 |
 
-设计文档：[docs/PLAN.md](docs/PLAN.md)、[docs/in-loop-evolution.md](docs/in-loop-evolution.md)。
+设计文档：[docs/in-loop-evolution.md](docs/in-loop-evolution.md)。
 
 ## 许可
 
