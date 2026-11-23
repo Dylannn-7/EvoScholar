@@ -168,13 +168,17 @@ test('file listings skip linked directories at the project boundary', async (t) 
   assert.throws(() => inside(cwd, join('linked', 'new.txt')))
 })
 
-test('child environment omits provider keys regardless of casing', (t) => {
+test('child environment omits provider, signing and release credentials regardless of casing', (t) => {
   const { cwd, env } = setup()
   t.after(() => rmSync(cwd, { recursive: true, force: true }))
-  const key = 'EvoTest_Api_Key'
+  const keys = ['EvoTest_Api_Key', 'CSC_LINK', 'csc_key_password', 'Apple_Id', 'APPLE_APP_SPECIFIC_PASSWORD',
+    'APPLE_TEAM_ID', 'AZURE_CLIENT_SECRET', 'Win_Csc_Link', 'WIN_CSC_KEY_PASSWORD', 'GH_TOKEN', 'github_token']
+  const fixture = Object.fromEntries(keys.map((key) => [key, 'fixture']))
   t.mock.method(Object, 'entries', ((original) => (value: object) =>
-    original(value === process.env ? { ...value, [key]: 'fixture' } : value))(Object.entries))
-  assert.equal(childEnv(env)[key], undefined)
+    original(value === process.env ? { ...value, ...fixture, EVO_TEST_KEEP: 'usable' } : value))(Object.entries))
+  const child = childEnv(env)
+  for (const key of keys) assert.equal(child[key], undefined)
+  assert.equal(child.EVO_TEST_KEEP, 'usable')
 })
 
 test('a pre-cancelled process call does not start a child', async (t) => {
