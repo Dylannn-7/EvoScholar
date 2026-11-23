@@ -1,7 +1,8 @@
 // Settings: model providers (protocol → base URL → key → fetch models → test), defaults & permissions, appearance.
-import { goHome, setFxQuality, setThemePreference, store, themePreference } from '../app.js'
-import { api, del, put, post } from './api.js'
+import { dismissUpdate, goHome, setFxQuality, setThemePreference, store, themePreference } from '../app.js'
+import { api, del, fmtSize, put, post } from './api.js'
 import { icon } from './icons.js'
+import { md } from './markdown.js'
 import { confirmDialog, esc, openModal, toast } from './modal.js'
 import { openOnboarding } from './onboarding.js'
 
@@ -287,7 +288,72 @@ function about (body) {
     ${app.workspace ? `<div class="kv"><span>工作区</span><span class="kv-path"><code title="${esc(app.workspace)}">${esc(app.workspace)}</code><button class="btn ghost small" id="revealWorkspace" type="button">在文件夹中显示</button></span></div>` : ''}
     <div class="kv"><span>项目文件</span><span><code>evoscholar-out/</code>、<code>evoscholar-in/</code></span></div>
     <div class="kv"><span>源代码</span><span><a href="https://github.com/Dylannn-7/EvoScholar" target="_blank" rel="noopener">github.com/Dylannn-7/EvoScholar</a></span></div>
-    <button class="btn ghost small" id="reopenOnboarding" type="button">重新打开新手向导</button></div>`
+    <button class="btn ghost small" id="reopenOnboarding" type="button">重新打开新手向导</button></div>
+    <section class="panel" id="updatePanel"></section>`
   body.querySelector('#revealWorkspace')?.addEventListener('click', () => post('/api/workspace/reveal').catch((err) => toast(err.message, 'err')))
   body.querySelector('#reopenOnboarding').onclick = () => { goHome(); openOnboarding() }
+  renderUpdates(body.querySelector('#updatePanel'))
+}
+
+document.addEventListener('evo:update-status', () => {
+  const panel = document.querySelector('#updatePanel')
+  if (panel) renderUpdates(panel)
+})
+
+function renderUpdates (panel) {
+  const status = store.updateStatus
+  const title = '<h3>版本与更新</h3>'
+  if (!status?.supported) {
+    panel.innerHTML = title + `<p class="muted">${status ? '打包版桌面应用可检查更新。' : '正在读取更新状态…'}</p>`
+    return
+  }
+  const date = status.publishedAt ? new Date(status.publishedAt).toLocaleDateString('zh-CN') : ''
+  const labels = {
+    idle: `当前版本 v${status.currentVersion}`,
+    checking: '正在检查…',
+    'up-to-date': `已是最新版本（v${status.currentVersion}）`,
+    available: `发现新版本 v${status.latestVersion}${date ? `（发布于 ${date}）` : ''}`,
+    error: `检查失败：${status.error}`
+  }
+  const available = status.phase === 'available'
+  const asset = status.asset
+  const windows = asset ? asset.name.endsWith('.exe') : navigator.platform.startsWith('Win')
+  panel.innerHTML = title + `
+    <div class="opt-row"><div class="t"><b>启动时自动检查更新</b>
+      <span>只向 GitHub 查询最新版本号和安装包地址，请求中只有当前版本号，不上传任何会话、密钥或项目数据。</span></div>
+      <button class="switch ${status.autoCheck ? 'on' : ''}" data-auto-check type="button" role="switch" aria-label="启动时自动检查更新" aria-checked="${status.autoCheck}"></button></div>
+    <div class="inline update-status"><span role="status">${esc(labels[status.phase])}</span>
+      <button class="btn ghost small" data-check-update type="button" ${status.phase === 'checking' ? 'disabled' : ''}>检查更新</button></div>
+    ${available ? `
+      ${status.releaseNotes ? `<div class="update-notes" tabindex="0" aria-label="更新说明">${md(status.releaseNotes)}</div>` : ''}
+      <div class="inline update-actions">
+        ${asset ? `<a class="btn primary small" data-external-update href="${esc(asset.url)}" target="_blank" rel="noopener">下载安装包（${esc(asset.name)}，${fmtSize(asset.size)}）</a>` : '<span class="muted">此版本没有匹配的安装包。</span>'}
+        <a class="btn ghost small" data-external-update href="${esc(status.releasePageUrl)}" target="_blank" rel="noopener">在 GitHub 查看</a>
+        ${status.hasUnreadUpdate ? '<button class="btn ghost small" data-dismiss-update type="button">忽略此版本</button>' : '<span class="muted">已忽略此版本</span>'}
+      </div>
+      ${asset ? `<p class="muted update-install-hint">${windows ? '如出现 Windows 保护提示，点「更多信息」再点「仍要运行」。' : '在 macOS 上，将应用拖入「应用程序」并覆盖旧版本。若提示无法验证开发者，右键选择「打开」。'}</p>` : ''}
+    ` : ''}`
+
+  const bind = (selector, run) => {
+    const button = panel.querySelector(selector)
+    if (button) button.onclick = async () => {
+      button.disabled = true
+      try { await run() } catch (err) { toast(err.message, 'err') }
+      finally { button.disabled = false }
+    }
+  }
+  bind('[data-auto-check]', async () => store.applyUpdateStatus(await put('/api/settings/update', { autoCheck: !status.autoCheck })))
+  bind('[data-check-update]', async () => {
+    store.applyUpdateStatus({ ...status, phase: 'checking' })
+    try { store.applyUpdateStatus(await post('/api/update/check')) }
+    catch (err) { store.applyUpdateStatus(status); throw err }
+  })
+  bind('[data-dismiss-update]', () => dismissUpdate(status.latestVersion))
+  panel.querySelectorAll('[data-external-update]').forEach((link) => {
+    link.onclick = (event) => {
+      event.preventDefault()
+      const popup = window.open(link.href, 'evoscholar-update')
+      if (popup) popup.opener = null
+    }
+  })
 }

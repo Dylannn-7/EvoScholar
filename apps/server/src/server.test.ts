@@ -6,7 +6,7 @@ import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import { join, resolve } from 'node:path'
-import { FILE_LIMITS, consolidate, openRuntime, openWorkspace, recordCandidateVerification, writeSkillSource } from '@evoscholar/core'
+import { FILE_LIMITS, consolidate, openRuntime, openWorkspace, recordCandidateVerification, writeSkillSource, type UpdateStatus } from '@evoscholar/core'
 import { createLocalAuth } from './local-auth'
 import { createServerApp } from './server'
 import { body, send } from './http'
@@ -799,4 +799,113 @@ test('session ask returns 413 when images exceed per-image, count or total limit
   })
   assert.notEqual(r4.status, 413)
   await r4.body?.cancel()
+})
+
+test('web update endpoints report unsupported without attempting network access', async (t) => {
+  const dir = tempWorkspace()
+  const rt = openRuntime(openWorkspace(dir), () => {})
+  const auth = createLocalAuth()
+  let requests = 0
+  const app = createServerApp(rt, { webDir: WEB, auth, fetchImpl: async () => { requests++; throw new Error('unexpected') } })
+  const srv = createServer(app.handler)
+  t.after(async () => {
+    await app.dispose()
+    await new Promise<void>((resolve) => srv.close(() => resolve()))
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+  const localFetch = await localhostClient(base, auth)
+  const status = await (await localFetch(base + '/api/update/status')).json() as UpdateStatus
+  const check = await (await localFetch(base + '/api/update/check', { method: 'POST', headers: { 'x-evoscholar': '1' } })).json()
+  assert.equal(status.supported, false)
+  assert.equal(status.phase, 'idle')
+  assert.equal(status.lastCheckedAt, null)
+  assert.deepEqual(check, status)
+  assert.equal(requests, 0)
+})
+
+test('desktop update endpoints coalesce checks and persist update preferences behind auth', async (t) => {
+  const dir = tempWorkspace()
+  const ws = openWorkspace(dir)
+  const rt = openRuntime(ws, () => {})
+  const auth = createLocalAuth()
+  let requests = 0
+  let version = '0.5.0'
+  let complete: () => void = () => {}
+  const waitForFetch = new Promise<void>((resolve) => { complete = resolve })
+  const fetchImpl: typeof fetch = async () => {
+    requests++
+    await waitForFetch
+    return Response.json({ tag_name: 'v' + version, assets: [] })
+  }
+  const app = createServerApp(rt, { webDir: WEB, auth, appUpdate: { version: '0.4.0', platform: 'darwin', arch: 'arm64' }, fetchImpl })
+  const srv = createServer(app.handler)
+  t.after(async () => {
+    complete()
+    await app.dispose()
+    await new Promise<void>((resolve) => srv.close(() => resolve()))
+    rt.db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+  const localFetch = await localhostClient(base, auth)
+  const H = { 'x-evoscholar': '1', 'content-type': 'application/json' }
+  const read = async (path: string): Promise<any> => (await localFetch(base + path)).json()
+  const mutate = (path: string, method: 'PUT' | 'POST', value?: unknown) =>
+    localFetch(base + path, { method, headers: H, body: JSON.stringify(value ?? {}) })
+  const settings = () => JSON.parse(readFileSync(join(ws.dataDir, 'settings.json'), 'utf8')).update
+  const checkPath = '/api/update/check'
+  const actionPath = '/api/update/action'
+  const settingsPath = '/api/settings/update'
+  const statusPath = '/api/update/status'
+
+  assert.equal((await fetch(base + statusPath)).status, 401)
+  for (const [path, method] of [[checkPath, 'POST'], [actionPath, 'POST'], [settingsPath, 'PUT']] as const) {
+    assert.equal((await fetch(base + path, { method, headers: H })).status, 401)
+    assert.equal((await localFetch(base + path, { method })).status, 403)
+  }
+  assert.equal((await read(statusPath)).phase, 'idle')
+  assert.equal((await read(statusPath)).autoCheck, true)
+  assert.equal(requests, 0)
+  assert.equal((await mutate(settingsPath, 'PUT', { autoCheck: 'false' })).status, 400)
+  assert.equal((await mutate(settingsPath, 'PUT', {})).status, 400)
+  assert.equal((await mutate(settingsPath, 'PUT', { autoCheck: false })).status, 200)
+  assert.equal(settings().autoCheck, false)
+  assert.equal((await app.checkForUpdates({ automatic: true })).phase, 'idle')
+  assert.equal(requests, 0)
+
+  const running = app.checkForUpdates()
+  assert.equal(app.checkForUpdates(), running)
+  assert.equal((await read(statusPath)).phase, 'checking')
+  const check = mutate(checkPath, 'POST')
+  await delay(20)
+  complete()
+  const available = await running
+  assert.equal(available.phase, 'available')
+  assert.equal((await (await check).json() as UpdateStatus).latestVersion, '0.5.0')
+  assert.equal(settings().lastCheckedAt, available.lastCheckedAt)
+  assert.equal(requests, 1)
+  assert.deepEqual((await read('/api/state')).update, { hasUnreadUpdate: true, latestVersion: '0.5.0' })
+
+  for (const action of ['download', 'install']) {
+    const response = await mutate(actionPath, 'POST', { action })
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), { error: '当前版本不支持应用内安装' })
+  }
+  assert.equal((await mutate(actionPath, 'POST', { action: 'dismiss', version: 'bad' })).status, 400)
+  const ignored = await (await mutate(actionPath, 'POST', { action: 'dismiss', version: 'v0.5.0' })).json() as { hasUnreadUpdate: boolean }
+  assert.equal(ignored.hasUnreadUpdate, false)
+  assert.equal(settings().dismissedVersion, '0.5.0')
+  assert.deepEqual((await read('/api/state')).update, { hasUnreadUpdate: false, latestVersion: '0.5.0' })
+  assert.equal((await mutate(settingsPath, 'PUT', { autoCheck: true })).status, 200)
+  await app.checkForUpdates({ automatic: true })
+  assert.equal(requests, 1)
+
+  version = '0.6.0'
+  assert.equal((await mutate(checkPath, 'POST')).status, 200)
+  assert.deepEqual((await read('/api/state')).update, { hasUnreadUpdate: true, latestVersion: '0.6.0' })
+  assert.equal(settings().autoCheck, true)
 })
