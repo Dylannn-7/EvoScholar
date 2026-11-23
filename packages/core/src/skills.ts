@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, lstatSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, readdirSync, lstatSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import YAML from 'yaml'
 import type { Json } from '@evoscholar/harness'
@@ -70,26 +71,29 @@ export const readSkill: ToolFactory = (env) => ({
   name: 'read_skill',
   version: '1',
   description: '读取一个技能（SKILL.md）的完整说明；file 可读取该技能附带的参考文档或脚本（如 references/xxx.md、scripts/yyy.py）。技能列表见系统指令的「可用技能」。',
-  parameters: { type: 'object', properties: { name: { type: 'string' }, file: { type: 'string', description: '技能目录内的相对路径，可选' } }, required: ['name'], additionalProperties: false },
+  parameters: { type: 'object', properties: { name: { type: 'string' }, file: { type: 'string', description: '技能目录内的相对路径，可选' }, version: { type: 'integer', minimum: 1, description: '可执行技能的版本号' } }, required: ['name'], additionalProperties: false },
   scheduling: 'parallel',
-  validate: (i) => objectArgs(i, ['name', 'file'], ['name']) as Json,
+  validate: (i) => objectArgs(i, ['name', 'file', 'version'], ['name']) as Json,
   authorize: async () => true,
   async execute(args) {
-    const { name, file } = args as { name: string; file?: string }
-    const ref = env.skills?.find((skill) => skill.name === name) ?? extraSkills(env.ws.root).find((x) => x.name === name)
-    const s = ref && readSkillFile(env.ws.root, ref.name, ref.version)
+    const { name, file, version } = args as { name: string; file?: string; version?: number }
+    const src = skillSource(env.ws.root, name)
+    const pinned = src.type === 'forged'
+      ? visibleKernelRevisions(src, kernelProject(env)).find((r) => version === undefined || r.version === version) : undefined
+    const ref = src.type === 'forged' ? undefined : env.skills?.find((skill) => skill.name === name)
+    const s = pinned ? readKernelSkill(env.ws.root, name, src, pinned.version) : ref && readSkillFile(env.ws.root, ref.name, ref.version)
     if (!s) return textResult(`没有技能 ${name}`, true)
-    const dir = inside(env.ws.root, join('skills', name))
+    const dir = inside(env.ws.root, pinned ? kernelRevisionPath(name, src, pinned.version) : join('skills', name))
     if (file) {
       if (/(^|[\\/])\./.test(file)) return textResult('只能读取技能目录里的文件', true)
       const f = inside(dir, file)
       if (!existsSync(f) || !statSync(f).isFile()) return textResult(`技能 ${name} 里没有 ${file}`, true)
       if (statSync(f).size > 80_000) return textResult(`${file} 太大（超过 80 KB），请只读需要的部分`, true)
-      env.trace?.({ kind: 'skill.read', name, file })
+      env.trace?.({ kind: 'skill.read', name, file, ...(pinned ? { version: pinned.version } : {}) })
       return textResult(readFileSync(f, 'utf8'))
     }
     env.trace?.({ kind: 'skill.read', name: s.meta.name, version: s.meta.version })
-    const extras = listSkillFiles(dir)
+    const extras = pinned ? ['kernel.py', 'test_kernel.py'].filter((f) => existsSync(join(dir, f))) : listSkillFiles(dir)
     return textResult(`# 技能 ${s.meta.name} v${s.meta.version}\n${s.body}${extras.length ? `\n\n---\n本技能附带文件（用 read_skill 的 file 参数读取）：${extras.join('、')}` : ''}`)
   }
 })
@@ -112,6 +116,13 @@ export function listSkillFiles(dir: string, limit = 60): string[] {
   return out
 }
 
+export type KernelInputFormat = { argument: string; extension: string; header: string[] }
+export type KernelReleases = {
+  scope: { project: string; input: KernelInputFormat }
+  trial?: number
+  active?: number
+  approved: number[]
+}
 export type SkillSource = {
   type: 'builtin' | 'github' | 'zip' | 'folder' | 'forged'; origin?: string; license?: string; importedAt?: string
   status?: 'trial' | 'active'; sessions?: string[]; reuses?: string[]; kernel?: boolean
@@ -121,6 +132,7 @@ export type SkillSource = {
   trusted?: boolean
   /** A forged skill the user switched off: hidden from the model and refused by run_skill. */
   disabled?: boolean
+  releases?: KernelReleases
 }
 const IMPORTED_TYPES = new Set(['github', 'zip', 'folder'])
 /** Imported text the user has not vouched for; reading it marks a session's context as external. */
@@ -141,9 +153,38 @@ export function writeSkillSource(root: string, name: string, src: SkillSource): 
   atomicWriteFile(inside(dir, '.source.json'), JSON.stringify(src, null, 2) + '\n')
 }
 
-/** Host-level skills every session can read even if the genome does not list them: forged kernels. */
-export function extraSkills(root: string): SkillRef[] {
+export function kernelProject(env: { cwd: string; projectId?: string | null }): string {
+  return env.projectId ? `project:${env.projectId}` : `directory:${createHash('sha256').update(realpathSync(env.cwd)).digest('hex')}`
+}
+
+type KernelRevision = { version: number; status: 'active' | 'trial' }
+
+export function visibleKernelRevisions(src: SkillSource, project: string): KernelRevision[] {
+  if (src.type !== 'forged' || src.disabled) return []
+  const releases = src.releases
+  if (!releases) return src.status === 'active' ? [{ version: 1, status: 'active' }] : []
+  if (releases.scope.project !== project) return []
+  const result: KernelRevision[] = []
+  if (releases.active !== undefined) result.push({ version: releases.active, status: 'active' })
+  if (releases.trial !== undefined) result.push({ version: releases.trial, status: 'trial' })
+  return result
+}
+
+export function kernelRevisionPath(name: string, src: SkillSource, version: number): string {
+  return src.releases ? join('skills', name, 'revisions', `v${version}`) : join('skills', name)
+}
+
+export function readKernelSkill(root: string, name: string, src: SkillSource, version: number) {
+  return readSkillPath(inside(root, join(kernelRevisionPath(name, src, version), 'SKILL.md')), name)
+}
+
+export function extraSkills(root: string, project: string): (SkillRef & KernelRevision & { input?: KernelInputFormat; description: string })[] {
   const dir = join(root, 'skills')
   if (!existsSync(dir)) return []
-  return readdirSync(dir).filter((n) => { const src = skillSource(root, n); return src.type === 'forged' && !src.disabled }).map((n) => ({ name: n, version: readSkillFile(root, n)?.meta.version ?? 1 }))
+  return readdirSync(dir).flatMap((name) => {
+    const src = skillSource(root, name)
+    return visibleKernelRevisions(src, project).map((rev) => ({
+      name, ...rev, input: src.releases?.scope.input, description: readKernelSkill(root, name, src, rev.version)?.meta.description ?? ''
+    }))
+  })
 }

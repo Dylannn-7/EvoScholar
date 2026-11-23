@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { basename, extname, relative } from 'node:path'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join, relative } from 'node:path'
 import type { Json } from '@evoscholar/harness'
 import { runPyHelper } from './exec'
 import { modelPath } from './sandbox'
@@ -16,7 +17,7 @@ export const figureCheck: ToolFactory = (env) => ({
   name: 'figure_check',
   version: '1',
   description:
-    '出图后检查：对已保存的图（PDF / SVG / PNG / JPG / TIFF）按期刊规则包检查尺寸、字体是否可编辑、位图分辨率，并把渲染预览图交给你看。' +
+    '出图后检查：按期刊规则包检查已导出图的尺寸、PDF 字体嵌入和位图有效分辨率（含 PDF 内嵌位图），返回实际文件的渲染预览。' +
     'venue 可选 nature、ieee、optica、wiley、neurips、iclr、icml、cvpr；不给则只测量不判定。' +
     '已知投稿尺寸时，传 columns（half / single / double）或 target_width_mm，位图会按目标栏宽计算有效 DPI。' +
     '字号、坐标轴单位、配色等需要 matplotlib 对象的检查，请在 run_python 里用 evoscholar_fig.check_figure / save。',
@@ -49,19 +50,20 @@ export const figureCheck: ToolFactory = (env) => ({
     const a = args as { path: string; venue?: string; photo?: boolean; columns?: string; target_width_mm?: number }
     const file = modelPath(env, a.path)
     if (!existsSync(file)) return textResult(`文件不存在：${a.path}`, true)
-    if (!/\.(png|jpe?g)$/i.test(file)) {
-      if (!(await env.approve?.('figure_check', `渲染 ${a.path} 的检查预览`, 'edit', c.signal) ?? true))
-        return textResult('未获准保存图形预览', true)
-      c.signal.throwIfAborted()
-      const ext = extname(file)
-      modelPath(env, (ext ? file.slice(0, -ext.length) : file) + '.preview.png')
-    }
-    const cli = ['check', file, '--preview']
+    const dir = mkdtempSync(join(tmpdir(), 'evoscholar-figure-check-'))
+    const cli = ['check', file, '--preview-out', join(dir, 'preview.png')]
     if (a.venue) cli.push('--venue', a.venue)
     if (a.photo) cli.push('--photo')
     if (a.columns) cli.push('--columns', a.columns)
     if (a.target_width_mm !== undefined) cli.push('--target-width-mm', String(a.target_width_mm))
-    const r = JSON.parse(await runPyHelper(env, 'evoscholar_fig.py', cli, c.signal)) as FileReport
+    let r: FileReport
+    let png: Buffer | undefined
+    try {
+      r = JSON.parse(await runPyHelper(env, 'evoscholar_fig.py', cli, c.signal)) as FileReport
+      if (r.preview && existsSync(r.preview)) png = readFileSync(r.preview)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
     const m = r.measured
     const size = m.width_mm ? `${m.width_mm}×${m.height_mm} mm` : '尺寸未知'
     const errors = r.issues.filter((issue) => issue.level === 'error').length
@@ -69,6 +71,7 @@ export const figureCheck: ToolFactory = (env) => ({
     const details = [size]
     if (m.effective_dpi !== undefined) details.push(`${m.target_width_mm} mm 栏宽下有效 DPI ${m.effective_dpi}`)
     if (m.dpi !== undefined) details.push(`文件 DPI ${m.dpi}`)
+    if (m.min_embedded_dpi !== undefined) details.push(`PDF 嵌入位图最低有效 DPI ${m.min_embedded_dpi}`)
     if (m.fonts) details.push(`字体 ${(m.fonts as string[]).join(', ')}`)
     if (m.text_elements !== undefined) details.push(`SVG 文本元素 ${m.text_elements} 个`)
     const lines = [
@@ -77,9 +80,10 @@ export const figureCheck: ToolFactory = (env) => ({
     ]
     env.trace?.({ kind: 'figure.check', file: relative(env.cwd, file), venue: a.venue ?? null, ok: r.ok, status: r.status, issues: r.issues.length })
     const content: ({ type: 'text'; text: string } | { type: 'image'; mimeType: string; source: string; filename: string })[] = [{ type: 'text', text: lines.join('\n') }]
-    if (r.preview && existsSync(r.preview)) {
+    if (png && r.preview) {
       content.push({ type: 'text', text: '渲染预览（请看图检查重叠、裁切、可读性）：' })
-      content.push({ type: 'image', mimeType: 'image/png', source: `data:image/png;base64,${readFileSync(r.preview).toString('base64')}`, filename: basename(r.preview) })
+      const mimeType = /\.jpe?g$/i.test(r.preview) ? 'image/jpeg' : 'image/png'
+      content.push({ type: 'image', mimeType, source: `data:${mimeType};base64,${png.toString('base64')}`, filename: basename(r.preview) })
     }
     return { content }
   }

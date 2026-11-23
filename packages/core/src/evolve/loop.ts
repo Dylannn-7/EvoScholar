@@ -102,6 +102,7 @@ export function installEvolveLoop(h: EvolveHooks) {
     calls: new Map<string, { name: string; args: unknown; key: string }>(),
     seenTool: new Set<string>(),
     failures: new Map<string, number>(),
+    lastFailure: undefined as { invocationId: string; tool: string } | undefined,
     unresolved: new Map<string, string>(), // tool name -> last failure
     signals: [] as string[],
     pendingReflect: undefined as { messageId: string; text: string } | undefined,
@@ -160,7 +161,7 @@ export function installEvolveLoop(h: EvolveHooks) {
   }
 
   function beginTurn(userText: string) {
-    Object.assign(st, { signals: [], unresolved: new Map(), failures: new Map(), cited: new Set(), toolsUsed: new Set(), wrote: new Set(), learned: [], selfChecked: false, pendingReflect: undefined, reflectedSinceFailure: true })
+    Object.assign(st, { signals: [], unresolved: new Map(), failures: new Map(), lastFailure: undefined, cited: new Set(), toolsUsed: new Set(), wrote: new Set(), learned: [], selfChecked: false, pendingReflect: undefined, reflectedSinceFailure: true })
     // Explicit "from now on" requests become pinned preferences right away (doc §6).
     const m = /((以后|今后|之后)(都|一律|统一|就都)|每次都|一律)([^。！？\n]{3,120})/.exec(userText)
     if (m && /(用|要|别|不要|改成|写成|按|保持|放|加|去掉)/.test(m[4])) {
@@ -241,6 +242,7 @@ export function installEvolveLoop(h: EvolveHooks) {
         const text = textOf(m.content)
         const sig = failureSignal(call.name, text, !!m.isError)
         if (sig) {
+          if (m.invocationId && m.isError) st.lastFailure = { invocationId: m.invocationId, tool: call.name }
           st.signals.push(sig)
           st.unresolved.set(call.name, sig)
           st.failures.set(call.key, (st.failures.get(call.key) ?? 0) + 1)
@@ -387,6 +389,7 @@ export function installEvolveLoop(h: EvolveHooks) {
 
   if (h.env) tools.push(...kernelTools({
     store: h.store, sessionId: h.sessionId, env: h.env, emit,
+    lastFailure: () => st.lastFailure,
     addOverlay: (op, target, value, reason) => h.store.addOverlay({ sessionId: h.sessionId, op, target, value, reason, turnId: h.turnId(), beforeScore: h.store.lastScore(h.sessionId) })
   }))
 

@@ -20,6 +20,8 @@ class StyleCatalogTest(unittest.TestCase):
         self.assertEqual(mpl.rcParams['axes.prop_cycle'], bright)
         self.assertLessEqual(mpl.rcParams['font.size'], 7.0)
         self.assertEqual(info['venue'], 'nature')
+        S.use('sp-grid', venue='nature')
+        self.assertFalse(mpl.rcParams['axes.grid'])
 
     def test_meta_separates_look_alike_styles(self):
         a, b = S.style_meta('sp-science'), S.style_meta('sp-nature')

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import YAML from 'yaml'
 import { checkFeedbackStats, type RuleStats } from './checkfeedback'
 import type { Runtime } from './session'
-import { listSkills, skillSource } from './skills'
+import { listSkills, readKernelSkill, skillSource, type SkillSource } from './skills'
 import { TOOL_FACTORIES } from './tools'
 
 export type SkillSummary = {
@@ -79,14 +79,17 @@ export function getCapabilities(rt: Runtime): CapabilitiesSummary {
   const g = rt.genomes.load()
   const enabledSkills = new Map((g.skills ?? []).map((s) => [s.name, s.version]))
   const skills: SkillSummary[] = listSkills(rt.ws.root, g.skills)
-    .map((s) => ({
-      ...provenance(rt.ws.root, s.name),
-      name: s.name,
-      version: s.version,
-      description: s.description,
-      enabled: enabledSkills.has(s.name),
-      activeVersion: enabledSkills.get(s.name)
-    }))
+    .map((s) => {
+      const src = skillSource(rt.ws.root, s.name)
+      const version = src.releases?.active ?? src.releases?.trial
+      const selected = version === undefined ? undefined : readKernelSkill(rt.ws.root, s.name, src, version)
+      return {
+        ...provenance(src), name: s.name, version: version ?? s.version,
+        description: selected?.meta.description ?? s.description,
+        enabled: enabledSkills.has(s.name),
+        activeVersion: src.releases?.active ?? enabledSkills.get(s.name)
+      }
+    })
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name))
 
   const figureRulepacks: FigureRulepackSummary[] = readYamlDir(join(rt.ws.root, 'rulepacks', 'figures')).map((d) => ({
@@ -140,8 +143,7 @@ export function getCapabilities(rt: Runtime): CapabilitiesSummary {
   }
 }
 
-function provenance(root: string, name: string) {
-  const src = skillSource(root, name)
+function provenance(src: SkillSource) {
   const source = src.type === 'builtin' ? 'builtin' as const : src.type === 'forged' ? 'evolved' as const : 'imported' as const
   return { source, status: src.status, origin: src.origin, license: src.license, kernel: src.kernel, reuses: src.reuses?.length, bundled: !!src.bundled, trusted: !!src.trusted, disabled: !!src.disabled }
 }

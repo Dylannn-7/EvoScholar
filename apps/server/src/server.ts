@@ -71,6 +71,7 @@ const SKILL_MODE: Record<string, string> = {
   'figure-composer': 'figure',
   'tikz-diagram': 'figure',
   'data-tables': 'data',
+  'statistical-analysis': 'data',
   'ml-results': 'data',
   'ml-curves': 'data',
   'optics-spectra': 'data',

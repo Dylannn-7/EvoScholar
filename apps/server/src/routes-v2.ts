@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { createSetupJobs, type SetupKind } from './setup-jobs'
+import { operatorEvidence } from './operator-evidence'
 import { dirname, join } from 'node:path'
 import {
   DEFAULT_SANDBOX_IMAGE,
@@ -24,6 +25,7 @@ import {
   listUserRules,
   removeImportedSkill,
   readSkillText,
+  rollbackKernel,
   setKernelEnabled,
   setSkillEnabled,
   setSkillTrusted,
@@ -369,7 +371,8 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
       if (method === 'PATCH') {
         const b = await body(req)
         try {
-          if (typeof b.trusted === 'boolean') setSkillTrusted(rt, mm[1], b.trusted)
+          if (Object.hasOwn(b, 'rollbackVersion')) rollbackKernel(rt, mm[1], b.rollbackVersion)
+          else if (typeof b.trusted === 'boolean') setSkillTrusted(rt, mm[1], b.trusted)
           else if (typeof b.kernelEnabled === 'boolean') setKernelEnabled(rt, mm[1], b.kernelEnabled)
           else setSkillEnabled(rt, mm[1], !!b.enabled)
         } catch (e) { throw httpError(400, (e as Error).message) }
@@ -399,6 +402,11 @@ export function createV2Routes(rt: Runtime, hooks: { resetIdleSessions: () => Pr
     }
 
     // ---------- in-loop evolution: memory, overlays, log ----------
+    if ((mm = /^\/api\/evolve\/operators\/([1-9]\d{0,14})$/.exec(p)) && method === 'GET') {
+      const evidence = operatorEvidence(rt, Number(mm[1]))
+      if (!evidence) throw httpError(404, '没有这条算子记录')
+      return send(res, 200, evidence), true
+    }
     if (p === '/api/evolve' && method === 'GET') {
       const session = url.searchParams.get('session') ?? undefined
       return send(res, 200, {

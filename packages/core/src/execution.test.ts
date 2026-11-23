@@ -79,6 +79,10 @@ test('execution tools normalize delivery paths without mutating harness argument
   assert.deepEqual(python.validate(pythonArgs), { code: 'print(7)', deliverables: ['answer.json'] })
   assert.deepEqual(command.validate(commandArgs), { command: 'pwd', deliverables: ['answer.json'] })
   assert.deepEqual(deliverables, ['./answer.json'])
+  const publication = { code: 'print(7)', publication: true }
+  assert.throws(() => python.validate({ ...publication, deliverables: ['raw_data/input.csv'] }), /figures\/ 或 processed\//)
+  assert.deepEqual(python.validate({ ...publication, deliverables: ['./figures/result.pdf'] }),
+    { ...publication, deliverables: ['figures/result.pdf'] })
 })
 
 test('declared container deliverables publish to their project paths and preserve intervening user edits', (t) => {
@@ -267,6 +271,36 @@ test('real Linux container smoke test (prebuilt local image)', { timeout: 90_000
   }, 30, AbortSignal.timeout(35_000))
   assert.equal(failed.code, 1)
   assert.equal(existsSync(join(cwd, 'failed.txt')), false)
+
+  mkdirSync(join(cwd, 'raw_data'))
+  writeFileSync(join(cwd, 'raw_data', 'input.csv'), 'raw observations')
+  await use('run_python', {
+    publication: true,
+    deliverables: ['processed/summary.txt'],
+    code: [
+      'from pathlib import Path',
+      'raw = Path("raw_data/input.csv")',
+      'assert raw.read_text() == "raw observations"',
+      'try:',
+      '    raw.write_text("overwritten")',
+      'except OSError:',
+      '    pass',
+      'else:',
+      '    raise AssertionError("raw_data is writable")',
+      'Path("processed").mkdir()',
+      'Path("processed/summary.txt").write_text(raw.read_text())',
+      'Path("undeclared.txt").write_text("scratch")'
+    ].join('\n')
+  })
+  assert.equal(readFileSync(join(cwd, 'raw_data', 'input.csv'), 'utf8'), 'raw observations')
+  assert.equal(readFileSync(join(cwd, 'processed', 'summary.txt'), 'utf8'), 'raw observations')
+  assert.equal(existsSync(join(cwd, 'evoscholar-out', 's-fixture', 'undeclared.txt')), false)
+  const failedPublication = await executor.run(env, {
+    ...job, publication: true, deliverables: ['processed/summary.txt'],
+    code: 'open("processed/summary.txt", "w").write("unfinished")\nraise SystemExit(1)'
+  }, 30, AbortSignal.timeout(35_000))
+  assert.equal(failedPublication.code, 1)
+  assert.equal(readFileSync(join(cwd, 'processed', 'summary.txt'), 'utf8'), 'raw observations')
 
   writeFileSync(join(cwd, 'hello.txt'), 'served')
   const service = await executor.start(env, { host: ['python3', []], sandbox: ['python', '-m', 'http.server', '8765', '--bind', '127.0.0.1'] }, AbortSignal.timeout(60_000))

@@ -15,7 +15,7 @@
 | D5 | 自主权边界 | 经验和技能补丁自动生效，但可见、可撤销；系统提示和 genome 的持久修改需要审批 |
 | D6 | 界面风格 | **网页去掉所有 emoji 和表情符号**（👍👎📎⚡👁⚠✓✗ 等），改用文字标签或单色线性图标；本方案的 UI 也不使用 emoji |
 | D7 | 会话覆盖层 | harness 层的调整在**本会话内直接试用**，不需要审批；持久化到 genome 才需要审批 |
-| D8 | 可执行技能转正 | 测试通过 + 跨会话成功复用 2 次后**自动转为 active**，不需要人工审核代码 |
+| D8 | 可执行技能转正 | 测试通过后在项目内试用。在另外两个会话执行成功后，请用户批准具体版本 |
 | D9 | 评委打分 | 只在「有交付物，且没有用户信号和环境信号」时调用（约 ¥0.003 / 次） |
 | D10 | 文件修改对比 | 允许：回合结束后比较用户修改过的产出文件，从中学习偏好，只在本地处理 |
 
@@ -54,7 +54,7 @@ flowchart LR
 | **经验**：「什么情况 → 怎么做」 | 自动提炼 / `note_lesson` | 下一步（注入上下文） | 自动，可撤销 |
 | **偏好**：用户的口味和习惯 | 由用户的选择产生（§6） | 下一步 | 自动，可撤销 |
 | **技能文档** `SKILL.md` | `patch_skill` | 下一步（`read_skill` 读到新版本；技能索引在下一回合更新） | 自动生成新版本文件，可撤销 |
-| **可执行技能** `kernel.py` | `forge_skill` | 测试通过后立即可调用 | 自动（试用期结束、复用成功后转正），可撤销 |
+| **可执行技能** `kernel.py` | `forge_skill` | 测试通过后可按版本在项目内试用 | 人工转正，可回滚到已批准的版本 |
 | **模型路由与参数**：某阶段用哪个模型、推理强度 | `tune_harness` | 下一次模型请求 | 会话内试用；持久化需审批 |
 | **工作流**：插入校验步骤、并行检索、子代理 | `tune_harness` | 下一回合 | 会话内试用；持久化需审批 |
 | **工具描述 / 系统提示片段** | `tune_harness` | 下一回合 | 会话内试用；持久化需审批 |
@@ -129,7 +129,7 @@ stateDiagram-v2
 | `reflect` | `{ situation, cause, next_action, adjust?: none\|lesson\|skill\|harness }` | 写一张反思卡片；`adjust` 不是 none 时，要求接着调用对应工具 |
 | `note_lesson` | `{ trigger, advice, scope, evidence }` | 新增或更新一条经验（相似条目会合并，不重复新增） |
 | `patch_skill` | `{ skill, section, change, reason }` | 对 `SKILL.md` 做增量修改（增加 / 修改一条要点，不整篇重写），生成新版本文件 |
-| `forge_skill` | `{ name, code, test, description }` | 把本会话里跑通的脚本封装成函数，连同测试写入 `skills/<name>/kernel.py`（§5） |
+| `forge_skill` | `{ name, code, test, description, input_format }` | 保存带项目与输入格式作用域的试用版本（§5） |
 | `tune_harness` | `{ op, target, value, reason }`，`op` 见 §4 | 修改会话覆盖层 |
 | `recall` | `{ query, scope? }` | 主动检索记忆和技能 |
 
@@ -166,14 +166,11 @@ stateDiagram-v2
 
 借鉴 Voyager 的技能库：把会话里**跑通过**的处理流程沉淀成可复用的函数。
 
-1. **触发**：同类处理（解析某种仪器导出格式、某种统计流程）在同一会话里成功做过，模型调用 `forge_skill`；或者回合复盘时由宿主提议。
-2. **内容**：`skills/<name>/kernel.py`（纯函数，带类型注解和 docstring）、`skills/<name>/test_kernel.py`（用本会话的真实输入片段做测试，片段会脱敏、截短）、`SKILL.md`（说明用法）。
-3. **门槛**：
-   - 测试在沙箱里通过：使用已有的 `run_python` 环境、`childEnv`（不带 API Key）、只能访问 cwd；
-   - 静态检查：不允许联网、`subprocess`、`os.system`、`eval` / `exec`，不允许访问 cwd 以外的路径；
-   - 新技能的状态是 `trial`，能被检索和调用；在另一个会话里成功复用 ≥ 2 次后转为 `active`。
-4. **调用**：`run_python` 里 `from evoscholar_skills import <name>`，或者用新工具 `run_skill`。每次调用都记入归因。
-5. **升级**：技能失败时，模型可以用 `patch_skill` 修改它，新版本必须通过旧测试加上新测试，旧版本保留，可以回滚。
+1. 文件处理流程跑通后，调用 `forge_skill` 封装 `run(**kwargs)` 和测试。静态检查通过后，在独立沙箱中用内联样例运行测试。通过的源码、测试与说明保存在 `skills/<name>/revisions/vN/`。
+2. 宿主根据当前项目确定作用域。未关联项目的会话以工作目录划分作用域。`input_format` 记录文件路径参数、后缀和稳定的 UTF-8 表头。例如 `{"argument":"path","extension":".csv","header":["Wavelength,Signal","nm,linear a.u."]}`。执行前逐行核对实际文件的开头。不同项目或格式使用不同算子名称。
+3. `run_skill` 接收 `name`、`version` 和 `args`。目录索引在下一回合更新，运行轨迹记录具体版本。新试用版和已生效版本可以同时存在。
+4. 试用版在锻造会话之外的两个不同会话执行成功后，工作台会请用户批准该版本在当前作用域生效。执行成功计入技术复用记录，科研结果由数据对照验收。
+5. 更新代码时用 `forge_skill` 新建版本。在「插件 → 技能详情」可把生效指针切回一个已批准版本，试用版本可以继续验证。升级前已经生效的旧算子可继续使用，未绑定作用域的历史试用算子需要重新锻造。
 
 ## 6. 按用户的选择进化（偏好记忆）
 
@@ -328,7 +325,7 @@ packages/core/src/tools/evolve.ts
 | P2 | `recall`、`signals`、`reflex`、guard；工具 `reflect` / `note_lesson` / `recall`；`evolve` 事件 | 模拟网关 e2e：工具报错 → 投影里出现反思要求 → 模型调用 reflect → 新增 trial 经验；**chat-completions、messages、responses 三种适配器都通过**；注入块不变时请求前缀不变 | 1 天 |
 | P3 | `overlay`、`router`、`tune_harness`、回合间 `configure` | e2e：`route` 后下一次请求换了底层模型；`workflow.insert` 后下一回合出现校验步骤；修改预算上限 / guards 的请求被拒绝 | 1 天 |
 | P4 | `score`、`credit`、`selfcheck`、`judge`、`review`、`offer_choices`、文件修改对比 | e2e：会话 A 学到的经验在会话 B 被注入并引用，好评后得分上升；迟到的差评能补记；选项卡的选择变成偏好 | 1 天 |
-| P5 | `patch_skill`、`forge_skill`、`run_skill`、静态检查与沙箱测试 | 单元测试：包含 `subprocess` / 联网 / 越界路径的代码被拒；e2e：锻造 → 另一个会话复用 2 次 → 自动转为 active；回滚到旧版本 | 1 天 |
+| P5 | `patch_skill`、`forge_skill`、`run_skill`、静态检查与沙箱测试 | 验证作用域、版本绑定、人工转正及回滚，用留出数据核对迁移结果 | 1 天 |
 | P6 | `consolidate`、回放集、接入现有审批界面 | 用模拟数据：高分经验簇 → 候选 → 回放不退步 → 进入待审批 | 1 天 |
 | P7 | 界面卡片、选项卡、记忆与技能面板、粒子状态；`npm run demo:evolve-loop`（模拟网关，¥0） | 无头截图 1440×900 和窄屏；控制台无报错；演示一条命令跑通「出错 → 反思 → 记经验 → 新会话复用 → 好评归因」 | 1 天 |
 | P8 | `system@v6` + 派生 genome，跑一次真实冒烟（`--category dev`，预计 ≤ ¥0.5），报告给用户，用户审批后上线 | 冒烟报告 | 0.5 天 |
@@ -346,7 +343,7 @@ packages/core/src/tools/evolve.ts
 | 回合复盘 | 只在有信号时调用，fast 模型 |
 | 评委 | 只在有交付物、且没有用户和环境信号时调用 |
 | 经验 / 偏好转正 | 用户直接给出的立即转正；其他的 2 次成功且 score ≥ 0.6 |
-| 可执行技能转正 | 测试通过 + 跨会话成功复用 2 次 |
+| 可执行技能转正 | 测试通过，在另外两个会话执行成功，并经人工批准 |
 | 淘汰 | uses ≥ 5 且 score < 0.35，或 30 天未用 |
 | 记忆容量 | active 条目 ≤ 300 |
 | 沉淀 | 每天最多 1 次，非高峰，每轮 ≤ ¥2 |

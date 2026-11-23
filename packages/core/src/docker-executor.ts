@@ -4,7 +4,7 @@ import { uptime } from 'node:os'
 import { join } from 'node:path'
 import type { Workspace } from './config'
 import type { ExecutionBackend, ExecutionJob, ExecutionStatus, IsolatedService, ProcessResult } from './execution'
-import { checkProjectRoot, copySkillResources, stageDirectory, StagedProject } from './staged-project'
+import { checkProjectRoot, copySkillResources, stageDirectory, StagedProject, validatePublicationDeliverables } from './staged-project'
 import type { ToolEnv } from './tools/types'
 
 export const DEFAULT_SANDBOX_IMAGE = 'evoscholar-sandbox:1'
@@ -20,6 +20,7 @@ type SessionStage = { stage: Stage; project: StagedProject; running: boolean }
 
 export function dockerCreateArgs(box: {
   name: string; image: string; owner: string; session: string; work: string; control: string; argv: string[]
+  publication?: boolean
 }): string[] {
   if ([box.work, box.control].some((path) => /[,\r\n]/.test(path))) throw new Error('容器临时目录名不能包含逗号或换行')
   return [
@@ -31,6 +32,7 @@ export function dockerCreateArgs(box: {
     '--label', `${LABEL}.boot=${bootMinute()}`,
     '--mount', `type=bind,source=${box.work},target=/work`,
     '--mount', `type=bind,source=${box.control},target=/control,readonly`,
+    ...(box.publication ? ['--mount', `type=bind,source=${join(box.work, 'raw_data')},target=/work/raw_data,readonly`] : []),
     '--workdir', '/work', '--env', 'HOME=/tmp', '--env', 'MPLBACKEND=Agg', '--env', 'MPLCONFIGDIR=/tmp/matplotlib',
     '--env', 'PYTHONPATH=/opt/evoscholar/python', '--env', 'PYTHONDONTWRITEBYTECODE=1',
     '--env', 'PYTHONIOENCODING=utf-8', '--env', 'PYTHONUNBUFFERED=1', '--env', 'EVOSCHOLAR_CWD=/work',
@@ -130,8 +132,10 @@ export class DockerExecutor implements ExecutionBackend {
     mkdirSync(stage.controls, { mode: 0o755 })
     if (job.code !== undefined) writeFileSync(join(stage.controls, 'cell.py'), job.code, { mode: 0o644, flag: 'w' })
     if (job.skillDir) copySkillResources(job.skillDir, join(stage.controls, 'skill'))
+    if (job.publication) mkdirSync(join(stage.work, 'raw_data'), { recursive: true })
     const result = await this.engine(binary, dockerCreateArgs({
-      name, owner: this.owner, session: this.session(env), image: this.image, work: stage.work, control: stage.controls, argv: job.sandbox
+      name, owner: this.owner, session: this.session(env), image: this.image, work: stage.work, control: stage.controls,
+      argv: job.sandbox, publication: job.publication
     }), 15, signal)
     if (result.code !== 0) throw new Error('无法创建 Linux 执行容器，请检查本地镜像和文件共享设置')
   }
@@ -144,13 +148,13 @@ export class DockerExecutor implements ExecutionBackend {
   async run(env: ToolEnv, job: ExecutionJob, timeout: number, signal: AbortSignal) {
     signal.throwIfAborted()
     const binary = this.binary, name = 'evo-' + randomUUID()
-    const run = job.emptyWorkspace ? undefined : this.stage(env, false)
+    const run = job.emptyWorkspace ? undefined : this.stage(env, job.publication === true)
     const stage = run?.stage ?? stageDirectory()
     if (run) run.running = true
     let launched = false
-    let keep = !!run
+    let keep = !!run && !job.publication
     try {
-      const delivery = run?.project.planDelivery(job.deliverables)
+      const delivery = run?.project.planDelivery(job.publication ? validatePublicationDeliverables(job.deliverables) : job.deliverables)
       run?.project.sync()
       launched = true
       await this.create(binary, name, env, job, stage, signal)
@@ -160,7 +164,8 @@ export class DockerExecutor implements ExecutionBackend {
       launched = false
       signal.throwIfAborted()
       if (result.timedOut) keep = false
-      else if (run) result.files = run.project.publish(this.session(env), result.code === 0 ? delivery : undefined)
+      else if (run && (!job.publication || result.code === 0))
+        result.files = run.project.publish(this.session(env), result.code === 0 ? delivery : undefined, job.publication)
       return result
     } catch (error) {
       if (launched || signal.aborted) keep = false
@@ -169,7 +174,7 @@ export class DockerExecutor implements ExecutionBackend {
       if (launched) await this.remove(binary, name).catch(() => {})
       if (run) {
         run.running = false
-        if (!keep) this.stages.delete(this.session(env))
+        if (!keep && !job.publication) this.stages.delete(this.session(env))
       }
       if (!keep) stage.dispose()
     }
