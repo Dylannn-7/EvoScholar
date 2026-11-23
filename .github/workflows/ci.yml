@@ -65,17 +65,37 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # electron-builder treats a defined but empty CSC_LINK as a certificate path and fails outside pull requests,
+      # so signing variables are exported only when the matching Secrets exist; otherwise none are set.
+      - name: Configure code signing
+        shell: bash
+        env:
+          MAC_CERTS_BASE64: ${{ env.SIGN_MAC == 'true' && secrets.MAC_CERTS_BASE64 || '' }}
+          MAC_CERTS_PASSWORD: ${{ env.SIGN_MAC == 'true' && secrets.MAC_CERTS_PASSWORD || '' }}
+          NOTARY_APPLE_ID: ${{ env.NOTARIZE_MAC == 'true' && secrets.APPLE_ID || '' }}
+          NOTARY_PASSWORD: ${{ env.NOTARIZE_MAC == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          NOTARY_TEAM_ID: ${{ env.NOTARIZE_MAC == 'true' && secrets.APPLE_TEAM_ID || '' }}
+          WIN_CERT: ${{ env.SIGN_WIN == 'true' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CERT_PASSWORD: ${{ env.SIGN_WIN == 'true' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+        run: |
+          put() { { echo "$1<<EVO_ENV_EOF"; echo "$2"; echo "EVO_ENV_EOF"; } >> "$GITHUB_ENV"; }
+          if [[ "$SIGN_MAC" == true ]]; then
+            put CSC_IDENTITY_AUTO_DISCOVERY true
+            put CSC_LINK "$MAC_CERTS_BASE64"
+            put CSC_KEY_PASSWORD "$MAC_CERTS_PASSWORD"
+            if [[ "$NOTARIZE_MAC" == true ]]; then
+              put APPLE_ID "$NOTARY_APPLE_ID"
+              put APPLE_APP_SPECIFIC_PASSWORD "$NOTARY_PASSWORD"
+              put APPLE_TEAM_ID "$NOTARY_TEAM_ID"
+            fi
+          elif [[ "$SIGN_WIN" == true ]]; then
+            put WIN_CSC_LINK "$WIN_CERT"
+            put WIN_CSC_KEY_PASSWORD "$WIN_CERT_PASSWORD"
+          else
+            put CSC_IDENTITY_AUTO_DISCOVERY false
+          fi
       - name: Build installer
         run: npx electron-builder ${{ matrix.target }} --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.SIGN_MAC == 'true' && 'true' || 'false' }}
-          CSC_LINK: ${{ env.SIGN_MAC == 'true' && secrets.MAC_CERTS_BASE64 || '' }}
-          CSC_KEY_PASSWORD: ${{ env.SIGN_MAC == 'true' && secrets.MAC_CERTS_PASSWORD || '' }}
-          APPLE_ID: ${{ env.NOTARIZE_MAC == 'true' && secrets.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ env.NOTARIZE_MAC == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ env.NOTARIZE_MAC == 'true' && secrets.APPLE_TEAM_ID || '' }}
-          WIN_CSC_LINK: ${{ env.SIGN_WIN == 'true' && secrets.WIN_CSC_LINK || '' }}
-          WIN_CSC_KEY_PASSWORD: ${{ env.SIGN_WIN == 'true' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
       - name: Smoke test the packaged app
         run: node scripts/app-smoke.mjs ${{ matrix.app }}
       - name: Verify macOS signatures and notarization
