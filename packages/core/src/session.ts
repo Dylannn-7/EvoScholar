@@ -5,6 +5,7 @@ import {
   createJournalAgentStore,
   openAgentSession,
   type AgentEvent,
+  type AgentTool,
   type AgentSession,
   type ContentBlock,
   type ModelRequest,
@@ -163,7 +164,8 @@ export async function openResearchSession(
       const meta = listSkills(rt.ws.root).find((x) => x.name === name)
       if (meta && !skills.some((x) => x.name === name)) skills = [...skills, { name, version: meta.version }]
     }
-    const tools = [...buildTools(genome.tools.enabled, { ...env, skills }, overrides, (s) => rt.genomes.text(s)), ...(workflow?.tools ?? []), ...(loop?.tools ?? [])]
+    const built = [...buildTools(genome.tools.enabled, { ...env, skills }, overrides, (s) => rt.genomes.text(s)), ...(workflow?.tools ?? []), ...(loop?.tools ?? [])]
+    const tools = info.vision ? built : built.map(textOnlyResults)
     const forged = loop ? kernelIndex(rt.ws.root, kernelProject(env)) : ''
     const style = rt.ws.settings?.defaults.figureStyle ? `\n- 用户默认出图风格：${rt.ws.settings.defaults.figureStyle}（在 run_python 里 \`import evoscholar_styles as S; S.use('${rt.ws.settings.defaults.figureStyle}', venue=...)\`；用户另有要求时以用户为准）` : ''
     const projectRules = loop?.projectRules() ?? ''
@@ -292,4 +294,24 @@ export async function settleInterrupted(session: AgentSession): Promise<number> 
     settled++
   }
   return settled
+}
+
+/**
+ * For models without image input, tool results that carry images (reading a PNG, figure previews, PDF page renders)
+ * would make the harness abort the turn. Replace each image with a short note so the model can carry on with text.
+ */
+export function textOnlyResults(tool: AgentTool): AgentTool {
+  return {
+    ...tool,
+    async execute(args, context) {
+      const out = await tool.execute(args, context)
+      if (!('content' in out) || !out.content.some((b) => b.type === 'image')) return out
+      return {
+        ...out,
+        content: out.content.map((b) => b.type === 'image'
+          ? { type: 'text' as const, text: `（当前模型不支持看图，已省略图片${b.filename ? ` ${b.filename}` : ''}；如需检查图像，请用 figure_check 的文字结果或 run_python 读取数值）` }
+          : b)
+      }
+    }
+  }
 }
