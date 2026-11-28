@@ -79,6 +79,23 @@ export function failureSignal(name: string, text: string, isError: boolean): str
   return undefined
 }
 
+const RULE_VERBS = /(用|要|别|不要|改成|改为|换成|换为|写成|按|保持|放|加|去掉|依次)/
+/**
+ * An explicit standing instruction in the user's message ("以后都…", "从下批开始…", "今后一律…").
+ * Returns the instruction text, or undefined when the message only concerns this task.
+ */
+export function explicitRule(userText: string): string | undefined {
+  const patterns = [
+    /((以后|今后|之后)(都|一律|统一|就都)|每次都|一律)([^。！？\n]{3,120})/,
+    /(从(下一?[批次回轮个]|现在|今天|本周|这次|本次|此)(开始|起)|往后|今后)[，,]?\s*(请|都|一律|统一|就|改为|改成)?([^。！？\n]{3,120})/
+  ]
+  for (const re of patterns) {
+    const m = re.exec(userText)
+    if (m && RULE_VERBS.test(m[m.length - 1])) return m[0].slice(0, 200)
+  }
+  return undefined
+}
+
 export const EVOLVE_INSTRUCTIONS = `
 
 ## 自进化协议（EvoScholar 宿主提供）
@@ -86,6 +103,7 @@ export const EVOLVE_INSTRUCTIONS = `
 - 按这个顺序处理冲突：本次用户明确要求 → 用户设定的项目规则 → 模型笔记和历史交付物。用户要求沿用项目顺序时，罗列标题、字段或选项只指定名称；明确重新指定先后才会覆盖项目顺序。写入新交付物前，核对内容和顺序是否符合当前要求。
 - 推理时按「计划 → 观察 → 反思 → 下一步」组织；用到某条经验时写出编号，例如「按 L-0031 直接换源」。
 - 出现 <反思要求> 时，先调用 reflect 说明原因和换什么做法，再继续；同一个失败的调用不要原样重试第三次（会被宿主拦截）。没有明确失败、但觉得方向不对时，也可以主动调用 reflect。
+- 用户在对话中修改了已有的项目规则（例如改了顺序、口径或格式）时，用 update_rule 更新那条规则，不要只做本会话调整，否则下次新会话仍会用旧规则。
 - 值得以后复用的做法（某类数据怎么解析、某个源不可用时换什么、某种检查的坑）用 note_lesson 记下：写成「什么情况 → 怎么做」，一条一个要点，不写本次任务的具体数值。
 - 遇到口味类决定（配色、图版式、引用格式、表述风格、检索范围）且用户没有说明时，用 offer_choices 给出 2–3 个方案让用户选，用户的选择会成为偏好。
 - 同类处理（解析某种仪器导出格式、某个固定的统计流程）跑通后，用 forge_skill 封装成带测试的函数，以后用 run_skill 直接调用；技能文档漏掉的要点用 patch_skill 补充。
@@ -113,7 +131,8 @@ export function installEvolveLoop(h: EvolveHooks) {
     learned: [] as string[],
     selfChecked: false,
     outputHashes: new Map<string, string>(),
-    overlaysVersion: 0
+    overlaysVersion: 0,
+    userText: ''
   }
   const emit = (e: EvolveEvent) => {
     const id = h.store.log({ ...e, sessionId: h.sessionId, projectId: h.projectId, turnId: h.turnId() })
@@ -161,13 +180,14 @@ export function installEvolveLoop(h: EvolveHooks) {
   }
 
   function beginTurn(userText: string) {
-    Object.assign(st, { signals: [], unresolved: new Map(), failures: new Map(), lastFailure: undefined, cited: new Set(), toolsUsed: new Set(), wrote: new Set(), learned: [], selfChecked: false, pendingReflect: undefined, reflectedSinceFailure: true })
-    // Explicit "from now on" requests become pinned preferences right away (doc §6).
-    const m = /((以后|今后|之后)(都|一律|统一|就都)|每次都|一律)([^。！？\n]{3,120})/.exec(userText)
-    if (m && /(用|要|别|不要|改成|写成|按|保持|放|加|去掉)/.test(m[4])) {
+    Object.assign(st, { signals: [], unresolved: new Map(), failures: new Map(), lastFailure: undefined, cited: new Set(), toolsUsed: new Set(), wrote: new Set(), learned: [], selfChecked: false, pendingReflect: undefined, reflectedSinceFailure: true, userText })
+    // Explicit "from now on" requests become pinned preferences right away (doc §6); a similar earlier
+    // user rule is updated in place, so the next session recalls the new wording.
+    const rule = explicitRule(userText)
+    if (rule) {
       try {
-        const { item } = h.store.upsert({ kind: 'preference', trigger: '用户明确要求', content: m[0].slice(0, 200), source: 'user', projectId: h.projectId, scope: h.projectId ? 'project' : 'global', evidence: h.sessionId, pinned: true })
-        emit({ kind: 'preference', text: `记住了：${item.content}`, refs: [item.id] })
+        const { item, merged } = h.store.upsert({ kind: 'preference', trigger: '用户明确要求', content: rule, source: 'user', projectId: h.projectId, scope: h.projectId ? 'project' : 'global', evidence: h.sessionId, pinned: true })
+        emit({ kind: 'preference', text: `${merged ? `已更新 ${item.id}` : '记住了'}：${item.content}`, refs: [item.id] })
       } catch {}
     }
     // Files the agent delivered last turn that the user has since edited: learn from the edit (D10).
@@ -238,7 +258,7 @@ export function installEvolveLoop(h: EvolveHooks) {
         st.seenTool.add(m.id)
         const callId = String(m.invocationId ?? '').split('/').pop() ?? ''
         const call = st.calls.get(callId)
-        if (!call || ['reflect', 'note_lesson', 'recall', 'tune_harness', 'offer_choices', 'patch_skill', 'propose_rule'].includes(call.name)) continue
+        if (!call || ['reflect', 'note_lesson', 'update_rule', 'recall', 'tune_harness', 'offer_choices', 'patch_skill', 'propose_rule'].includes(call.name)) continue
         const text = textOf(m.content)
         const sig = failureSignal(call.name, text, !!m.isError)
         if (sig) {
@@ -279,8 +299,8 @@ export function installEvolveLoop(h: EvolveHooks) {
     scheduling: parallel ? 'parallel' : 'exclusive',
     validate: (i) => objectArgs(i, Object.keys(properties), required) as Json,
     authorize: async (_args, ctx) => {
-      if (name === 'note_lesson' || name === 'tune_harness')
-        return h.env?.approve?.(name, name === 'note_lesson' ? '保存本回合经验' : '记录本会话的工作方式调整', 'edit', ctx.signal) ?? true
+      if (name === 'note_lesson' || name === 'tune_harness' || name === 'update_rule')
+        return h.env?.approve?.(name, name === 'note_lesson' ? '保存本回合经验' : name === 'update_rule' ? '按你本轮的要求更新项目规则' : '记录本会话的工作方式调整', 'edit', ctx.signal) ?? true
       return true
     },
     async execute(args, ctx) {
@@ -328,12 +348,34 @@ export function installEvolveLoop(h: EvolveHooks) {
         const note = { trigger: String(a.trigger), content: String(a.advice) }
         validateMemoryText(`${note.trigger} ${note.content}`)
         const rule = h.store.projectRuleForNote(h.projectId, note)
-        if (rule) return `已有用户设定的项目规则 ${rule.id}：${rule.content}。请按规则执行。`
+        if (rule) return `已有用户设定的项目规则 ${rule.id}：${rule.content}。如果用户本轮修改了这条规则，请调用 update_rule 更新它；否则按规则执行。`
         const { item, merged } = h.store.upsert({ kind: a.kind === 'preference' ? 'preference' : 'lesson', ...note, source: 'model', scope, projectId: scope === 'project' ? h.projectId : null, stage: scope === 'stage' ? h.stage ?? null : null, evidence: h.sessionId, untrusted })
         st.learned.push(item.id)
         st.cited.add(item.id)
         emit({ kind: 'adjust', text: `${merged ? '更新' : '新增'}${item.kind === 'lesson' ? '经验' : '偏好'} ${item.id}（${item.status === 'active' ? '已生效' : untrusted ? '试用，来源含外部内容' : '试用'}）：${item.trigger} → ${item.content}`, refs: [item.id], data: { memory: item.id, revertable: true } })
         return `${merged ? '已合并到' : '已记录为'} ${item.id}（${item.status === 'active' ? '生效' : '试用'}）。`
+      }),
+    tool('update_rule', '用户在本轮对话中明确修改了一条已有的项目规则（P- 编号）时，把这条规则更新为用户的新要求，下次新会话就会按新规则执行。新内容必须来自用户本轮的原话，不能自行推断。',
+      {
+        id: { type: 'string', description: '要更新的项目规则编号，如 P-0001' },
+        content: { type: 'string', description: '更新后的规则全文，尽量用用户的原话' }
+      }, ['id', 'content'], (a) => {
+        const id = String(a.id).trim()
+        const content = String(a.content).trim()
+        const rule = h.store.get(id)
+        if (!rule || !isProjectRule(rule) || rule.project_id !== h.projectId) throw new Error(`${id} 不是本项目的用户规则`)
+        if (!content) throw new Error('content 不能为空')
+        validateMemoryText(content)
+        // Grounding: the new wording must come from what the user said this turn, including every quoted
+        // name and number, so the model cannot rewrite a rule on its own initiative.
+        const quoted = [...content.matchAll(/「([^」]+)」|"([^"]+)"|“([^”]+)”|(\d+(?:\.\d+)?)/g)].map((m) => m[1] ?? m[2] ?? m[3] ?? m[4])
+        if (relevance(content, st.userText, 4) < 0.5 || quoted.some((q) => !st.userText.includes(q)))
+          throw new Error('新内容与用户本轮的原话对不上，不能更新规则；请按用户原话填写，或先向用户确认')
+        if (content === rule.content) return `${id} 已经是这条内容，无需更新。`
+        h.store.edit(id, { content })
+        st.cited.add(id)
+        emit({ kind: 'preference', text: `已更新 ${id}：${content}`, refs: [id], data: { memory: id, previous: rule.content } })
+        return `已更新 ${id}，之后的会话按新规则执行。`
       }),
     tool('recall', '主动检索过去的经验和用户偏好（宿主已自动注入最相关的几条，需要更多时再用）。',
       { query: { type: 'string' } }, ['query'], (a) => {

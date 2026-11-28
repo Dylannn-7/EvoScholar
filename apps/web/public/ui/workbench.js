@@ -383,6 +383,7 @@ export function initWorkbench () {
   const EVO_TOOL = {
     reflect: ['反思', (a) => `${a.cause || ''} → ${a.next_action || ''}`],
     note_lesson: ['调整', (a) => `记经验：${a.trigger || ''} → ${a.advice || ''}`],
+    update_rule: ['调整', (a) => `更新项目规则 ${a.id || ''}：${a.content || ''}`],
     tune_harness: ['调整', (a) => `本会话：${a.op === 'prompt.note' ? `追加规则「${a.value}」` : a.op === 'tool.note' ? `${a.target} 说明补充「${a.value}」` : `${a.op === 'skill.enable' ? '启用' : '停用'}技能 ${a.target}`}`],
     recall: ['回忆', (a) => `检索「${a.query || ''}」`],
     offer_choices: ['选择', (a) => a.question || ''],
@@ -512,7 +513,7 @@ export function initWorkbench () {
   const LIT = /^(lit_|web_|pdf_)/
   const DATA = new Set(['run_python', 'run_skill', 'figure_check', 'forge_skill', 'start_process'])
   const WRITE = new Set(['manuscript_check', 'check_feedback', 'propose_rule'])
-  const EVOLVE_TOOLS = new Set(['note_lesson', 'tune_harness', 'patch_skill', 'forge_skill', 'propose_rule'])
+  const EVOLVE_TOOLS = new Set(['note_lesson', 'update_rule', 'tune_harness', 'patch_skill', 'forge_skill', 'propose_rule'])
   function shapeFor (name, args) {
     if (LIT.test(name)) return 'constellation'
     if (DATA.has(name)) return 'curve'

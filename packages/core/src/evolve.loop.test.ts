@@ -7,7 +7,7 @@ import { createMessagesModel } from '@evoscholar/harness/messages'
 import { createResponsesModel } from '@evoscholar/harness/responses'
 import type { AgentMessage } from '@evoscholar/harness'
 import { betaScore, EvolveStore, openDb, openResearchSession, openRuntime, openWorkspace, validateMemoryText } from './index'
-import { externalCallSource, externalContextSource, installEvolveLoop } from './evolve/loop'
+import { explicitRule, externalCallSource, externalContextSource, installEvolveLoop } from './evolve/loop'
 
 const REPO = resolve(__dirname, '../../..')
 const sse = (chunks: unknown[]) => new Response(chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } })
@@ -322,4 +322,68 @@ test('the turn step limit also bounds the optional self-check', async (t) => {
     assert.equal((await withCheck.ask('继续')).status, 'complete')
     assert.equal(requests, 6)
   } finally { await withCheck.dispose() }
+})
+
+test('standing instructions are recognised in more phrasings, but not one-off requests', () => {
+  assert.ok(explicitRule('以后都把参考文献换成正式发表版'))
+  assert.match(explicitRule('导师更新了组会约定，从下批开始请把两个小节依次写成「待复测样品、已确认结果」。请确认。') ?? '', /^从下批开始请把两个小节依次写成/)
+  assert.ok(explicitRule('从现在起图例一律放在图外右上角'))
+  assert.ok(explicitRule('今后改为用 Okabe-Ito 配色'))
+  assert.equal(explicitRule('这次先用默认顺序，帮我跑一下'), undefined)
+  assert.equal(explicitRule('从下批开始数据会多一些'), undefined)
+})
+
+test('a rule changed in conversation updates the stored project rule for the next session', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'evo-rule-update-'))
+  const data = join(dir, 'data')
+  const project = join(dir, 'project')
+  mkdirSync(project)
+  const db = openDb(data)
+  t.after(() => { db.close(); rmSync(dir, { recursive: true, force: true }) })
+  db.prepare('INSERT INTO projects (id, name, path, created_at) VALUES (?, ?, ?, ?)').run('demo', '简报', project, new Date().toISOString())
+  const store = new EvolveStore(db, data)
+  const hooks = (sessionId: string) => ({ store, sessionId, projectId: 'demo', cwd: project, turnId: () => 1, toolNames: [], skillNames: [] })
+  const ctx = { signal: new AbortController().signal } as never
+
+  // Session 1: the first correction becomes a pinned project rule.
+  const first = installEvolveLoop(hooks('s1'))
+  first.beginTurn('上一次组会简报的顺序需要纠正。以后都把本项目温漂组会简报的两个小节依次写成「已确认结果、待复测样品」，按本批 CSV 状态分组')
+  const rule = store.list({ status: 'active', kind: 'preference', projectId: 'demo' })[0]
+  assert.match(rule.content, /「已确认结果、待复测样品」/)
+
+  // Session 2: the user changes it with a phrasing the old pattern missed; the same rule is updated in place.
+  const second = installEvolveLoop(hooks('s2'))
+  second.beginTurn('导师更新了组会约定，从下批开始请把本项目温漂组会简报的两个小节依次写成「待复测样品、已确认结果」，按本批 CSV 状态分组。请确认这是项目的新默认设置。')
+  const rules = store.list({ status: 'active', kind: 'preference', projectId: 'demo' })
+  assert.equal(rules.length, 1)
+  assert.equal(rules[0].id, rule.id)
+  assert.match(rules[0].content, /「待复测样品、已确认结果」/)
+
+  // Session 3 sees only the new order.
+  const third = installEvolveLoop(hooks('s3'))
+  third.beginTurn('读取本批 batch-2.csv，按项目已有的组会简报顺序交付')
+  assert.match(third.projectRules(), /「待复测样品、已确认结果」/)
+  assert.doesNotMatch(third.projectRules(), /「已确认结果、待复测样品」/)
+
+  // update_rule: the model may update a rule only with what the user said this turn.
+  const tool = second.tools.find(x => x.name === 'update_rule')!
+  second.beginTurn('这个项目的图改成单栏 88 mm 宽，按 Optica 规范导出')
+  const refused = async (args: Record<string, string>, why: RegExp) => {
+    const r = await tool.execute(args, ctx)
+    assert.ok('content' in r && r.isError, JSON.stringify(r))
+    assert.match(str(r.content), why)
+  }
+  await refused({ id: rule.id, content: '两个小节改成按样品编号排序' }, /对不上/)
+  await refused({ id: 'P-9999', content: '图改成单栏 88 mm 宽' }, /不是本项目的用户规则/)
+  await refused({ id: rule.id, content: '这个项目的图改成单栏 89 mm 宽，按 Optica 规范导出' }, /对不上/)
+  assert.match(store.get(rule.id)!.content, /「待复测样品、已确认结果」/)
+  const ok = await tool.execute({ id: rule.id, content: '这个项目的图改成单栏 88 mm 宽，按 Optica 规范导出' }, ctx)
+  assert.ok('content' in ok)
+  assert.match(str(ok.content), /已更新/)
+  assert.match(store.get(rule.id)!.content, /单栏 88 mm/)
+
+  // note_lesson that collides with a rule now points the model to update_rule.
+  const note = await second.tools.find(x => x.name === 'note_lesson')!.execute({ trigger: '本项目出图时', advice: '图改成单栏 88 mm 宽，按 Optica 规范导出' }, ctx)
+  assert.ok('content' in note)
+  assert.match(str(note.content), /update_rule/)
 })
