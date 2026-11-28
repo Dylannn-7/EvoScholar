@@ -7,6 +7,7 @@ import type { AgentTool, Json, ToolContext } from '@evoscholar/harness'
 import { TOOL_FACTORIES, appPrivate, childEnv, checkCommand, guarded, inside, runProcess, stopAllProcesses, type ToolEnv } from './tools'
 import { BudgetError } from './budget'
 import { FILE_LIMITS } from './limits'
+import { textOnlyResults } from './session'
 
 const ctx = (): ToolContext => ({ sessionId: 's', runId: 'r', invocationId: 'i', signal: new AbortController().signal, update() {} })
 function setup() {
@@ -221,4 +222,20 @@ test('read_file streams large text files by line range, truncates at 256 KB, and
   const imgRes = await call('read_file', { path: 'huge.png' })
   assert.equal(imgRes.isError, true)
   assert.match(text(imgRes), /10 MB.*缩小/)
+})
+
+test('text-only models get a note instead of image blocks in tool results', async () => {
+  const image: AgentTool = {
+    name: 'read_png', version: '1', description: 'd', parameters: { type: 'object' },
+    validate: (x: Json) => x, authorize: async () => true,
+    execute: async () => ({ content: [{ type: 'text', text: '图片 a.png：' }, { type: 'image', mimeType: 'image/png', source: 'data:image/png;base64,AA==', filename: 'a.png' }] })
+  }
+  const out = await textOnlyResults(image).execute({}, ctx())
+  assert.ok('content' in out)
+  assert.equal(out.content.length, 2)
+  assert.equal(out.content[0].type, 'text')
+  assert.equal(out.content[1].type, 'text')
+  assert.match((out.content[1] as { text: string }).text, /不支持看图.*a\.png/)
+  const plain: AgentTool = { ...image, execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }) }
+  assert.deepEqual(await textOnlyResults(plain).execute({}, ctx()), { content: [{ type: 'text', text: 'ok' }] })
 })
